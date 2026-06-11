@@ -14,3 +14,15 @@ class NormalizationTest(unittest.TestCase):
     def test_returns_empty_values_for_missing_data(self):
         self.assertEqual(extract_application_dates("Сроки будут опубликованы позднее"), (None, None))
         self.assertEqual(parse_money_values("Финансирование не указано"), [])
+
+    def test_rejects_malformed_money_numbers(self):
+        text = "1,2,3 млн, 12 34 млн и 1 23 456 рублей"
+        self.assertEqual(parse_money_values(text), [])
+
+    def test_accepts_only_exact_decimal_ruble_values(self):
+        text = "1,5 млн рублей, 12,75 рублей и 0,0015 тыс рублей"
+        self.assertEqual(parse_money_values(text), [1_500_000])
+
+    def test_parses_bare_ruble_abbreviations(self):
+        self.assertEqual(parse_money_values("500 руб"), [500])
+        self.assertEqual(parse_money_values("500 руб."), [500])

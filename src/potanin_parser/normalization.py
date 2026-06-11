@@ -25,8 +25,10 @@ _APPLICATION_PERIOD_RE = re.compile(
     re.IGNORECASE,
 )
 _MONEY_RE = re.compile(
-    r"(?<!\w)(\d+(?: \d{3})*(?:[.,]\d+)?)\s*"
-    r"(тыс\.?|млн\.?|млрд\.?|руб(?:\.|ль|ля|лей))(?!\w)",
+    r"(?<![\w.,])(?<!\d )"
+    r"(\d{1,3}(?: \d{3})+|\d+)(?:([.,]\d+))?\s*"
+    r"(тыс\.?|млн\.?|млрд\.?|руб(?:ль|ля|лей)?\.?)"
+    r"(?!\w)",
     re.IGNORECASE,
 )
 _MONEY_MULTIPLIERS = {
@@ -62,15 +64,22 @@ def parse_money_values(text: str) -> list[int]:
     seen = set()
 
     for match in _MONEY_RE.finditer(normalized):
-        number_text, unit = match.groups()
+        integer_text, fraction_text, unit = match.groups()
         try:
-            number = Decimal(number_text.replace(" ", "").replace(",", "."))
+            number_text = integer_text.replace(" ", "")
+            if fraction_text:
+                number_text += fraction_text.replace(",", ".")
+            number = Decimal(number_text)
         except InvalidOperation:
             continue
 
         normalized_unit = unit.lower().rstrip(".")
         multiplier = _MONEY_MULTIPLIERS.get(normalized_unit, 1)
-        value = int(number * multiplier)
+        rubles = number * multiplier
+        if rubles != rubles.to_integral_value():
+            continue
+
+        value = int(rubles)
         if value not in seen:
             seen.add(value)
             values.append(value)
