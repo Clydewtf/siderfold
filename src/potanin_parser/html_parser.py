@@ -1,8 +1,8 @@
 import re
 from datetime import date
-from urllib.parse import urldefrag, urljoin
+from urllib.parse import urldefrag, urljoin, urlparse
 
-from lxml import html as lxml_html
+from lxml import etree, html as lxml_html
 
 from .models import Competition
 from .normalization import RUSSIAN_MONTHS, extract_application_dates, parse_money_values
@@ -28,7 +28,7 @@ _PUBLICATION_DATE_RE = re.compile(
 
 
 def _text(node) -> str:
-    return " ".join(node.text_content().split())
+    return " ".join(" ".join(node.itertext()).split())
 
 
 def _first_text(root, xpaths: list[str]) -> str | None:
@@ -41,8 +41,23 @@ def _first_text(root, xpaths: list[str]) -> str | None:
     return None
 
 
-def _absolute_url(base_url: str, href: str) -> str:
-    return urldefrag(urljoin(base_url, href))[0]
+def _html_root(html: str):
+    try:
+        return lxml_html.fromstring(html)
+    except (etree.ParserError, TypeError, ValueError):
+        return lxml_html.fromstring("<html><body></body></html>")
+
+
+def _absolute_url(base_url: str, href: str) -> str | None:
+    href = href.strip()
+    if not href or href.startswith("#"):
+        return None
+
+    link = urldefrag(urljoin(base_url, href))[0]
+    parsed = urlparse(link)
+    if parsed.scheme.lower() not in {"http", "https"} or not parsed.netloc:
+        return None
+    return link
 
 
 def _unique_links(nodes, base_url: str) -> list[str]:
@@ -53,14 +68,14 @@ def _unique_links(nodes, base_url: str) -> list[str]:
         if not href:
             continue
         link = _absolute_url(base_url, href)
-        if link not in seen:
+        if link is not None and link not in seen:
             seen.add(link)
             links.append(link)
     return links
 
 
 def parse_catalog(html: str, base_url: str) -> list[str]:
-    root = lxml_html.fromstring(html)
+    root = _html_root(html)
     anchors = root.xpath(
         "//a[contains(concat(' ', normalize-space(@class), ' '), "
         "' programms__item-link ')]"
@@ -77,19 +92,35 @@ def _extract_sections(info) -> tuple[str | None, dict[str, str]]:
     sections: dict[str, str] = {}
     heading = None
 
-    for child in info:
-        if child.tag.lower() == "h2":
-            heading = _text(child)
-            sections.setdefault(heading, "")
-            continue
-
-        value = _text(child)
+    def append_text(text: str | None) -> None:
+        if text is None:
+            return
+        value = " ".join(text.split())
         if not value:
-            continue
+            return
         if heading is None:
             summary_parts.append(value)
         else:
             sections[heading] = " ".join(filter(None, [sections[heading], value]))
+
+    def walk(node) -> None:
+        nonlocal heading
+        if not isinstance(node.tag, str):
+            return
+        if node.tag.lower() == "h2":
+            heading = _text(node)
+            sections.setdefault(heading, "")
+            return
+
+        append_text(node.text)
+        for child in node:
+            walk(child)
+            append_text(child.tail)
+
+    append_text(info.text)
+    for child in info:
+        walk(child)
+        append_text(child.tail)
 
     summary = " ".join(summary_parts) or None
     return summary, sections
@@ -177,7 +208,7 @@ def _contact_cards(root) -> list[dict[str, str]]:
 
 
 def parse_competition(html: str, source_url: str, collected_at: str) -> Competition:
-    root = lxml_html.fromstring(html)
+    root = _html_root(html)
     title = _first_text(root, ["//h1"]) or ""
     status = _first_text(
         root,
@@ -208,6 +239,8 @@ def parse_competition(html: str, source_url: str, collected_at: str) -> Competit
     if info_nodes:
         summary, sections = _extract_sections(info_nodes[0])
         full_text = _text(info_nodes[0])
+    else:
+        full_text = _text(root)
 
     fields: dict[str, str] = {}
     funding_parts = []
@@ -226,7 +259,11 @@ def parse_competition(html: str, source_url: str, collected_at: str) -> Competit
     grant_fund_rub = _section_grant_fund_value(sections)
     if grant_fund_rub is None:
         grant_fund_rub = _grant_fund_value(funding_text or "")
-    max_support_rub = _support_value(funding_text or full_text)
+    if grant_fund_rub is None:
+        grant_fund_rub = _grant_fund_value(full_text)
+    max_support_rub = _support_value(funding_text or "")
+    if max_support_rub is None:
+        max_support_rub = _support_value(full_text)
 
     application_nodes = root.xpath(
         "//a[contains(concat(' ', normalize-space(@class), ' '), "
