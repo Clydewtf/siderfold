@@ -26,3 +26,46 @@ class NormalizationTest(unittest.TestCase):
     def test_parses_bare_ruble_abbreviations(self):
         self.assertEqual(parse_money_values("500 руб"), [500])
         self.assertEqual(parse_money_values("500 руб."), [500])
+
+    def test_parses_all_russian_genitive_month_names(self):
+        months = (
+            "января",
+            "февраля",
+            "марта",
+            "апреля",
+            "мая",
+            "июня",
+            "июля",
+            "августа",
+            "сентября",
+            "октября",
+            "ноября",
+            "декабря",
+        )
+        for month_number, month_name in enumerate(months, start=1):
+            with self.subTest(month=month_name):
+                text = f"с 1 {month_name} 2025 года по 2 {month_name} 2025 года"
+                expected = (
+                    f"2025-{month_number:02d}-01",
+                    f"2025-{month_number:02d}-02",
+                )
+                self.assertEqual(extract_application_dates(text), expected)
+
+    def test_normalizes_whitespace_in_dates_and_money(self):
+        dates = "с\u00a01   января\n2025 года\tпо 2 февраля 2025 года"
+        money = "1\u00a0500\u00a0рублей"
+        self.assertEqual(extract_application_dates(dates), ("2025-01-01", "2025-02-02"))
+        self.assertEqual(parse_money_values(money), [1_500])
+
+    def test_invalid_calendar_dates_return_none(self):
+        invalid_start = "с 31 февраля 2025 года по 1 марта 2025 года"
+        invalid_end = "с 1 марта 2025 года по 31 апреля 2025 года"
+        self.assertEqual(extract_application_dates(invalid_start), (None, "2025-03-01"))
+        self.assertEqual(extract_application_dates(invalid_end), ("2025-03-01", None))
+
+    def test_parses_thousand_and_billion_units(self):
+        self.assertEqual(parse_money_values("2 тыс рублей и 3 млрд рублей"), [2_000, 3_000_000_000])
+
+    def test_returns_unique_money_values_in_source_order(self):
+        text = "2 млн, 500 000 рублей, 2 млн рублей, 1 тыс и 500 000 рублей"
+        self.assertEqual(parse_money_values(text), [2_000_000, 500_000, 1_000])
