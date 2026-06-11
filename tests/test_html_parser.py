@@ -28,8 +28,30 @@ class CatalogParserTests(unittest.TestCase):
         self.assertEqual(len(links), 2)
         self.assertTrue(all(link.startswith(BASE_URL) for link in links))
 
+    def test_removes_fragments_and_deduplicates_in_source_order(self) -> None:
+        html = """
+        <a class="programms__item-link" href="/competitions/events#details">First</a>
+        <a class="programms__item-link" href="/competitions/events#results">Duplicate</a>
+        <a class="programms__item-link" href="/competitions/museums">Second</a>
+        """
+
+        self.assertEqual(
+            parse_catalog(html, BASE_URL),
+            [
+                f"{BASE_URL}/competitions/events",
+                f"{BASE_URL}/competitions/museums",
+            ],
+        )
+
 
 class CompetitionParserTests(unittest.TestCase):
+    def test_extracts_maximum_support_when_minimum_appears_first(self) -> None:
+        competition = parse_competition(
+            fixture("competition.html"), CARD_URL, COLLECTED_AT
+        )
+
+        self.assertEqual(competition.max_support_rub, 1_000_000)
+
     def test_parses_complete_competition_card(self) -> None:
         competition = parse_competition(
             fixture("competition.html"), CARD_URL, COLLECTED_AT

@@ -110,8 +110,8 @@ def _parse_publication_date(text: str | None) -> str | None:
 
 def _support_value(text: str) -> int | None:
     for sentence in re.split(r"(?<=[.!?])\s+|\n+", text):
-        if re.search(r"максимальн\w*|не более", sentence, re.IGNORECASE):
-            values = parse_money_values(sentence)
+        for marker in re.finditer(r"максимальн\w*|не более", sentence, re.IGNORECASE):
+            values = parse_money_values(sentence[marker.start() :])
             if values:
                 return values[0]
     return None
@@ -207,9 +207,8 @@ def parse_competition(html: str, source_url: str, collected_at: str) -> Competit
     max_support_rub = _support_value(funding_text or full_text)
 
     application_nodes = root.xpath(
-        "//a[contains(concat(' ', normalize-space(@class), ' '), ' button_orange ') "
-        "or (contains(translate(normalize-space(string(.)), "
-        "'ПОДАТЬЗАЯВКУ', 'податьзаявку'), 'подать заявку'))]"
+        "//a[contains(concat(' ', normalize-space(@class), ' '), "
+        "' button_orange ')]"
     )
     application_links = _unique_links(application_nodes, source_url)
     result_nodes = [
