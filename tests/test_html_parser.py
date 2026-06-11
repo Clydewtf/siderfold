@@ -45,6 +45,13 @@ class CatalogParserTests(unittest.TestCase):
 
 
 class CompetitionParserTests(unittest.TestCase):
+    def test_extracts_grant_fund_when_support_limits_appear_first(self) -> None:
+        competition = parse_competition(
+            fixture("competition.html"), CARD_URL, COLLECTED_AT
+        )
+
+        self.assertEqual(competition.grant_fund_rub, 25_000_000)
+
     def test_extracts_maximum_support_when_minimum_appears_first(self) -> None:
         competition = parse_competition(
             fixture("competition.html"), CARD_URL, COLLECTED_AT

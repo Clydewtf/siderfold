@@ -117,6 +117,14 @@ def _support_value(text: str) -> int | None:
     return None
 
 
+def _grant_fund_value(text: str) -> int | None:
+    for marker in re.finditer(r"(?:общий\s+)?грантовый фонд", text, re.IGNORECASE):
+        values = parse_money_values(text[marker.start() :])
+        if values:
+            return values[0]
+    return None
+
+
 def _contact_cards(root) -> list[dict[str, str]]:
     containers = root.xpath(
         "//*[contains(concat(' ', normalize-space(@class), ' '), ' contacts ')]"
@@ -202,8 +210,7 @@ def parse_competition(html: str, source_url: str, collected_at: str) -> Competit
     date_text = " ".join(filter(None, [procedure, full_text]))
     application_start_date, application_end_date = extract_application_dates(date_text)
     funding_text = fields.get("funding_text")
-    funding_values = parse_money_values(funding_text or "")
-    grant_fund_rub = funding_values[0] if funding_values else None
+    grant_fund_rub = _grant_fund_value(funding_text or "")
     max_support_rub = _support_value(funding_text or full_text)
 
     application_nodes = root.xpath(
