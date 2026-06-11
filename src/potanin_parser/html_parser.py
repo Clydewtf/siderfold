@@ -125,6 +125,15 @@ def _grant_fund_value(text: str) -> int | None:
     return None
 
 
+def _section_grant_fund_value(sections: dict[str, str]) -> int | None:
+    for heading, content in sections.items():
+        if "грантовый фонд" in _normalize_heading(heading):
+            values = parse_money_values(content)
+            if values:
+                return values[0]
+    return None
+
+
 def _contact_cards(root) -> list[dict[str, str]]:
     containers = root.xpath(
         "//*[contains(concat(' ', normalize-space(@class), ' '), ' contacts ')]"
@@ -201,16 +210,22 @@ def parse_competition(html: str, source_url: str, collected_at: str) -> Competit
         full_text = _text(info_nodes[0])
 
     fields: dict[str, str] = {}
+    funding_parts = []
     for heading, content in sections.items():
         field = _HEADING_FIELDS.get(_normalize_heading(heading))
         if field and content:
-            fields[field] = content
+            if field == "funding_text":
+                funding_parts.append(content)
+            else:
+                fields[field] = content
 
     procedure = fields.get("procedure")
     date_text = " ".join(filter(None, [procedure, full_text]))
     application_start_date, application_end_date = extract_application_dates(date_text)
-    funding_text = fields.get("funding_text")
-    grant_fund_rub = _grant_fund_value(funding_text or "")
+    funding_text = " ".join(funding_parts) or None
+    grant_fund_rub = _section_grant_fund_value(sections)
+    if grant_fund_rub is None:
+        grant_fund_rub = _grant_fund_value(funding_text or "")
     max_support_rub = _support_value(funding_text or full_text)
 
     application_nodes = root.xpath(
