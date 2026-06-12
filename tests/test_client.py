@@ -96,6 +96,13 @@ class AdditionalHttpClientTests(unittest.TestCase):
 
         self.assertEqual(client.get("https://example.test"), "Привет")
 
+    def test_client_falls_back_to_utf8_when_declared_charset_is_wrong(self):
+        opener = FakeOpener([FakeResponse("Привет".encode(), "ascii")])
+        client = HttpClient(opener=opener, retries=2, delay_seconds=0)
+
+        self.assertEqual(client.get("https://example.test"), "Привет")
+        self.assertEqual(opener.calls, 1)
+
     def test_client_raises_fetch_error_after_final_failure(self):
         original_error = TimeoutError("timed out")
         opener = FakeOpener([TimeoutError("first"), original_error])
@@ -143,6 +150,41 @@ class PipelineTests(unittest.TestCase):
         self.assertEqual(analyzed[0][2], 1)
         self.assertTrue(analyzed[0][3])
         self.assertTrue(any("/fail" in message for message in logs.output))
+
+    def test_pipeline_sleeps_once_before_each_card_request(self):
+        events: list[tuple[str, object]] = []
+
+        class TracedClient(FakePipelineClient):
+            def get(self, url: str) -> str:
+                events.append(("get", url))
+                return super().get(url)
+
+        def sleep(seconds: float) -> None:
+            events.append(("sleep", seconds))
+
+        with TemporaryDirectory() as directory:
+            with self.assertLogs("potanin_parser", level="WARNING"):
+                run_pipeline(
+                    catalog_url="https://example.test/competitions/",
+                    output_dir=Path(directory),
+                    delay_seconds=2.5,
+                    limit=None,
+                    client=TracedClient(),
+                    exporter=lambda records, output_dir: None,
+                    analyzer=lambda records, output_dir, failed_pages, collected_at: None,
+                    sleep=sleep,
+                )
+
+        self.assertEqual(
+            events,
+            [
+                ("get", "https://example.test/competitions/?SHOWALL_1=1"),
+                ("sleep", 2.5),
+                ("get", "https://example.test/competitions/ok"),
+                ("sleep", 2.5),
+                ("get", "https://example.test/competitions/fail"),
+            ],
+        )
 
 
 if __name__ == "__main__":

@@ -63,6 +63,7 @@ def run_pipeline(
     client: HttpClient | None = None,
     exporter: Exporter | None = None,
     analyzer: Analyzer | None = None,
+    sleep: Callable[[float], None] = time.sleep,
 ) -> list[Competition]:
     output_dir = Path(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -76,16 +77,15 @@ def run_pipeline(
 
     records: list[Competition] = []
     failed_pages = 0
-    for index, url in enumerate(links):
+    for url in links:
+        if delay_seconds:
+            sleep(delay_seconds)
         try:
             html = http_client.get(url)
             records.append(parse_competition(html, url, collected_at))
         except Exception as error:
             failed_pages += 1
             LOGGER.warning("Failed to process card %s: %s", url, error)
-
-        if delay_seconds and index + 1 < len(links):
-            time.sleep(delay_seconds)
 
     (exporter or _default_exporter)(records, output_dir)
     (analyzer or _default_analyzer)(

@@ -49,7 +49,7 @@ class HttpClient:
                     charset = response.headers.get_content_charset() or "utf-8"
                     try:
                         return body.decode(charset)
-                    except LookupError:
+                    except (LookupError, UnicodeDecodeError):
                         return body.decode("utf-8")
             except Exception as error:
                 last_error = error
