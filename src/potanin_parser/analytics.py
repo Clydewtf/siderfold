@@ -90,7 +90,10 @@ def _font(size: int):
             return ImageFont.truetype(path, size=size)
         except OSError:
             continue
-    return ImageFont.load_default(size=size)
+    try:
+        return ImageFont.load_default(size=size)
+    except TypeError:
+        return ImageFont.load_default()
 
 
 def _shorten(label: str, limit: int = 34) -> str:

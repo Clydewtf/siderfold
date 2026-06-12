@@ -1,10 +1,16 @@
 import unittest
 from pathlib import Path
 from tempfile import TemporaryDirectory
+from unittest.mock import call, patch
 
 from PIL import Image
 
-from potanin_parser.analytics import _format_rubles, build_summary, generate_charts
+from potanin_parser.analytics import (
+    _font,
+    _format_rubles,
+    build_summary,
+    generate_charts,
+)
 from potanin_parser.models import Competition
 
 
@@ -80,6 +86,30 @@ class AnalyticsTests(unittest.TestCase):
     def test_formats_funding_values_without_font_specific_symbols(self) -> None:
         self.assertEqual(_format_rubles(0), "0 руб.")
         self.assertEqual(_format_rubles(1_500_000), "1 500 000 руб.")
+
+    def test_font_falls_back_for_pillow_without_sized_default_font(self) -> None:
+        fallback_font = object()
+
+        def load_default(*args, **kwargs):
+            if kwargs:
+                raise TypeError("load_default() got an unexpected keyword argument 'size'")
+            return fallback_font
+
+        with (
+            patch(
+                "potanin_parser.analytics.ImageFont.truetype",
+                side_effect=OSError("font unavailable"),
+            ) as truetype,
+            patch(
+                "potanin_parser.analytics.ImageFont.load_default",
+                side_effect=load_default,
+            ) as default_font,
+        ):
+            result = _font(24)
+
+        self.assertIs(result, fallback_font)
+        self.assertEqual(truetype.call_count, 3)
+        self.assertEqual(default_font.call_args_list, [call(size=24), call()])
 
     def test_build_summary_records_charts_without_corresponding_data(self) -> None:
         summary = build_summary(
