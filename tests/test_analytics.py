@@ -118,7 +118,7 @@ class AnalyticsTests(unittest.TestCase):
         self.assertEqual(truetype.call_count, 3)
         self.assertEqual(default_font.call_args_list, [call(size=24), call()])
 
-    def test_build_summary_records_charts_without_corresponding_data(self) -> None:
+    def test_build_summary_skips_all_charts_without_corresponding_data(self) -> None:
         summary = build_summary(
             [competition()],
             collected_at="2026-06-12T12:00:00+07:00",
@@ -127,12 +127,36 @@ class AnalyticsTests(unittest.TestCase):
 
         self.assertEqual(
             summary["skipped_charts"],
-            ["status", "deadline", "funding"],
+            ["status", "deadline", "maximum_support", "grant_funds"],
         )
 
-    def test_grant_fund_alone_prevents_high_level_funding_skip(self) -> None:
+    def test_maximum_support_only_skips_grant_funds(self) -> None:
+        summary = build_summary(
+            [competition(max_support_rub=1_000_000)],
+            collected_at="2026-06-12T12:00:00+07:00",
+            failed_pages=0,
+        )
+
+        self.assertEqual(
+            summary["skipped_charts"],
+            ["status", "deadline", "grant_funds"],
+        )
+
+    def test_grant_fund_only_skips_maximum_support(self) -> None:
         summary = build_summary(
             [competition(grant_fund_rub=25_000_000)],
+            collected_at="2026-06-12T12:00:00+07:00",
+            failed_pages=0,
+        )
+
+        self.assertEqual(
+            summary["skipped_charts"],
+            ["status", "deadline", "maximum_support"],
+        )
+
+    def test_both_funding_types_skip_neither_funding_chart(self) -> None:
+        summary = build_summary(
+            [competition(max_support_rub=1_000_000, grant_fund_rub=25_000_000)],
             collected_at="2026-06-12T12:00:00+07:00",
             failed_pages=0,
         )

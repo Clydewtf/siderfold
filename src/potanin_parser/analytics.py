@@ -66,11 +66,10 @@ def build_summary(
         skipped_charts.append("status")
     if not _deadline_counts(records):
         skipped_charts.append("deadline")
-    if not (
-        _funding_values(records, "max_support_rub")
-        or _funding_values(records, "grant_fund_rub")
-    ):
-        skipped_charts.append("funding")
+    if not _funding_values(records, "max_support_rub"):
+        skipped_charts.append("maximum_support")
+    if not _funding_values(records, "grant_fund_rub"):
+        skipped_charts.append("grant_funds")
 
     return {
         "collection_time": collected_at,
