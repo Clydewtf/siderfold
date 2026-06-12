@@ -9,6 +9,13 @@ from .models import Competition
 
 CHART_SIZE = (1600, 900)
 MAX_CHART_BARS = 15
+MANAGED_CHART_FILENAMES = {
+    "statuses.png",
+    "deadlines.png",
+    "maximum_support.png",
+    "grant_funds.png",
+    "funding.png",
+}
 _FONT_PATHS = (
     "/System/Library/Fonts/Supplemental/Arial.ttf",
     "/System/Library/Fonts/Supplemental/Arial Unicode.ttf",
@@ -28,14 +35,12 @@ def _deadline_counts(records: Iterable[Competition]) -> Counter[str]:
     )
 
 
-def _funding_values(records: Iterable[Competition]) -> list[tuple[str, int]]:
+def _funding_values(
+    records: Iterable[Competition], field_name: str
+) -> list[tuple[str, int]]:
     values = []
     for index, record in enumerate(records, start=1):
-        amount = (
-            record.max_support_rub
-            if record.max_support_rub is not None
-            else record.grant_fund_rub
-        )
+        amount = getattr(record, field_name)
         if amount is not None:
             label = record.title.strip() or f"Конкурс {index}"
             values.append((label, amount))
@@ -61,7 +66,10 @@ def build_summary(
         skipped_charts.append("status")
     if not _deadline_counts(records):
         skipped_charts.append("deadline")
-    if not _funding_values(records):
+    if not (
+        _funding_values(records, "max_support_rub")
+        or _funding_values(records, "grant_fund_rub")
+    ):
         skipped_charts.append("funding")
 
     return {
@@ -96,15 +104,40 @@ def _font(size: int):
         return ImageFont.load_default()
 
 
-def _shorten(label: str, limit: int = 34) -> str:
-    return label if len(label) <= limit else f"{label[: limit - 1]}…"
+def _text_width(draw: ImageDraw.ImageDraw, text: str, font) -> int:
+    box = draw.textbbox((0, 0), text, font=font)
+    return box[2] - box[0]
+
+
+def _fit_text(
+    draw: ImageDraw.ImageDraw,
+    text: str,
+    font,
+    max_width: int,
+) -> str:
+    if _text_width(draw, text, font) <= max_width:
+        return text
+
+    ellipsis = "…"
+    low = 0
+    high = len(text)
+    while low < high:
+        middle = (low + high + 1) // 2
+        candidate = f"{text[:middle].rstrip()}{ellipsis}"
+        if _text_width(draw, candidate, font) <= max_width:
+            low = middle
+        else:
+            high = middle - 1
+    return f"{text[:low].rstrip()}{ellipsis}" if low else ellipsis
 
 
 def _format_rubles(value: int) -> str:
     return f"{value:,} руб.".replace(",", " ")
 
 
-def _bounded_values(values: list[tuple[str, int]]) -> list[tuple[str, int]]:
+def _bounded_categorical_values(
+    values: list[tuple[str, int]],
+) -> list[tuple[str, int]]:
     if len(values) <= MAX_CHART_BARS:
         return values
 
@@ -116,17 +149,52 @@ def _bounded_values(values: list[tuple[str, int]]) -> list[tuple[str, int]]:
     return visible
 
 
+def _limit_individual_values(
+    values: list[tuple[str, int]],
+) -> tuple[list[tuple[str, int]], str | None]:
+    if len(values) <= MAX_CHART_BARS:
+        return values, None
+    return values[:MAX_CHART_BARS], f"Показано {MAX_CHART_BARS} из {len(values)}"
+
+
+def _value_label_layout(
+    draw: ImageDraw.ImageDraw,
+    text: str,
+    font,
+    *,
+    bar_left: int,
+    bar_right: int,
+    bar_top: int,
+    bar_bottom: int,
+    chart_right: int,
+) -> tuple[tuple[int, int], str]:
+    text_box = draw.textbbox((0, 0), text, font=font)
+    text_width = text_box[2] - text_box[0]
+    text_height = text_box[3] - text_box[1]
+    y = bar_top + max(0, (bar_bottom - bar_top - text_height) // 2) - text_box[1]
+    if bar_right - bar_left >= text_width + 24:
+        return (bar_right - text_width - 12, y), "white"
+    return (min(bar_right + 12, chart_right - text_width), y), "#111827"
+
+
 def _draw_bar_chart(
     path: Path,
     title: str,
     values: list[tuple[str, int]],
     value_formatter=str,
+    aggregate_remainder: bool = True,
 ) -> None:
-    values = _bounded_values(values)
+    if aggregate_remainder:
+        values = _bounded_categorical_values(values)
+        note = None
+    else:
+        values, note = _limit_individual_values(values)
     image = Image.new("RGB", CHART_SIZE, "white")
     draw = ImageDraw.Draw(image)
     title_font = _font(52)
     draw.text((90, 55), title, fill="#1f2937", font=title_font)
+    if note:
+        draw.text((90, 120), note, fill="#4b5563", font=_font(22))
 
     chart_left = 420
     chart_right = 1510
@@ -151,7 +219,7 @@ def _draw_bar_chart(
         )
         draw.text(
             (90, top + max(0, (bar_height - font_size) // 2)),
-            _shorten(label),
+            _fit_text(draw, label, label_font, chart_left - 120),
             fill="#374151",
             font=label_font,
         )
@@ -161,12 +229,18 @@ def _draw_bar_chart(
                 radius=min(8, bar_height // 3),
                 fill="#2563eb",
             )
-        draw.text(
-            (min(chart_left + width + 15, chart_right - 180), top + 3),
-            value_formatter(value),
-            fill="#111827",
-            font=value_font,
+        value_text = value_formatter(value)
+        value_position, value_color = _value_label_layout(
+            draw,
+            value_text,
+            value_font,
+            bar_left=chart_left,
+            bar_right=chart_left + width,
+            bar_top=top,
+            bar_bottom=bottom,
+            chart_right=chart_right,
         )
+        draw.text(value_position, value_text, fill=value_color, font=value_font)
 
     image.save(path, format="PNG")
 
@@ -175,10 +249,22 @@ def generate_charts(records: list[Competition], charts_dir: Path) -> list[Path]:
     charts_dir = Path(charts_dir)
     generated = []
 
+    if charts_dir.exists():
+        for filename in MANAGED_CHART_FILENAMES:
+            path = charts_dir / filename
+            if path.is_file():
+                path.unlink()
+
     status_counts = _status_counts(records)
     deadline_counts = _deadline_counts(records)
-    funding_values = _funding_values(records)
-    if not (status_counts or deadline_counts or funding_values):
+    maximum_support_values = _funding_values(records, "max_support_rub")
+    grant_fund_values = _funding_values(records, "grant_fund_rub")
+    if not (
+        status_counts
+        or deadline_counts
+        or maximum_support_values
+        or grant_fund_values
+    ):
         return generated
 
     charts_dir.mkdir(parents=True, exist_ok=True)
@@ -194,13 +280,24 @@ def generate_charts(records: list[Competition], charts_dir: Path) -> list[Path]:
             sorted(deadline_counts.items()),
         )
         generated.append(path)
-    if funding_values:
-        path = charts_dir / "funding.png"
+    if maximum_support_values:
+        path = charts_dir / "maximum_support.png"
         _draw_bar_chart(
             path,
-            "Объем поддержки",
-            funding_values,
+            "Максимальная поддержка конкурса",
+            maximum_support_values,
             value_formatter=_format_rubles,
+            aggregate_remainder=False,
+        )
+        generated.append(path)
+    if grant_fund_values:
+        path = charts_dir / "grant_funds.png"
+        _draw_bar_chart(
+            path,
+            "Общий грантовый фонд конкурса",
+            grant_fund_values,
+            value_formatter=_format_rubles,
+            aggregate_remainder=False,
         )
         generated.append(path)
 
