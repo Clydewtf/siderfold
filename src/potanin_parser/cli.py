@@ -119,6 +119,21 @@ def _validate_staged_artifacts(staging_dir: Path) -> None:
         )
 
 
+def _entry_exists(path: Path) -> bool:
+    return os.path.lexists(path)
+
+
+def _remove_entry(path: Path) -> None:
+    try:
+        mode = path.stat(follow_symlinks=False).st_mode
+    except FileNotFoundError:
+        return
+    if stat.S_ISDIR(mode):
+        shutil.rmtree(path)
+    else:
+        path.unlink()
+
+
 def _publish_staged_artifacts(staging_dir: Path, output_dir: Path) -> None:
     _validate_staged_artifacts(staging_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -130,7 +145,7 @@ def _publish_staged_artifacts(staging_dir: Path, output_dir: Path) -> None:
     try:
         for relative_path in relative_paths:
             destination = output_dir / relative_path
-            if destination.is_file():
+            if _entry_exists(destination):
                 backup = backup_dir / relative_path
                 backup.parent.mkdir(parents=True, exist_ok=True)
                 os.replace(destination, backup)
@@ -148,13 +163,12 @@ def _publish_staged_artifacts(staging_dir: Path, output_dir: Path) -> None:
         for relative_path in reversed(published):
             destination = output_dir / relative_path
             try:
-                if destination.is_file():
-                    destination.unlink()
+                _remove_entry(destination)
             except Exception as rollback_error:
                 rollback_errors.append(rollback_error)
         for relative_path in reversed(backed_up):
             backup = backup_dir / relative_path
-            if not backup.is_file():
+            if not _entry_exists(backup):
                 continue
             try:
                 destination = output_dir / relative_path

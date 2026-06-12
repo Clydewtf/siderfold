@@ -428,6 +428,94 @@ class PipelineTests(unittest.TestCase):
             self.assertEqual(self._snapshot(output_dir), before)
             self.assertEqual(list(root.glob(".output.*")), [])
 
+    def test_pipeline_rollback_restores_relative_and_broken_symlinks(self):
+        with TemporaryDirectory() as directory:
+            root = Path(directory)
+            output_dir = root / "output"
+            self._write_existing_artifacts(output_dir)
+            targets_dir = output_dir / "targets"
+            targets_dir.mkdir()
+            (targets_dir / "old.json").write_bytes(b"old target")
+
+            json_path = output_dir / "competitions.json"
+            csv_path = output_dir / "competitions.csv"
+            json_path.unlink()
+            csv_path.unlink()
+            json_path.symlink_to("targets/old.json")
+            csv_path.symlink_to("missing.csv")
+
+            from potanin_parser import cli
+
+            real_replace = cli.os.replace
+
+            def failing_replace(source, destination):
+                source = Path(source)
+                if (
+                    ".output.staging-" in source.parent.name
+                    and source.name == "summary.json"
+                ):
+                    raise OSError("publication failed")
+                return real_replace(source, destination)
+
+            with patch("potanin_parser.cli.os.replace", side_effect=failing_replace):
+                with self.assertLogs("potanin_parser", level="WARNING"):
+                    with self.assertRaisesRegex(OSError, "publication failed"):
+                        run_pipeline(
+                            catalog_url="https://example.test/competitions/",
+                            output_dir=output_dir,
+                            delay_seconds=0,
+                            limit=None,
+                            client=FakePipelineClient(),
+                        )
+
+            self.assertTrue(json_path.is_symlink())
+            self.assertEqual(json_path.readlink(), Path("targets/old.json"))
+            self.assertTrue(csv_path.is_symlink())
+            self.assertEqual(csv_path.readlink(), Path("missing.csv"))
+            self.assertEqual((targets_dir / "old.json").read_bytes(), b"old target")
+            self.assertEqual(list(root.glob(".output.*")), [])
+
+    def test_successful_publication_replaces_managed_links_and_directories(self):
+        with TemporaryDirectory() as directory:
+            root = Path(directory)
+            output_dir = root / "output"
+            self._write_existing_artifacts(output_dir)
+            targets_dir = output_dir / "targets"
+            targets_dir.mkdir()
+            (targets_dir / "old.json").write_bytes(b"old target")
+
+            json_path = output_dir / "competitions.json"
+            status_path = output_dir / "charts" / "statuses.png"
+            stale_path = output_dir / "charts" / "grant_funds.png"
+            json_path.unlink()
+            status_path.unlink()
+            stale_path.unlink()
+            json_path.symlink_to("targets/old.json")
+            status_path.mkdir()
+            stale_path.symlink_to("missing-grant.png")
+
+            with self.assertLogs("potanin_parser", level="WARNING"):
+                run_pipeline(
+                    catalog_url="https://example.test/competitions/",
+                    output_dir=output_dir,
+                    delay_seconds=0,
+                    limit=None,
+                    client=FakePipelineClient(),
+                )
+
+            self.assertTrue(json_path.is_file())
+            self.assertFalse(json_path.is_symlink())
+            self.assertFalse(status_path.exists())
+            self.assertFalse(status_path.is_symlink())
+            self.assertFalse(stale_path.exists())
+            self.assertFalse(stale_path.is_symlink())
+            self.assertEqual((output_dir / "custom.txt").read_bytes(), b"custom output")
+            self.assertEqual(
+                (output_dir / "charts" / "custom.png").read_bytes(),
+                b"custom chart",
+            )
+            self.assertEqual(list(root.glob(".output.*")), [])
+
     def test_incomplete_rollback_preserves_recovery_backups(self):
         with TemporaryDirectory() as directory:
             root = Path(directory)
