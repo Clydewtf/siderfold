@@ -516,6 +516,168 @@ class PipelineTests(unittest.TestCase):
             )
             self.assertEqual(list(root.glob(".output.*")), [])
 
+    def test_successful_publication_does_not_follow_output_charts_symlink(self):
+        for link_kind in ("relative", "absolute"):
+            with self.subTest(link_kind=link_kind):
+                with TemporaryDirectory() as directory:
+                    root = Path(directory)
+                    output_dir = root / "output"
+                    external_dir = root / "external"
+                    external_dir.mkdir()
+                    (external_dir / "statuses.png").write_bytes(b"external status")
+                    (external_dir / "custom.png").write_bytes(b"external custom")
+                    self._write_existing_artifacts(output_dir)
+                    charts_path = output_dir / "charts"
+                    for child in charts_path.iterdir():
+                        child.unlink()
+                    charts_path.rmdir()
+                    target = (
+                        Path("../external")
+                        if link_kind == "relative"
+                        else external_dir
+                    )
+                    charts_path.symlink_to(target, target_is_directory=True)
+
+                    def analyzer(records, staging_dir, failed_pages, collected_at):
+                        self._minimal_analysis(
+                            records, staging_dir, failed_pages, collected_at
+                        )
+                        staged_charts = staging_dir / "charts"
+                        staged_charts.mkdir()
+                        (staged_charts / "statuses.png").write_bytes(b"new status")
+
+                    with self.assertLogs("potanin_parser", level="WARNING"):
+                        run_pipeline(
+                            catalog_url="https://example.test/competitions/",
+                            output_dir=output_dir,
+                            delay_seconds=0,
+                            limit=None,
+                            client=FakePipelineClient(),
+                            exporter=self._minimal_export,
+                            analyzer=analyzer,
+                        )
+
+                    self.assertTrue(charts_path.is_dir())
+                    self.assertFalse(charts_path.is_symlink())
+                    self.assertEqual(
+                        (charts_path / "statuses.png").read_bytes(), b"new status"
+                    )
+                    self.assertEqual(
+                        (external_dir / "statuses.png").read_bytes(),
+                        b"external status",
+                    )
+                    self.assertEqual(
+                        (external_dir / "custom.png").read_bytes(),
+                        b"external custom",
+                    )
+                    self.assertEqual(
+                        (output_dir / "custom.txt").read_bytes(), b"custom output"
+                    )
+
+    def test_publication_failure_restores_output_charts_symlink(self):
+        with TemporaryDirectory() as directory:
+            root = Path(directory)
+            output_dir = root / "output"
+            external_dir = root / "external"
+            external_dir.mkdir()
+            (external_dir / "statuses.png").write_bytes(b"external status")
+            (external_dir / "custom.png").write_bytes(b"external custom")
+            self._write_existing_artifacts(output_dir)
+            charts_path = output_dir / "charts"
+            for child in charts_path.iterdir():
+                child.unlink()
+            charts_path.rmdir()
+            charts_path.symlink_to("../external", target_is_directory=True)
+
+            def analyzer(records, staging_dir, failed_pages, collected_at):
+                self._minimal_analysis(
+                    records, staging_dir, failed_pages, collected_at
+                )
+                staged_charts = staging_dir / "charts"
+                staged_charts.mkdir()
+                (staged_charts / "statuses.png").write_bytes(b"new status")
+
+            from potanin_parser import cli
+
+            real_replace = cli.os.replace
+
+            def failing_replace(source, destination):
+                source = Path(source)
+                if source.parent.name == "charts" and source.name == "statuses.png":
+                    raise OSError("chart publication failed")
+                return real_replace(source, destination)
+
+            with patch("potanin_parser.cli.os.replace", side_effect=failing_replace):
+                with self.assertLogs("potanin_parser", level="WARNING"):
+                    with self.assertRaisesRegex(OSError, "chart publication failed"):
+                        run_pipeline(
+                            catalog_url="https://example.test/competitions/",
+                            output_dir=output_dir,
+                            delay_seconds=0,
+                            limit=None,
+                            client=FakePipelineClient(),
+                            exporter=self._minimal_export,
+                            analyzer=analyzer,
+                        )
+
+            self.assertTrue(charts_path.is_symlink())
+            self.assertEqual(charts_path.readlink(), Path("../external"))
+            self.assertEqual(
+                (external_dir / "statuses.png").read_bytes(), b"external status"
+            )
+            self.assertEqual(
+                (external_dir / "custom.png").read_bytes(), b"external custom"
+            )
+            self.assertEqual(list(root.glob(".output.*")), [])
+
+    def test_pipeline_rejects_unsafe_staged_charts_before_output_changes(self):
+        for unsafe_kind in ("charts_symlink", "chart_symlink"):
+            with self.subTest(unsafe_kind=unsafe_kind):
+                with TemporaryDirectory() as directory:
+                    root = Path(directory)
+                    output_dir = root / "output"
+                    external_dir = root / "external"
+                    external_dir.mkdir()
+                    (external_dir / "statuses.png").write_bytes(b"external status")
+                    self._write_existing_artifacts(output_dir)
+                    before = self._snapshot(output_dir)
+
+                    def analyzer(records, staging_dir, failed_pages, collected_at):
+                        self._minimal_analysis(
+                            records, staging_dir, failed_pages, collected_at
+                        )
+                        staged_charts = staging_dir / "charts"
+                        if unsafe_kind == "charts_symlink":
+                            staged_charts.symlink_to(
+                                external_dir, target_is_directory=True
+                            )
+                        else:
+                            staged_charts.mkdir()
+                            (staged_charts / "statuses.png").symlink_to(
+                                external_dir / "statuses.png"
+                            )
+
+                    with self.assertLogs("potanin_parser", level="WARNING"):
+                        with self.assertRaisesRegex(
+                            RuntimeError, "unsafe staged charts"
+                        ):
+                            run_pipeline(
+                                catalog_url="https://example.test/competitions/",
+                                output_dir=output_dir,
+                                delay_seconds=0,
+                                limit=None,
+                                client=FakePipelineClient(),
+                                exporter=self._minimal_export,
+                                analyzer=analyzer,
+                            )
+
+                    self.assertEqual(self._snapshot(output_dir), before)
+                    self.assertEqual(
+                        (external_dir / "statuses.png").read_bytes(),
+                        b"external status",
+                    )
+                    self.assertEqual(list(root.glob(".output.*")), [])
+
     def test_incomplete_rollback_preserves_recovery_backups(self):
         with TemporaryDirectory() as directory:
             root = Path(directory)

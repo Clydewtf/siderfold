@@ -85,14 +85,19 @@ def _default_analyzer(
     return summary
 
 
-def _managed_relative_paths() -> list[Path]:
+def _managed_chart_paths() -> list[Path]:
     from .analytics import MANAGED_CHART_FILENAMES
 
-    paths = [Path(filename) for filename in MANAGED_ROOT_FILENAMES]
-    paths.extend(
+    return [
         Path("charts") / filename for filename in sorted(MANAGED_CHART_FILENAMES)
-    )
-    return paths
+    ]
+
+
+def _entry_mode(path: Path) -> int | None:
+    try:
+        return path.stat(follow_symlinks=False).st_mode
+    except FileNotFoundError:
+        return None
 
 
 def _validate_staged_artifacts(staging_dir: Path) -> None:
@@ -118,6 +123,24 @@ def _validate_staged_artifacts(staging_dir: Path) -> None:
             f"{', '.join(non_regular)}"
         )
 
+    charts_dir = staging_dir / "charts"
+    charts_mode = _entry_mode(charts_dir)
+    if charts_mode is None:
+        return
+    if not stat.S_ISDIR(charts_mode):
+        raise RuntimeError("unsafe staged charts directory: must be a real directory")
+
+    unsafe_charts = []
+    for relative_path in _managed_chart_paths():
+        chart_mode = _entry_mode(staging_dir / relative_path)
+        if chart_mode is not None and not stat.S_ISREG(chart_mode):
+            unsafe_charts.append(relative_path.name)
+    if unsafe_charts:
+        raise RuntimeError(
+            "unsafe staged charts: expected regular files: "
+            f"{', '.join(unsafe_charts)}"
+        )
+
 
 def _entry_exists(path: Path) -> bool:
     return os.path.lexists(path)
@@ -137,13 +160,14 @@ def _remove_entry(path: Path) -> None:
 def _publish_staged_artifacts(staging_dir: Path, output_dir: Path) -> None:
     _validate_staged_artifacts(staging_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
-    relative_paths = _managed_relative_paths()
+    root_paths = [Path(filename) for filename in MANAGED_ROOT_FILENAMES]
+    chart_paths = _managed_chart_paths()
     prefix = f".{output_dir.name}.recovery-"
     backup_dir = Path(mkdtemp(prefix=prefix, dir=output_dir.parent))
     backed_up: list[Path] = []
     published: list[Path] = []
     try:
-        for relative_path in relative_paths:
+        for relative_path in root_paths:
             destination = output_dir / relative_path
             if _entry_exists(destination):
                 backup = backup_dir / relative_path
@@ -151,13 +175,42 @@ def _publish_staged_artifacts(staging_dir: Path, output_dir: Path) -> None:
                 os.replace(destination, backup)
                 backed_up.append(relative_path)
 
-        for relative_path in relative_paths:
+        output_charts = output_dir / "charts"
+        output_charts_mode = _entry_mode(output_charts)
+        if output_charts_mode is not None and not stat.S_ISDIR(output_charts_mode):
+            backup = backup_dir / "charts"
+            os.replace(output_charts, backup)
+            backed_up.append(Path("charts"))
+        elif output_charts_mode is not None:
+            for relative_path in chart_paths:
+                destination = output_dir / relative_path
+                if _entry_exists(destination):
+                    backup = backup_dir / relative_path
+                    backup.parent.mkdir(parents=True, exist_ok=True)
+                    os.replace(destination, backup)
+                    backed_up.append(relative_path)
+
+        for relative_path in root_paths:
             staged = staging_dir / relative_path
             if staged.is_file():
                 destination = output_dir / relative_path
                 destination.parent.mkdir(parents=True, exist_ok=True)
                 os.replace(staged, destination)
                 published.append(relative_path)
+
+        staged_chart_paths = [
+            relative_path
+            for relative_path in chart_paths
+            if _entry_mode(staging_dir / relative_path) is not None
+        ]
+        if staged_chart_paths and not _entry_exists(output_charts):
+            output_charts.mkdir()
+            published.append(Path("charts"))
+        for relative_path in staged_chart_paths:
+            staged = staging_dir / relative_path
+            destination = output_dir / relative_path
+            os.replace(staged, destination)
+            published.append(relative_path)
     except Exception as publication_error:
         rollback_errors = []
         for relative_path in reversed(published):
