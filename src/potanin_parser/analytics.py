@@ -8,6 +8,7 @@ from .models import Competition
 
 
 CHART_SIZE = (1600, 900)
+MAX_CHART_BARS = 15
 _FONT_PATHS = (
     "/System/Library/Fonts/Supplemental/Arial.ttf",
     "/System/Library/Fonts/Supplemental/Arial Unicode.ttf",
@@ -30,7 +31,11 @@ def _deadline_counts(records: Iterable[Competition]) -> Counter[str]:
 def _funding_values(records: Iterable[Competition]) -> list[tuple[str, int]]:
     values = []
     for index, record in enumerate(records, start=1):
-        amount = record.max_support_rub or record.grant_fund_rub
+        amount = (
+            record.max_support_rub
+            if record.max_support_rub is not None
+            else record.grant_fund_rub
+        )
         if amount is not None:
             label = record.title.strip() or f"Конкурс {index}"
             values.append((label, amount))
@@ -92,17 +97,32 @@ def _shorten(label: str, limit: int = 34) -> str:
     return label if len(label) <= limit else f"{label[: limit - 1]}…"
 
 
+def _format_rubles(value: int) -> str:
+    return f"{value:,} руб.".replace(",", " ")
+
+
+def _bounded_values(values: list[tuple[str, int]]) -> list[tuple[str, int]]:
+    if len(values) <= MAX_CHART_BARS:
+        return values
+
+    visible = values[: MAX_CHART_BARS - 1]
+    remainder = values[MAX_CHART_BARS - 1 :]
+    visible.append(
+        (f"Остальные ({len(remainder)})", sum(value for _, value in remainder))
+    )
+    return visible
+
+
 def _draw_bar_chart(
     path: Path,
     title: str,
     values: list[tuple[str, int]],
     value_formatter=str,
 ) -> None:
+    values = _bounded_values(values)
     image = Image.new("RGB", CHART_SIZE, "white")
     draw = ImageDraw.Draw(image)
     title_font = _font(52)
-    label_font = _font(28)
-    value_font = _font(25)
     draw.text((90, 55), title, fill="#1f2937", font=title_font)
 
     chart_left = 420
@@ -110,26 +130,36 @@ def _draw_bar_chart(
     chart_top = 160
     chart_bottom = 830
     maximum = max(value for _, value in values)
-    bar_gap = 18
-    bar_height = max(24, (chart_bottom - chart_top) // len(values) - bar_gap)
+    bar_gap = max(6, 18 - len(values))
+    bar_height = (
+        chart_bottom - chart_top - bar_gap * (len(values) - 1)
+    ) // len(values)
+    font_size = max(16, min(28, bar_height - 8))
+    label_font = _font(font_size)
+    value_font = _font(max(15, font_size - 2))
 
     for index, (label, value) in enumerate(values):
         top = chart_top + index * (bar_height + bar_gap)
         bottom = top + bar_height
-        width = int((chart_right - chart_left) * value / maximum)
+        width = (
+            int((chart_right - chart_left) * value / maximum)
+            if maximum > 0
+            else 0
+        )
         draw.text(
-            (90, top + max(0, (bar_height - 28) // 2)),
+            (90, top + max(0, (bar_height - font_size) // 2)),
             _shorten(label),
             fill="#374151",
             font=label_font,
         )
-        draw.rounded_rectangle(
-            (chart_left, top, chart_left + width, bottom),
-            radius=8,
-            fill="#2563eb",
-        )
+        if width > 0:
+            draw.rounded_rectangle(
+                (chart_left, top, chart_left + width, bottom),
+                radius=min(8, bar_height // 3),
+                fill="#2563eb",
+            )
         draw.text(
-            (min(chart_left + width + 15, chart_right - 180), top + 5),
+            (min(chart_left + width + 15, chart_right - 180), top + 3),
             value_formatter(value),
             fill="#111827",
             font=value_font,
@@ -167,7 +197,7 @@ def generate_charts(records: list[Competition], charts_dir: Path) -> list[Path]:
             path,
             "Объем поддержки",
             funding_values,
-            value_formatter=lambda value: f"{value:,} ₽".replace(",", " "),
+            value_formatter=_format_rubles,
         )
         generated.append(path)
 
