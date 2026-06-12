@@ -3,11 +3,13 @@ import json
 import logging
 import math
 import os
+import shutil
+import stat
 import time
 from collections.abc import Callable, Sequence
 from datetime import datetime, timezone
 from pathlib import Path
-from tempfile import TemporaryDirectory
+from tempfile import TemporaryDirectory, mkdtemp
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
 from .client import HttpClient
@@ -24,6 +26,24 @@ MANAGED_ROOT_FILENAMES = (
     "competitions.csv",
     "summary.json",
 )
+
+
+class ArtifactPublicationError(RuntimeError):
+    def __init__(
+        self,
+        publication_error: Exception,
+        rollback_errors: list[Exception],
+        recovery_dir: Path,
+    ) -> None:
+        self.publication_error = publication_error
+        self.rollback_errors = rollback_errors
+        self.recovery_dir = recovery_dir
+        rollback_details = "; ".join(str(error) for error in rollback_errors)
+        super().__init__(
+            f"Artifact publication failed: {publication_error}; "
+            f"rollback incomplete: {rollback_details}; "
+            f"recoverable backups preserved at {recovery_dir}"
+        )
 
 
 def _show_all_url(catalog_url: str) -> str:
@@ -75,40 +95,91 @@ def _managed_relative_paths() -> list[Path]:
     return paths
 
 
-def _publish_staged_artifacts(staging_dir: Path, output_dir: Path) -> None:
-    relative_paths = _managed_relative_paths()
-    prefix = f".{output_dir.name}.backup-"
-    with TemporaryDirectory(prefix=prefix, dir=output_dir.parent) as backup_name:
-        backup_dir = Path(backup_name)
-        backed_up: list[Path] = []
-        published: list[Path] = []
+def _validate_staged_artifacts(staging_dir: Path) -> None:
+    missing = []
+    non_regular = []
+    for filename in MANAGED_ROOT_FILENAMES:
+        path = staging_dir / filename
         try:
-            for relative_path in relative_paths:
-                destination = output_dir / relative_path
-                if destination.is_file():
-                    backup = backup_dir / relative_path
-                    backup.parent.mkdir(parents=True, exist_ok=True)
-                    os.replace(destination, backup)
-                    backed_up.append(relative_path)
+            mode = path.stat(follow_symlinks=False).st_mode
+        except FileNotFoundError:
+            missing.append(filename)
+            continue
+        if not stat.S_ISREG(mode):
+            non_regular.append(filename)
 
-            for relative_path in relative_paths:
-                staged = staging_dir / relative_path
-                if staged.is_file():
-                    destination = output_dir / relative_path
-                    destination.parent.mkdir(parents=True, exist_ok=True)
-                    os.replace(staged, destination)
-                    published.append(relative_path)
-        except Exception:
-            for relative_path in reversed(published):
+    if missing:
+        raise RuntimeError(
+            f"missing mandatory staged artifacts: {', '.join(missing)}"
+        )
+    if non_regular:
+        raise RuntimeError(
+            "non-regular mandatory staged artifacts: "
+            f"{', '.join(non_regular)}"
+        )
+
+
+def _publish_staged_artifacts(staging_dir: Path, output_dir: Path) -> None:
+    _validate_staged_artifacts(staging_dir)
+    output_dir.mkdir(parents=True, exist_ok=True)
+    relative_paths = _managed_relative_paths()
+    prefix = f".{output_dir.name}.recovery-"
+    backup_dir = Path(mkdtemp(prefix=prefix, dir=output_dir.parent))
+    backed_up: list[Path] = []
+    published: list[Path] = []
+    try:
+        for relative_path in relative_paths:
+            destination = output_dir / relative_path
+            if destination.is_file():
+                backup = backup_dir / relative_path
+                backup.parent.mkdir(parents=True, exist_ok=True)
+                os.replace(destination, backup)
+                backed_up.append(relative_path)
+
+        for relative_path in relative_paths:
+            staged = staging_dir / relative_path
+            if staged.is_file():
                 destination = output_dir / relative_path
+                destination.parent.mkdir(parents=True, exist_ok=True)
+                os.replace(staged, destination)
+                published.append(relative_path)
+    except Exception as publication_error:
+        rollback_errors = []
+        for relative_path in reversed(published):
+            destination = output_dir / relative_path
+            try:
                 if destination.is_file():
                     destination.unlink()
-            for relative_path in reversed(backed_up):
-                backup = backup_dir / relative_path
+            except Exception as rollback_error:
+                rollback_errors.append(rollback_error)
+        for relative_path in reversed(backed_up):
+            backup = backup_dir / relative_path
+            if not backup.is_file():
+                continue
+            try:
                 destination = output_dir / relative_path
                 destination.parent.mkdir(parents=True, exist_ok=True)
                 os.replace(backup, destination)
-            raise
+            except Exception as rollback_error:
+                rollback_errors.append(rollback_error)
+
+        if rollback_errors:
+            raise ArtifactPublicationError(
+                publication_error,
+                rollback_errors,
+                backup_dir,
+            ) from publication_error
+        shutil.rmtree(backup_dir)
+        raise
+    else:
+        shutil.rmtree(backup_dir)
+
+
+def _validate_delay_seconds(delay_seconds: float) -> None:
+    if not math.isfinite(delay_seconds):
+        raise ValueError("delay_seconds must be finite")
+    if delay_seconds < 0:
+        raise ValueError("delay_seconds must not be negative")
 
 
 def run_pipeline(
@@ -122,7 +193,8 @@ def run_pipeline(
     sleep: Callable[[float], None] = time.sleep,
 ) -> list[Competition]:
     output_dir = Path(output_dir)
-    output_dir.mkdir(parents=True, exist_ok=True)
+    _validate_delay_seconds(delay_seconds)
+    output_dir.parent.mkdir(parents=True, exist_ok=True)
     http_client = client or HttpClient(delay_seconds=delay_seconds)
     collected_at = datetime.now(timezone.utc).isoformat()
 

@@ -127,6 +127,15 @@ class AdditionalHttpClientTests(unittest.TestCase):
 
 class PipelineTests(unittest.TestCase):
     @staticmethod
+    def _minimal_export(records, output_dir: Path) -> None:
+        (output_dir / "competitions.json").write_bytes(b"[]")
+        (output_dir / "competitions.csv").write_bytes(b"title\n")
+
+    @staticmethod
+    def _minimal_analysis(records, output_dir: Path, failed_pages, collected_at) -> None:
+        (output_dir / "summary.json").write_bytes(b"{}")
+
+    @staticmethod
     def _write_existing_artifacts(output_dir: Path) -> None:
         output_dir.mkdir(parents=True, exist_ok=True)
         charts_dir = output_dir / "charts"
@@ -159,9 +168,11 @@ class PipelineTests(unittest.TestCase):
 
         def exporter(records, output_dir):
             exported.append((records, output_dir))
+            self._minimal_export(records, output_dir)
 
         def analyzer(records, output_dir, failed_pages, collected_at):
             analyzed.append((records, output_dir, failed_pages, collected_at))
+            self._minimal_analysis(records, output_dir, failed_pages, collected_at)
 
         with TemporaryDirectory() as directory:
             output_dir = Path(directory)
@@ -197,6 +208,12 @@ class PipelineTests(unittest.TestCase):
         def sleep(seconds: float) -> None:
             events.append(("sleep", seconds))
 
+        def exporter(records, output_dir):
+            self._minimal_export(records, output_dir)
+
+        def analyzer(records, output_dir, failed_pages, collected_at):
+            self._minimal_analysis(records, output_dir, failed_pages, collected_at)
+
         with TemporaryDirectory() as directory:
             with self.assertLogs("potanin_parser", level="WARNING"):
                 run_pipeline(
@@ -205,8 +222,8 @@ class PipelineTests(unittest.TestCase):
                     delay_seconds=2.5,
                     limit=None,
                     client=TracedClient(),
-                    exporter=lambda records, output_dir: None,
-                    analyzer=lambda records, output_dir, failed_pages, collected_at: None,
+                    exporter=exporter,
+                    analyzer=analyzer,
                     sleep=sleep,
                 )
 
@@ -251,6 +268,93 @@ class PipelineTests(unittest.TestCase):
 
             self.assertEqual(self._snapshot(output_dir), before)
             self.assertEqual(list(root.glob(".output.*")), [])
+
+    def test_pipeline_rejects_missing_mandatory_staged_artifacts(self):
+        for callback_kind in ("noop", "partial"):
+            with self.subTest(callback_kind=callback_kind):
+                with TemporaryDirectory() as directory:
+                    root = Path(directory)
+                    output_dir = root / "output"
+                    self._write_existing_artifacts(output_dir)
+                    before = self._snapshot(output_dir)
+
+                    def exporter(records, staging_dir):
+                        if callback_kind == "partial":
+                            (staging_dir / "competitions.json").write_bytes(b"[]")
+
+                    def analyzer(records, staging_dir, failed_pages, collected_at):
+                        if callback_kind == "partial":
+                            (staging_dir / "summary.json").write_bytes(b"{}")
+
+                    with self.assertLogs("potanin_parser", level="WARNING"):
+                        with self.assertRaisesRegex(
+                            RuntimeError, "missing mandatory staged artifacts"
+                        ) as context:
+                            run_pipeline(
+                                catalog_url="https://example.test/competitions/",
+                                output_dir=output_dir,
+                                delay_seconds=0,
+                                limit=None,
+                                client=FakePipelineClient(),
+                                exporter=exporter,
+                                analyzer=analyzer,
+                            )
+
+                    if callback_kind == "partial":
+                        self.assertIn("competitions.csv", str(context.exception))
+                    self.assertEqual(self._snapshot(output_dir), before)
+                    self.assertEqual(list(root.glob(".output.*")), [])
+
+    def test_pipeline_rejects_non_regular_mandatory_staged_artifact(self):
+        with TemporaryDirectory() as directory:
+            root = Path(directory)
+            output_dir = root / "output"
+            self._write_existing_artifacts(output_dir)
+            before = self._snapshot(output_dir)
+
+            def exporter(records, staging_dir):
+                (staging_dir / "competitions.json").write_bytes(b"[]")
+                (staging_dir / "competitions.csv").mkdir()
+
+            def analyzer(records, staging_dir, failed_pages, collected_at):
+                (staging_dir / "summary.json").write_bytes(b"{}")
+
+            with self.assertLogs("potanin_parser", level="WARNING"):
+                with self.assertRaisesRegex(
+                    RuntimeError, "non-regular mandatory staged artifacts"
+                ):
+                    run_pipeline(
+                        catalog_url="https://example.test/competitions/",
+                        output_dir=output_dir,
+                        delay_seconds=0,
+                        limit=None,
+                        client=FakePipelineClient(),
+                        exporter=exporter,
+                        analyzer=analyzer,
+                    )
+
+            self.assertEqual(self._snapshot(output_dir), before)
+            self.assertEqual(list(root.glob(".output.*")), [])
+
+    def test_staged_validation_failure_does_not_create_output_directory(self):
+        with TemporaryDirectory() as directory:
+            output_dir = Path(directory) / "output"
+
+            with self.assertLogs("potanin_parser", level="WARNING"):
+                with self.assertRaisesRegex(
+                    RuntimeError, "missing mandatory staged artifacts"
+                ):
+                    run_pipeline(
+                        catalog_url="https://example.test/competitions/",
+                        output_dir=output_dir,
+                        delay_seconds=0,
+                        limit=None,
+                        client=FakePipelineClient(),
+                        exporter=lambda records, staging_dir: None,
+                        analyzer=lambda records, staging_dir, failed, collected: None,
+                    )
+
+            self.assertFalse(output_dir.exists())
 
     def test_pipeline_publishes_complete_set_and_preserves_unrelated_files(self):
         with TemporaryDirectory() as directory:
@@ -323,6 +427,78 @@ class PipelineTests(unittest.TestCase):
 
             self.assertEqual(self._snapshot(output_dir), before)
             self.assertEqual(list(root.glob(".output.*")), [])
+
+    def test_incomplete_rollback_preserves_recovery_backups(self):
+        with TemporaryDirectory() as directory:
+            root = Path(directory)
+            output_dir = root / "output"
+            self._write_existing_artifacts(output_dir)
+            from potanin_parser import cli
+
+            real_replace = cli.os.replace
+
+            def failing_replace(source, destination):
+                source = Path(source)
+                destination = Path(destination)
+                if ".output.staging-" in source.parent.name and source.name == "competitions.csv":
+                    raise OSError("publication unavailable")
+                if ".output.recovery-" in source.parent.name and destination.name == "competitions.csv":
+                    raise OSError("rollback unavailable")
+                return real_replace(source, destination)
+
+            with patch("potanin_parser.cli.os.replace", side_effect=failing_replace):
+                with self.assertLogs("potanin_parser", level="WARNING"):
+                    with self.assertRaisesRegex(
+                        RuntimeError, "recovery"
+                    ) as context:
+                        run_pipeline(
+                            catalog_url="https://example.test/competitions/",
+                            output_dir=output_dir,
+                            delay_seconds=0,
+                            limit=None,
+                            client=FakePipelineClient(),
+                        )
+
+            recovery_dirs = list(root.glob(".output.recovery-*"))
+            self.assertEqual(len(recovery_dirs), 1)
+            recovery_dir = recovery_dirs[0]
+            self.assertIn(str(recovery_dir), str(context.exception))
+            self.assertIn("publication unavailable", str(context.exception))
+            self.assertIn("rollback unavailable", str(context.exception))
+            self.assertEqual(str(context.exception.__cause__), "publication unavailable")
+            self.assertEqual(
+                [str(error) for error in context.exception.rollback_errors],
+                ["rollback unavailable"],
+            )
+            self.assertEqual(
+                (recovery_dir / "competitions.csv").read_bytes(),
+                b"old:competitions.csv",
+            )
+
+    def test_pipeline_rejects_invalid_delay_before_io(self):
+        cases = (
+            (float("nan"), "finite"),
+            (float("inf"), "finite"),
+            (float("-inf"), "finite"),
+            (-1.0, "negative"),
+        )
+        for delay, message in cases:
+            with self.subTest(delay=delay):
+                with TemporaryDirectory() as directory:
+                    output_dir = Path(directory) / "output"
+                    client = FakePipelineClient()
+
+                    with self.assertRaisesRegex(ValueError, message):
+                        run_pipeline(
+                            catalog_url="https://example.test/competitions/",
+                            output_dir=output_dir,
+                            delay_seconds=delay,
+                            limit=None,
+                            client=client,
+                        )
+
+                    self.assertFalse(output_dir.exists())
+                    self.assertEqual(client.urls, [])
 
 
 class CliTests(unittest.TestCase):
