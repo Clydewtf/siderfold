@@ -1,10 +1,13 @@
+import json
 import unittest
 from pathlib import Path
 from tempfile import TemporaryDirectory
+from unittest.mock import patch
 from urllib.request import Request
 
 from potanin_parser.client import FetchError, HttpClient
-from potanin_parser.cli import run_pipeline
+from potanin_parser.cli import _default_analyzer, main, run_pipeline
+from potanin_parser.models import Competition
 
 
 class FakeHeaders:
@@ -73,6 +76,12 @@ class FakePipelineClient:
 
 
 class AdditionalHttpClientTests(unittest.TestCase):
+    def test_client_rejects_non_finite_delays(self):
+        for delay in (float("nan"), float("inf"), float("-inf")):
+            with self.subTest(delay=delay):
+                with self.assertRaisesRegex(ValueError, "finite"):
+                    HttpClient(delay_seconds=delay)
+
     def test_client_sends_polite_headers_and_timeout(self):
         opener = FakeOpener([FakeResponse(b"ok")])
         client = HttpClient(opener=opener, retries=1, delay_seconds=0)
@@ -117,6 +126,32 @@ class AdditionalHttpClientTests(unittest.TestCase):
 
 
 class PipelineTests(unittest.TestCase):
+    @staticmethod
+    def _write_existing_artifacts(output_dir: Path) -> None:
+        output_dir.mkdir(parents=True, exist_ok=True)
+        charts_dir = output_dir / "charts"
+        charts_dir.mkdir()
+        for name in ("competitions.json", "competitions.csv", "summary.json"):
+            (output_dir / name).write_bytes(f"old:{name}".encode())
+        for name in (
+            "statuses.png",
+            "deadlines.png",
+            "maximum_support.png",
+            "grant_funds.png",
+        ):
+            (charts_dir / name).write_bytes(f"old:{name}".encode())
+        (output_dir / "run.log").write_bytes(b"existing log")
+        (output_dir / "custom.txt").write_bytes(b"custom output")
+        (charts_dir / "custom.png").write_bytes(b"custom chart")
+
+    @staticmethod
+    def _snapshot(directory: Path) -> dict[str, bytes]:
+        return {
+            str(path.relative_to(directory)): path.read_bytes()
+            for path in directory.rglob("*")
+            if path.is_file()
+        }
+
     def test_pipeline_continues_after_card_failure_and_calls_outputs(self):
         client = FakePipelineClient()
         exported: list[tuple[list, Path]] = []
@@ -185,6 +220,143 @@ class PipelineTests(unittest.TestCase):
                 ("get", "https://example.test/competitions/fail"),
             ],
         )
+
+    def test_pipeline_keeps_existing_artifacts_when_analyzer_fails(self):
+        with TemporaryDirectory() as directory:
+            root = Path(directory)
+            output_dir = root / "output"
+            self._write_existing_artifacts(output_dir)
+            before = self._snapshot(output_dir)
+
+            def failing_analyzer(
+                records, staging_dir, failed_pages, collected_at
+            ) -> None:
+                self.assertNotEqual(staging_dir, output_dir)
+                (staging_dir / "summary.json").write_bytes(b"partial summary")
+                charts_dir = staging_dir / "charts"
+                charts_dir.mkdir()
+                (charts_dir / "statuses.png").write_bytes(b"partial chart")
+                raise RuntimeError("analytics failed")
+
+            with self.assertLogs("potanin_parser", level="WARNING"):
+                with self.assertRaisesRegex(RuntimeError, "analytics failed"):
+                    run_pipeline(
+                        catalog_url="https://example.test/competitions/",
+                        output_dir=output_dir,
+                        delay_seconds=0,
+                        limit=None,
+                        client=FakePipelineClient(),
+                        analyzer=failing_analyzer,
+                    )
+
+            self.assertEqual(self._snapshot(output_dir), before)
+            self.assertEqual(list(root.glob(".output.*")), [])
+
+    def test_pipeline_publishes_complete_set_and_preserves_unrelated_files(self):
+        with TemporaryDirectory() as directory:
+            root = Path(directory)
+            output_dir = root / "output"
+            self._write_existing_artifacts(output_dir)
+
+            with self.assertLogs("potanin_parser", level="WARNING"):
+                run_pipeline(
+                    catalog_url="https://example.test/competitions/",
+                    output_dir=output_dir,
+                    delay_seconds=0,
+                    limit=None,
+                    client=FakePipelineClient(),
+                )
+
+            records = json.loads(
+                (output_dir / "competitions.json").read_text(encoding="utf-8")
+            )
+            summary = json.loads(
+                (output_dir / "summary.json").read_text(encoding="utf-8")
+            )
+            self.assertEqual(records[0]["title"], "Рабочий конкурс")
+            self.assertEqual(summary["record_count"], 1)
+            self.assertEqual(summary["generated_charts"], [])
+            self.assertTrue((output_dir / "competitions.csv").read_bytes())
+            for name in (
+                "statuses.png",
+                "deadlines.png",
+                "maximum_support.png",
+                "grant_funds.png",
+            ):
+                self.assertFalse((output_dir / "charts" / name).exists())
+            self.assertEqual((output_dir / "run.log").read_bytes(), b"existing log")
+            self.assertEqual((output_dir / "custom.txt").read_bytes(), b"custom output")
+            self.assertEqual(
+                (output_dir / "charts" / "custom.png").read_bytes(),
+                b"custom chart",
+            )
+            self.assertEqual(list(root.glob(".output.*")), [])
+
+    def test_pipeline_rolls_back_mid_publication_failure(self):
+        with TemporaryDirectory() as directory:
+            root = Path(directory)
+            output_dir = root / "output"
+            self._write_existing_artifacts(output_dir)
+            before = self._snapshot(output_dir)
+            from potanin_parser import cli
+
+            real_replace = cli.os.replace
+            calls = 0
+
+            def failing_replace(source, destination):
+                nonlocal calls
+                calls += 1
+                if calls == 9:
+                    raise OSError("publication failed")
+                return real_replace(source, destination)
+
+            with patch("potanin_parser.cli.os.replace", side_effect=failing_replace):
+                with self.assertLogs("potanin_parser", level="WARNING"):
+                    with self.assertRaisesRegex(OSError, "publication failed"):
+                        run_pipeline(
+                            catalog_url="https://example.test/competitions/",
+                            output_dir=output_dir,
+                            delay_seconds=0,
+                            limit=None,
+                            client=FakePipelineClient(),
+                        )
+
+            self.assertEqual(self._snapshot(output_dir), before)
+            self.assertEqual(list(root.glob(".output.*")), [])
+
+
+class CliTests(unittest.TestCase):
+    def test_cli_rejects_non_finite_delays(self):
+        for delay in ("nan", "inf", "-inf"):
+            with self.subTest(delay=delay):
+                with (
+                    patch("potanin_parser.cli.configure_logging") as configure,
+                    patch("potanin_parser.cli.run_pipeline") as pipeline,
+                    self.assertRaisesRegex(SystemExit, "finite"),
+                ):
+                    main([f"--delay={delay}"])
+                configure.assert_not_called()
+                pipeline.assert_not_called()
+
+    def test_default_analyzer_records_chart_paths_relative_to_output(self):
+        record = Competition(
+            source="Фонд Потанина",
+            source_url="https://example.test/competition",
+            collected_at="2026-06-13T00:00:00+07:00",
+            title="Конкурс",
+            status="Открыт",
+        )
+
+        with TemporaryDirectory() as directory:
+            output_dir = Path(directory)
+            summary = _default_analyzer(
+                [record],
+                output_dir,
+                failed_pages=0,
+                collected_at=record.collected_at,
+            )
+
+        self.assertEqual(summary["generated_charts"], ["charts/statuses.png"])
 
 
 if __name__ == "__main__":

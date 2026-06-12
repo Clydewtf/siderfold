@@ -1,3 +1,4 @@
+import math
 import time
 from typing import Protocol
 from urllib.request import Request, build_opener
@@ -26,6 +27,8 @@ class HttpClient:
     ) -> None:
         if retries < 1:
             raise ValueError("retries must be at least 1")
+        if not math.isfinite(delay_seconds):
+            raise ValueError("delay_seconds must be finite")
         if delay_seconds < 0:
             raise ValueError("delay_seconds must not be negative")
         self.opener = opener or build_opener()
