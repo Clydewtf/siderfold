@@ -21,7 +21,7 @@ from .models import Competition
 DEFAULT_CATALOG_URL = "https://fondpotanin.ru/competitions/"
 LOGGER = logging.getLogger("potanin_parser")
 Exporter = Callable[[list[Competition], Path], object]
-Analyzer = Callable[[list[Competition], Path, int, str], object]
+Analyzer = Callable[[list[Competition], Path, int, str, str], object]
 MANAGED_ROOT_FILENAMES = (
     "competitions.json",
     "competitions.csv",
@@ -67,6 +67,7 @@ def _default_analyzer(
     output_dir: Path,
     failed_pages: int,
     collected_at: str,
+    source: str,
 ) -> object:
     from .analytics import build_summary, generate_charts
 
@@ -74,6 +75,7 @@ def _default_analyzer(
         records,
         collected_at=collected_at,
         failed_pages=failed_pages,
+        source=source,
     )
     chart_files = generate_charts(records, output_dir / "charts")
     summary["generated_charts"] = [
@@ -271,6 +273,7 @@ def run_pipeline(
     output_dir.parent.mkdir(parents=True, exist_ok=True)
     http_client = client or HttpClient(delay_seconds=delay_seconds)
     collected_at = datetime.now(timezone.utc).isoformat()
+    source = urlsplit(catalog_url).hostname or catalog_url
 
     catalog_html = http_client.get(_show_all_url(catalog_url))
     links = parse_catalog(catalog_html, catalog_url)
@@ -298,6 +301,7 @@ def run_pipeline(
             staging_dir,
             failed_pages,
             collected_at,
+            source,
         )
         _publish_staged_artifacts(staging_dir, output_dir)
     return records

@@ -132,7 +132,9 @@ class PipelineTests(unittest.TestCase):
         (output_dir / "competitions.csv").write_bytes(b"title\n")
 
     @staticmethod
-    def _minimal_analysis(records, output_dir: Path, failed_pages, collected_at) -> None:
+    def _minimal_analysis(
+        records, output_dir: Path, failed_pages, collected_at, source
+    ) -> None:
         (output_dir / "summary.json").write_bytes(b"{}")
 
     @staticmethod
@@ -164,15 +166,19 @@ class PipelineTests(unittest.TestCase):
     def test_pipeline_continues_after_card_failure_and_calls_outputs(self):
         client = FakePipelineClient()
         exported: list[tuple[list, Path]] = []
-        analyzed: list[tuple[list, Path, int, str]] = []
+        analyzed: list[tuple[list, Path, int, str, str]] = []
 
         def exporter(records, output_dir):
             exported.append((records, output_dir))
             self._minimal_export(records, output_dir)
 
-        def analyzer(records, output_dir, failed_pages, collected_at):
-            analyzed.append((records, output_dir, failed_pages, collected_at))
-            self._minimal_analysis(records, output_dir, failed_pages, collected_at)
+        def analyzer(records, output_dir, failed_pages, collected_at, source):
+            analyzed.append(
+                (records, output_dir, failed_pages, collected_at, source)
+            )
+            self._minimal_analysis(
+                records, output_dir, failed_pages, collected_at, source
+            )
 
         with TemporaryDirectory() as directory:
             output_dir = Path(directory)
@@ -195,6 +201,7 @@ class PipelineTests(unittest.TestCase):
         self.assertEqual(analyzed[0][0], records)
         self.assertEqual(analyzed[0][2], 1)
         self.assertTrue(analyzed[0][3])
+        self.assertEqual(analyzed[0][4], "example.test")
         self.assertTrue(any("/fail" in message for message in logs.output))
 
     def test_pipeline_sleeps_once_before_each_card_request(self):
@@ -211,8 +218,10 @@ class PipelineTests(unittest.TestCase):
         def exporter(records, output_dir):
             self._minimal_export(records, output_dir)
 
-        def analyzer(records, output_dir, failed_pages, collected_at):
-            self._minimal_analysis(records, output_dir, failed_pages, collected_at)
+        def analyzer(records, output_dir, failed_pages, collected_at, source):
+            self._minimal_analysis(
+                records, output_dir, failed_pages, collected_at, source
+            )
 
         with TemporaryDirectory() as directory:
             with self.assertLogs("potanin_parser", level="WARNING"):
@@ -246,7 +255,7 @@ class PipelineTests(unittest.TestCase):
             before = self._snapshot(output_dir)
 
             def failing_analyzer(
-                records, staging_dir, failed_pages, collected_at
+                records, staging_dir, failed_pages, collected_at, source
             ) -> None:
                 self.assertNotEqual(staging_dir, output_dir)
                 (staging_dir / "summary.json").write_bytes(b"partial summary")
@@ -282,7 +291,9 @@ class PipelineTests(unittest.TestCase):
                         if callback_kind == "partial":
                             (staging_dir / "competitions.json").write_bytes(b"[]")
 
-                    def analyzer(records, staging_dir, failed_pages, collected_at):
+                    def analyzer(
+                        records, staging_dir, failed_pages, collected_at, source
+                    ):
                         if callback_kind == "partial":
                             (staging_dir / "summary.json").write_bytes(b"{}")
 
@@ -316,7 +327,9 @@ class PipelineTests(unittest.TestCase):
                 (staging_dir / "competitions.json").write_bytes(b"[]")
                 (staging_dir / "competitions.csv").mkdir()
 
-            def analyzer(records, staging_dir, failed_pages, collected_at):
+            def analyzer(
+                records, staging_dir, failed_pages, collected_at, source
+            ):
                 (staging_dir / "summary.json").write_bytes(b"{}")
 
             with self.assertLogs("potanin_parser", level="WARNING"):
@@ -351,7 +364,9 @@ class PipelineTests(unittest.TestCase):
                         limit=None,
                         client=FakePipelineClient(),
                         exporter=lambda records, staging_dir: None,
-                        analyzer=lambda records, staging_dir, failed, collected: None,
+                        analyzer=lambda records, staging_dir, failed, collected, source: (
+                            None
+                        ),
                     )
 
             self.assertFalse(output_dir.exists())
@@ -538,9 +553,11 @@ class PipelineTests(unittest.TestCase):
                     )
                     charts_path.symlink_to(target, target_is_directory=True)
 
-                    def analyzer(records, staging_dir, failed_pages, collected_at):
+                    def analyzer(
+                        records, staging_dir, failed_pages, collected_at, source
+                    ):
                         self._minimal_analysis(
-                            records, staging_dir, failed_pages, collected_at
+                            records, staging_dir, failed_pages, collected_at, source
                         )
                         staged_charts = staging_dir / "charts"
                         staged_charts.mkdir()
@@ -589,9 +606,11 @@ class PipelineTests(unittest.TestCase):
             charts_path.rmdir()
             charts_path.symlink_to("../external", target_is_directory=True)
 
-            def analyzer(records, staging_dir, failed_pages, collected_at):
+            def analyzer(
+                records, staging_dir, failed_pages, collected_at, source
+            ):
                 self._minimal_analysis(
-                    records, staging_dir, failed_pages, collected_at
+                    records, staging_dir, failed_pages, collected_at, source
                 )
                 staged_charts = staging_dir / "charts"
                 staged_charts.mkdir()
@@ -642,9 +661,11 @@ class PipelineTests(unittest.TestCase):
                     self._write_existing_artifacts(output_dir)
                     before = self._snapshot(output_dir)
 
-                    def analyzer(records, staging_dir, failed_pages, collected_at):
+                    def analyzer(
+                        records, staging_dir, failed_pages, collected_at, source
+                    ):
                         self._minimal_analysis(
-                            records, staging_dir, failed_pages, collected_at
+                            records, staging_dir, failed_pages, collected_at, source
                         )
                         staged_charts = staging_dir / "charts"
                         if unsafe_kind == "charts_symlink":
@@ -949,9 +970,35 @@ class CliTests(unittest.TestCase):
                 output_dir,
                 failed_pages=0,
                 collected_at=record.collected_at,
+                source=record.source,
             )
 
         self.assertEqual(summary["generated_charts"], ["charts/statuses.png"])
+
+    def test_pipeline_default_analyzer_keeps_source_when_all_cards_fail(self):
+        class AllFailingClient:
+            def get(self, url: str) -> str:
+                if "SHOWALL_1=1" in url:
+                    return '<a class="programms__item-link" href="/fail">Fail</a>'
+                raise FetchError(url, TimeoutError("timed out"))
+
+        with TemporaryDirectory() as directory:
+            output_dir = Path(directory) / "output"
+            with self.assertLogs("potanin_parser", level="WARNING"):
+                records = run_pipeline(
+                    catalog_url="https://example.test/competitions/",
+                    output_dir=output_dir,
+                    delay_seconds=0,
+                    limit=None,
+                    client=AllFailingClient(),
+                )
+            summary = json.loads(
+                (output_dir / "summary.json").read_text(encoding="utf-8")
+            )
+
+        self.assertEqual(records, [])
+        self.assertEqual(summary["failed_pages"], 1)
+        self.assertEqual(summary["source"], "example.test")
 
 
 if __name__ == "__main__":

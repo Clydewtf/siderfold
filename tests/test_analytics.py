@@ -73,6 +73,7 @@ class AnalyticsTests(unittest.TestCase):
             records,
             collected_at="2026-06-12T12:00:00+07:00",
             failed_pages=2,
+            source="Фонд Потанина",
         )
 
         self.assertEqual(summary["collection_time"], "2026-06-12T12:00:00+07:00")
@@ -123,11 +124,12 @@ class AnalyticsTests(unittest.TestCase):
             [competition()],
             collected_at="2026-06-12T12:00:00+07:00",
             failed_pages=0,
+            source="Фонд Потанина",
         )
 
         self.assertEqual(
             summary["skipped_charts"],
-            ["status", "deadline", "maximum_support", "grant_funds"],
+            ["status", "deadline", "funding"],
         )
 
     def test_maximum_support_only_skips_grant_funds(self) -> None:
@@ -135,11 +137,12 @@ class AnalyticsTests(unittest.TestCase):
             [competition(max_support_rub=1_000_000)],
             collected_at="2026-06-12T12:00:00+07:00",
             failed_pages=0,
+            source="Фонд Потанина",
         )
 
         self.assertEqual(
             summary["skipped_charts"],
-            ["status", "deadline", "grant_funds"],
+            ["status", "deadline"],
         )
 
     def test_grant_fund_only_skips_maximum_support(self) -> None:
@@ -147,11 +150,12 @@ class AnalyticsTests(unittest.TestCase):
             [competition(grant_fund_rub=25_000_000)],
             collected_at="2026-06-12T12:00:00+07:00",
             failed_pages=0,
+            source="Фонд Потанина",
         )
 
         self.assertEqual(
             summary["skipped_charts"],
-            ["status", "deadline", "maximum_support"],
+            ["status", "deadline"],
         )
 
     def test_both_funding_types_skip_neither_funding_chart(self) -> None:
@@ -159,6 +163,7 @@ class AnalyticsTests(unittest.TestCase):
             [competition(max_support_rub=1_000_000, grant_fund_rub=25_000_000)],
             collected_at="2026-06-12T12:00:00+07:00",
             failed_pages=0,
+            source="Фонд Потанина",
         )
 
         self.assertEqual(summary["skipped_charts"], ["status", "deadline"])
@@ -186,8 +191,7 @@ class AnalyticsTests(unittest.TestCase):
                 [
                     "statuses.png",
                     "deadlines.png",
-                    "maximum_support.png",
-                    "grant_funds.png",
+                    "funding.png",
                 ],
             )
             for path in generated:
@@ -206,7 +210,7 @@ class AnalyticsTests(unittest.TestCase):
 
             self.assertEqual(
                 [path.name for path in generated],
-                ["maximum_support.png", "grant_funds.png"],
+                ["funding.png"],
             )
             for funding_path in generated:
                 self.assertGreater(funding_path.stat().st_size, 0)
@@ -260,6 +264,44 @@ class AnalyticsTests(unittest.TestCase):
             _funding_values(records, "grant_fund_rub"),
             [("Конкурс с двумя суммами", 25_000_000)],
         )
+
+    def test_funding_chart_labels_distinguish_both_amount_types(self) -> None:
+        records = [
+            competition(
+                title="Конкурс с двумя суммами",
+                max_support_rub=1_000_000,
+                grant_fund_rub=25_000_000,
+            )
+        ]
+
+        with (
+            TemporaryDirectory() as directory,
+            patch("potanin_parser.analytics._draw_bar_chart") as draw_chart,
+        ):
+            generate_charts(records, Path(directory) / "charts")
+
+        draw_chart.assert_called_once()
+        self.assertEqual(
+            draw_chart.call_args.args[2],
+            [
+                ("Макс. поддержка — Конкурс с двумя суммами", 1_000_000),
+                ("Грантовый фонд — Конкурс с двумя суммами", 25_000_000),
+            ],
+        )
+
+    def test_generate_charts_uses_only_combined_funding_filename(self) -> None:
+        records = [
+            competition(max_support_rub=1_000_000, grant_fund_rub=25_000_000)
+        ]
+
+        with TemporaryDirectory() as directory:
+            charts_dir = Path(directory) / "charts"
+            generated = generate_charts(records, charts_dir)
+
+            self.assertEqual([path.name for path in generated], ["funding.png"])
+            self.assertTrue((charts_dir / "funding.png").is_file())
+            self.assertFalse((charts_dir / "maximum_support.png").exists())
+            self.assertFalse((charts_dir / "grant_funds.png").exists())
 
     def test_text_and_value_layout_use_pixel_bounds(self) -> None:
         image = Image.new("RGB", CHART_SIZE, "white")

@@ -304,7 +304,7 @@ git commit -m "feat: add resilient collection pipeline"
 
 Create two `Competition` objects, export them to a temporary directory, reload JSON with `json.load`, read CSV with `csv.DictReader`, and assert that nested contacts are valid JSON strings and Russian text is preserved.
 
-- [ ] **Step 2: Write failing analytics tests**
+- [x] **Step 2: Write failing analytics tests**
 
 Assert that `build_summary` returns total records, status counts, records with deadlines/funding, min/max support and warning count. Assert that chart generation creates non-empty PNG files in `charts/`.
 
@@ -314,25 +314,25 @@ Run: `PYTHONPATH=src python3 -m unittest tests.test_exporters tests.test_analyti
 
 Expected: FAIL because exporter and analytics modules do not exist.
 
-- [ ] **Step 4: Implement JSON and CSV export**
+- [x] **Step 4: Implement JSON and CSV export**
 
 Write UTF-8 JSON with `ensure_ascii=False` and indentation. Build CSV columns from the model fields; join URL/warning lists with ` | ` and serialize `contacts`/`sections` with `json.dumps(..., ensure_ascii=False)`.
 
-- [ ] **Step 5: Implement summary generation**
+- [x] **Step 5: Implement summary generation**
 
 Return a dictionary containing collection time, source, record count, status distribution, count of parsed deadlines, count of parsed funding fields, minimum/maximum support, total warnings and failed-page count supplied by the pipeline.
 
-- [ ] **Step 6: Implement PNG charts with Pillow**
+- [x] **Step 6: Implement PNG charts with Pillow**
 
 Create readable 1600x900 white-background bar charts using bundled fonts or Pillow's default font. Generate status, deadline and funding charts only when corresponding data exists. Return a list of generated files and record skipped charts in the summary.
 
-- [ ] **Step 7: Run tests**
+- [x] **Step 7: Run tests**
 
 Run: `PYTHONPATH=src python3 -m unittest tests.test_exporters tests.test_analytics -v`
 
 Expected: all tests pass.
 
-- [ ] **Step 8: Commit**
+- [x] **Step 8: Commit**
 
 ```bash
 git add src/potanin_parser/exporters.py src/potanin_parser/analytics.py tests

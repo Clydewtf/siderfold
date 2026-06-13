@@ -50,10 +50,24 @@ def _funding_values(
     return values
 
 
+def _funding_chart_values(records: Iterable[Competition]) -> list[tuple[str, int]]:
+    values = []
+    for index, record in enumerate(records, start=1):
+        title = record.title.strip() or f"Конкурс {index}"
+        if record.max_support_rub is not None:
+            values.append(
+                (f"Макс. поддержка — {title}", record.max_support_rub)
+            )
+        if record.grant_fund_rub is not None:
+            values.append((f"Грантовый фонд — {title}", record.grant_fund_rub))
+    return values
+
+
 def build_summary(
     records: list[Competition],
     collected_at: str,
     failed_pages: int,
+    source: str,
 ) -> dict[str, object]:
     status_distribution = Counter(
         record.status or "Не указан" for record in records
@@ -69,14 +83,12 @@ def build_summary(
         skipped_charts.append("status")
     if not _deadline_counts(records):
         skipped_charts.append("deadline")
-    if not _funding_values(records, "max_support_rub"):
-        skipped_charts.append("maximum_support")
-    if not _funding_values(records, "grant_fund_rub"):
-        skipped_charts.append("grant_funds")
+    if not _funding_chart_values(records):
+        skipped_charts.append("funding")
 
     return {
         "collection_time": collected_at,
-        "source": records[0].source if records else None,
+        "source": source,
         "record_count": len(records),
         "status_distribution": dict(status_distribution),
         "parsed_deadline_count": sum(
@@ -267,13 +279,11 @@ def generate_charts(records: list[Competition], charts_dir: Path) -> list[Path]:
 
     status_counts = _status_counts(records)
     deadline_counts = _deadline_counts(records)
-    maximum_support_values = _funding_values(records, "max_support_rub")
-    grant_fund_values = _funding_values(records, "grant_fund_rub")
+    funding_values = _funding_chart_values(records)
     if not (
         status_counts
         or deadline_counts
-        or maximum_support_values
-        or grant_fund_values
+        or funding_values
     ):
         return generated
 
@@ -290,22 +300,12 @@ def generate_charts(records: list[Competition], charts_dir: Path) -> list[Path]:
             sorted(deadline_counts.items()),
         )
         generated.append(path)
-    if maximum_support_values:
-        path = charts_dir / "maximum_support.png"
+    if funding_values:
+        path = charts_dir / "funding.png"
         _draw_bar_chart(
             path,
-            "Максимальная поддержка конкурса",
-            maximum_support_values,
-            value_formatter=_format_rubles,
-            aggregate_remainder=False,
-        )
-        generated.append(path)
-    if grant_fund_values:
-        path = charts_dir / "grant_funds.png"
-        _draw_bar_chart(
-            path,
-            "Общий грантовый фонд конкурса",
-            grant_fund_values,
+            "Финансирование конкурсов",
+            funding_values,
             value_formatter=_format_rubles,
             aggregate_remainder=False,
         )
