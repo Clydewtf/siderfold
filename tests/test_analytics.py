@@ -331,6 +331,82 @@ class AnalyticsTests(unittest.TestCase):
                 ["custom.png"],
             )
 
+    def test_generate_charts_rejects_symlinked_directory_without_touching_target(
+        self,
+    ) -> None:
+        for link_kind in ("relative", "absolute"):
+            with self.subTest(link_kind=link_kind):
+                with TemporaryDirectory() as directory:
+                    root = Path(directory)
+                    external_dir = root / "external"
+                    external_dir.mkdir()
+                    (external_dir / "statuses.png").write_bytes(b"external status")
+                    (external_dir / "custom.png").write_bytes(b"external custom")
+                    charts_dir = root / "charts"
+                    target = (
+                        Path("external")
+                        if link_kind == "relative"
+                        else external_dir
+                    )
+                    charts_dir.symlink_to(target, target_is_directory=True)
+
+                    with self.assertRaisesRegex(
+                        ValueError, "charts_dir must be a real directory"
+                    ):
+                        generate_charts(
+                            [competition(status="Прием заявок")], charts_dir
+                        )
+
+                    self.assertTrue(charts_dir.is_symlink())
+                    self.assertEqual(charts_dir.readlink(), target)
+                    self.assertEqual(
+                        (external_dir / "statuses.png").read_bytes(),
+                        b"external status",
+                    )
+                    self.assertEqual(
+                        (external_dir / "custom.png").read_bytes(),
+                        b"external custom",
+                    )
+
+    def test_generate_charts_rejects_non_directory_path_without_modifying_it(
+        self,
+    ) -> None:
+        with TemporaryDirectory() as directory:
+            charts_dir = Path(directory) / "charts"
+            charts_dir.write_bytes(b"existing file")
+
+            with self.assertRaisesRegex(
+                ValueError, "charts_dir must be a real directory"
+            ):
+                generate_charts([competition(status="Прием заявок")], charts_dir)
+
+            self.assertEqual(charts_dir.read_bytes(), b"existing file")
+
+    def test_generate_charts_replaces_managed_symlink_without_touching_target(
+        self,
+    ) -> None:
+        with TemporaryDirectory() as directory:
+            root = Path(directory)
+            external_status = root / "external-status.png"
+            external_status.write_bytes(b"external status")
+            charts_dir = root / "charts"
+            charts_dir.mkdir()
+            status_path = charts_dir / "statuses.png"
+            status_path.symlink_to(external_status)
+            broken_path = charts_dir / "grant_funds.png"
+            broken_path.symlink_to(root / "missing-grant.png")
+
+            generated = generate_charts(
+                [competition(status="Прием заявок")], charts_dir
+            )
+
+            self.assertEqual(generated, [status_path])
+            self.assertTrue(status_path.is_file())
+            self.assertFalse(status_path.is_symlink())
+            self.assertGreater(status_path.stat().st_size, 0)
+            self.assertEqual(external_status.read_bytes(), b"external status")
+            self.assertFalse(broken_path.is_symlink())
+
 
 if __name__ == "__main__":
     unittest.main()

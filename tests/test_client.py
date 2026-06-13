@@ -750,6 +750,69 @@ class PipelineTests(unittest.TestCase):
                     self.assertFalse(output_dir.exists())
                     self.assertEqual(client.urls, [])
 
+    def test_pipeline_rejects_symlinked_output_root_before_network_io(self):
+        for link_kind in ("relative", "absolute"):
+            with self.subTest(link_kind=link_kind):
+                with TemporaryDirectory() as directory:
+                    root = Path(directory)
+                    external_dir = root / "external"
+                    external_dir.mkdir()
+                    (external_dir / "competitions.json").write_bytes(
+                        b"external managed"
+                    )
+                    (external_dir / "custom.txt").write_bytes(b"external custom")
+                    output_dir = root / "output"
+                    target = (
+                        Path("external")
+                        if link_kind == "relative"
+                        else external_dir
+                    )
+                    output_dir.symlink_to(target, target_is_directory=True)
+                    client = FakePipelineClient()
+
+                    with self.assertRaisesRegex(
+                        ValueError, "output_dir must be a real directory"
+                    ):
+                        run_pipeline(
+                            catalog_url="https://example.test/competitions/",
+                            output_dir=output_dir,
+                            delay_seconds=0,
+                            limit=None,
+                            client=client,
+                        )
+
+                    self.assertEqual(client.urls, [])
+                    self.assertTrue(output_dir.is_symlink())
+                    self.assertEqual(output_dir.readlink(), target)
+                    self.assertEqual(
+                        (external_dir / "competitions.json").read_bytes(),
+                        b"external managed",
+                    )
+                    self.assertEqual(
+                        (external_dir / "custom.txt").read_bytes(),
+                        b"external custom",
+                    )
+
+    def test_pipeline_rejects_non_directory_output_root_before_network_io(self):
+        with TemporaryDirectory() as directory:
+            output_dir = Path(directory) / "output"
+            output_dir.write_bytes(b"existing file")
+            client = FakePipelineClient()
+
+            with self.assertRaisesRegex(
+                ValueError, "output_dir must be a real directory"
+            ):
+                run_pipeline(
+                    catalog_url="https://example.test/competitions/",
+                    output_dir=output_dir,
+                    delay_seconds=0,
+                    limit=None,
+                    client=client,
+                )
+
+            self.assertEqual(client.urls, [])
+            self.assertEqual(output_dir.read_bytes(), b"existing file")
+
 
 class CliTests(unittest.TestCase):
     def test_cli_rejects_non_finite_delays(self):

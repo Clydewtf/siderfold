@@ -100,6 +100,12 @@ def _entry_mode(path: Path) -> int | None:
         return None
 
 
+def _validate_output_dir(output_dir: Path) -> None:
+    mode = _entry_mode(output_dir)
+    if mode is not None and not stat.S_ISDIR(mode):
+        raise ValueError("output_dir must be a real directory")
+
+
 def _validate_staged_artifacts(staging_dir: Path) -> None:
     missing = []
     non_regular = []
@@ -158,6 +164,7 @@ def _remove_entry(path: Path) -> None:
 
 
 def _publish_staged_artifacts(staging_dir: Path, output_dir: Path) -> None:
+    _validate_output_dir(output_dir)
     _validate_staged_artifacts(staging_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
     root_paths = [Path(filename) for filename in MANAGED_ROOT_FILENAMES]
@@ -261,6 +268,7 @@ def run_pipeline(
 ) -> list[Competition]:
     output_dir = Path(output_dir)
     _validate_delay_seconds(delay_seconds)
+    _validate_output_dir(output_dir)
     output_dir.parent.mkdir(parents=True, exist_ok=True)
     http_client = client or HttpClient(delay_seconds=delay_seconds)
     collected_at = datetime.now(timezone.utc).isoformat()

@@ -1,3 +1,5 @@
+import shutil
+import stat
 from collections import Counter
 from pathlib import Path
 from typing import Iterable
@@ -248,10 +250,23 @@ def generate_charts(records: list[Competition], charts_dir: Path) -> list[Path]:
     charts_dir = Path(charts_dir)
     generated = []
 
-    if charts_dir.exists():
+    try:
+        charts_mode = charts_dir.stat(follow_symlinks=False).st_mode
+    except FileNotFoundError:
+        charts_mode = None
+    if charts_mode is not None and not stat.S_ISDIR(charts_mode):
+        raise ValueError("charts_dir must be a real directory")
+
+    if charts_mode is not None:
         for filename in MANAGED_CHART_FILENAMES:
             path = charts_dir / filename
-            if path.is_file():
+            try:
+                path_mode = path.stat(follow_symlinks=False).st_mode
+            except FileNotFoundError:
+                continue
+            if stat.S_ISDIR(path_mode):
+                shutil.rmtree(path)
+            else:
                 path.unlink()
 
     status_counts = _status_counts(records)
