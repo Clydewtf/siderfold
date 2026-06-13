@@ -38,29 +38,30 @@ def _deadline_counts(records: Iterable[Competition]) -> Counter[str]:
     )
 
 
-def _funding_values(
-    records: Iterable[Competition], field_name: str
-) -> list[tuple[str, int]]:
-    values = []
-    for index, record in enumerate(records, start=1):
-        amount = getattr(record, field_name)
-        if amount is not None:
-            label = record.title.strip() or f"Конкурс {index}"
-            values.append((label, amount))
-    return values
-
-
-def _funding_chart_values(records: Iterable[Competition]) -> list[tuple[str, int]]:
-    values = []
+def _funding_chart_values(
+    records: Iterable[Competition],
+) -> tuple[list[tuple[str, int]], str | None]:
+    groups = []
     for index, record in enumerate(records, start=1):
         title = record.title.strip() or f"Конкурс {index}"
+        group = []
         if record.max_support_rub is not None:
-            values.append(
+            group.append(
                 (f"Макс. поддержка — {title}", record.max_support_rub)
             )
         if record.grant_fund_rub is not None:
-            values.append((f"Грантовый фонд — {title}", record.grant_fund_rub))
-    return values
+            group.append((f"Грантовый фонд — {title}", record.grant_fund_rub))
+        if group:
+            groups.append(group)
+
+    total = sum(len(group) for group in groups)
+    visible = []
+    for group in groups:
+        if len(visible) + len(group) > MAX_CHART_BARS:
+            break
+        visible.extend(group)
+    note = f"Показано {len(visible)} из {total}" if len(visible) < total else None
+    return visible, note
 
 
 def build_summary(
@@ -83,7 +84,8 @@ def build_summary(
         skipped_charts.append("status")
     if not _deadline_counts(records):
         skipped_charts.append("deadline")
-    if not _funding_chart_values(records):
+    funding_values, _ = _funding_chart_values(records)
+    if not funding_values:
         skipped_charts.append("funding")
 
     return {
@@ -163,14 +165,6 @@ def _bounded_categorical_values(
     return visible
 
 
-def _limit_individual_values(
-    values: list[tuple[str, int]],
-) -> tuple[list[tuple[str, int]], str | None]:
-    if len(values) <= MAX_CHART_BARS:
-        return values, None
-    return values[:MAX_CHART_BARS], f"Показано {MAX_CHART_BARS} из {len(values)}"
-
-
 def _value_label_layout(
     draw: ImageDraw.ImageDraw,
     text: str,
@@ -197,12 +191,10 @@ def _draw_bar_chart(
     values: list[tuple[str, int]],
     value_formatter=str,
     aggregate_remainder: bool = True,
+    note: str | None = None,
 ) -> None:
     if aggregate_remainder:
         values = _bounded_categorical_values(values)
-        note = None
-    else:
-        values, note = _limit_individual_values(values)
     image = Image.new("RGB", CHART_SIZE, "white")
     draw = ImageDraw.Draw(image)
     title_font = _font(52)
@@ -279,7 +271,7 @@ def generate_charts(records: list[Competition], charts_dir: Path) -> list[Path]:
 
     status_counts = _status_counts(records)
     deadline_counts = _deadline_counts(records)
-    funding_values = _funding_chart_values(records)
+    funding_values, funding_note = _funding_chart_values(records)
     if not (
         status_counts
         or deadline_counts
@@ -308,6 +300,7 @@ def generate_charts(records: list[Competition], charts_dir: Path) -> list[Path]:
             funding_values,
             value_formatter=_format_rubles,
             aggregate_remainder=False,
+            note=funding_note,
         )
         generated.append(path)
 

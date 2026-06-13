@@ -204,6 +204,45 @@ class PipelineTests(unittest.TestCase):
         self.assertEqual(analyzed[0][4], "example.test")
         self.assertTrue(any("/fail" in message for message in logs.output))
 
+    def test_pipeline_source_has_stable_fallbacks(self):
+        class EmptyCatalogClient:
+            def get(self, url: str) -> str:
+                return ""
+
+        cases = (
+            ("https://example.test/competitions/", "example.test"),
+            ("  local catalog  ", "local catalog"),
+            ("   ", "unknown source"),
+        )
+        for catalog_url, expected_source in cases:
+            with self.subTest(catalog_url=catalog_url):
+                captured = []
+
+                def analyzer(
+                    records, output_dir, failed_pages, collected_at, source
+                ):
+                    captured.append(source)
+                    self._minimal_analysis(
+                        records,
+                        output_dir,
+                        failed_pages,
+                        collected_at,
+                        source,
+                    )
+
+                with TemporaryDirectory() as directory:
+                    run_pipeline(
+                        catalog_url=catalog_url,
+                        output_dir=Path(directory) / "output",
+                        delay_seconds=0,
+                        limit=None,
+                        client=EmptyCatalogClient(),
+                        exporter=self._minimal_export,
+                        analyzer=analyzer,
+                    )
+
+                self.assertEqual(captured, [expected_source])
+
     def test_pipeline_sleeps_once_before_each_card_request(self):
         events: list[tuple[str, object]] = []
 

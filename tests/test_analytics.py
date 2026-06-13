@@ -12,8 +12,6 @@ from potanin_parser.analytics import (
     _fit_text,
     _font,
     _format_rubles,
-    _funding_values,
-    _limit_individual_values,
     _value_label_layout,
     build_summary,
     generate_charts,
@@ -132,7 +130,7 @@ class AnalyticsTests(unittest.TestCase):
             ["status", "deadline", "funding"],
         )
 
-    def test_maximum_support_only_skips_grant_funds(self) -> None:
+    def test_maximum_support_makes_combined_funding_chart_available(self) -> None:
         summary = build_summary(
             [competition(max_support_rub=1_000_000)],
             collected_at="2026-06-12T12:00:00+07:00",
@@ -145,7 +143,7 @@ class AnalyticsTests(unittest.TestCase):
             ["status", "deadline"],
         )
 
-    def test_grant_fund_only_skips_maximum_support(self) -> None:
+    def test_grant_fund_makes_combined_funding_chart_available(self) -> None:
         summary = build_summary(
             [competition(grant_fund_rub=25_000_000)],
             collected_at="2026-06-12T12:00:00+07:00",
@@ -158,7 +156,7 @@ class AnalyticsTests(unittest.TestCase):
             ["status", "deadline"],
         )
 
-    def test_both_funding_types_skip_neither_funding_chart(self) -> None:
+    def test_both_funding_types_make_combined_chart_available(self) -> None:
         summary = build_summary(
             [competition(max_support_rub=1_000_000, grant_fund_rub=25_000_000)],
             collected_at="2026-06-12T12:00:00+07:00",
@@ -236,34 +234,13 @@ class AnalyticsTests(unittest.TestCase):
             all(160 <= top <= bottom <= 830 for top, bottom in bar_ranges)
         )
 
-    def test_categorical_values_aggregate_but_funding_values_only_limit(self) -> None:
+    def test_categorical_values_aggregate_inside_chart_limit(self) -> None:
         values = [(f"Категория {index}", index + 1) for index in range(20)]
 
         categorical = _bounded_categorical_values(values)
-        funding, note = _limit_individual_values(values)
 
         self.assertEqual(len(categorical), 15)
         self.assertEqual(categorical[-1], ("Остальные (6)", sum(range(15, 21))))
-        self.assertEqual(funding, values[:15])
-        self.assertEqual(note, "Показано 15 из 20")
-
-    def test_funding_types_keep_both_values_from_same_competition(self) -> None:
-        records = [
-            competition(
-                title="Конкурс с двумя суммами",
-                max_support_rub=1_000_000,
-                grant_fund_rub=25_000_000,
-            )
-        ]
-
-        self.assertEqual(
-            _funding_values(records, "max_support_rub"),
-            [("Конкурс с двумя суммами", 1_000_000)],
-        )
-        self.assertEqual(
-            _funding_values(records, "grant_fund_rub"),
-            [("Конкурс с двумя суммами", 25_000_000)],
-        )
 
     def test_funding_chart_labels_distinguish_both_amount_types(self) -> None:
         records = [
@@ -288,6 +265,34 @@ class AnalyticsTests(unittest.TestCase):
                 ("Грантовый фонд — Конкурс с двумя суммами", 25_000_000),
             ],
         )
+
+    def test_funding_chart_limit_preserves_complete_competition_pairs(self) -> None:
+        records = [
+            competition(
+                title=f"Конкурс {index}",
+                max_support_rub=index * 1_000_000,
+                grant_fund_rub=index * 10_000_000,
+            )
+            for index in range(1, 9)
+        ]
+
+        with (
+            TemporaryDirectory() as directory,
+            patch("potanin_parser.analytics._draw_bar_chart") as draw_chart,
+        ):
+            generate_charts(records, Path(directory) / "charts")
+
+        values = draw_chart.call_args.args[2]
+        self.assertEqual(len(values), 14)
+        self.assertEqual(
+            [label for label, _ in values[-2:]],
+            [
+                "Макс. поддержка — Конкурс 7",
+                "Грантовый фонд — Конкурс 7",
+            ],
+        )
+        self.assertFalse(any("Конкурс 8" in label for label, _ in values))
+        self.assertEqual(draw_chart.call_args.kwargs["note"], "Показано 14 из 16")
 
     def test_generate_charts_uses_only_combined_funding_filename(self) -> None:
         records = [

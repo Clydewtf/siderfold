@@ -19,6 +19,7 @@ from .models import Competition
 
 
 DEFAULT_CATALOG_URL = "https://fondpotanin.ru/competitions/"
+UNKNOWN_SOURCE = "unknown source"
 LOGGER = logging.getLogger("potanin_parser")
 Exporter = Callable[[list[Competition], Path], object]
 Analyzer = Callable[[list[Competition], Path, int, str, str], object]
@@ -54,6 +55,11 @@ def _show_all_url(catalog_url: str) -> str:
     return urlunsplit(
         (parts.scheme, parts.netloc, parts.path, urlencode(query), parts.fragment)
     )
+
+
+def _catalog_source(catalog_url: str) -> str:
+    stripped_url = catalog_url.strip()
+    return urlsplit(stripped_url).hostname or stripped_url or UNKNOWN_SOURCE
 
 
 def _default_exporter(records: list[Competition], output_dir: Path) -> object:
@@ -273,7 +279,7 @@ def run_pipeline(
     output_dir.parent.mkdir(parents=True, exist_ok=True)
     http_client = client or HttpClient(delay_seconds=delay_seconds)
     collected_at = datetime.now(timezone.utc).isoformat()
-    source = urlsplit(catalog_url).hostname or catalog_url
+    source = _catalog_source(catalog_url)
 
     catalog_html = http_client.get(_show_all_url(catalog_url))
     links = parse_catalog(catalog_html, catalog_url)
