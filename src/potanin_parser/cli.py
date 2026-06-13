@@ -96,14 +96,25 @@ def _managed_chart_paths() -> list[Path]:
 def _entry_mode(path: Path) -> int | None:
     try:
         return path.stat(follow_symlinks=False).st_mode
-    except FileNotFoundError:
+    except (FileNotFoundError, NotADirectoryError):
         return None
 
 
 def _validate_output_dir(output_dir: Path) -> None:
     mode = _entry_mode(output_dir)
-    if mode is not None and not stat.S_ISDIR(mode):
-        raise ValueError("output_dir must be a real directory")
+    if mode is not None:
+        if not stat.S_ISDIR(mode):
+            raise ValueError("output_dir must be a real directory")
+        return
+
+    ancestor = output_dir.parent
+    while (mode := _entry_mode(ancestor)) is None:
+        parent = ancestor.parent
+        if parent == ancestor:
+            break
+        ancestor = parent
+    if mode is None or not stat.S_ISDIR(mode):
+        raise ValueError("output_dir must be below a real directory")
 
 
 def _validate_staged_artifacts(staging_dir: Path) -> None:
@@ -343,6 +354,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         raise SystemExit("--delay must be finite")
     if args.delay < 0:
         raise SystemExit("--delay must not be negative")
+    _validate_output_dir(args.output)
     configure_logging(args.output)
     run_pipeline(
         catalog_url=args.catalog_url,

@@ -813,6 +813,45 @@ class PipelineTests(unittest.TestCase):
             self.assertEqual(client.urls, [])
             self.assertEqual(output_dir.read_bytes(), b"existing file")
 
+    def test_pipeline_rejects_missing_output_below_symlink_parent(self):
+        for link_kind in ("relative", "absolute"):
+            for missing_parts in (("new",), ("missing", "new")):
+                with self.subTest(
+                    link_kind=link_kind, missing_parts=missing_parts
+                ):
+                    with TemporaryDirectory() as directory:
+                        root = Path(directory)
+                        external_dir = root / "external"
+                        external_dir.mkdir()
+                        sentinel = external_dir / "sentinel.txt"
+                        sentinel.write_bytes(b"external sentinel")
+                        link = root / "link"
+                        target = (
+                            Path("external")
+                            if link_kind == "relative"
+                            else external_dir
+                        )
+                        link.symlink_to(target, target_is_directory=True)
+                        output_dir = link.joinpath(*missing_parts)
+                        client = FakePipelineClient()
+
+                        with self.assertRaisesRegex(
+                            ValueError, "output_dir must be below a real directory"
+                        ):
+                            run_pipeline(
+                                catalog_url="https://example.test/competitions/",
+                                output_dir=output_dir,
+                                delay_seconds=0,
+                                limit=None,
+                                client=client,
+                            )
+
+                        self.assertEqual(client.urls, [])
+                        self.assertEqual(sentinel.read_bytes(), b"external sentinel")
+                        self.assertFalse(
+                            external_dir.joinpath(*missing_parts).exists()
+                        )
+
 
 class CliTests(unittest.TestCase):
     def test_cli_rejects_non_finite_delays(self):
@@ -826,6 +865,38 @@ class CliTests(unittest.TestCase):
                     main([f"--delay={delay}"])
                 configure.assert_not_called()
                 pipeline.assert_not_called()
+
+    def test_cli_validates_output_before_configuring_logging(self):
+        with TemporaryDirectory() as directory:
+            root = Path(directory)
+            external_dir = root / "external"
+            external_dir.mkdir()
+            (external_dir / "run.log").write_bytes(b"existing log")
+            (external_dir / "competitions.json").write_bytes(b"managed data")
+            (external_dir / "custom.txt").write_bytes(b"custom data")
+            output_dir = root / "output"
+            output_dir.symlink_to(external_dir, target_is_directory=True)
+
+            with (
+                patch("potanin_parser.cli.configure_logging") as configure,
+                patch("potanin_parser.cli.run_pipeline") as pipeline,
+                self.assertRaisesRegex(
+                    ValueError, "output_dir must be a real directory"
+                ),
+            ):
+                main(["--output", str(output_dir), "--delay", "0"])
+
+            configure.assert_not_called()
+            pipeline.assert_not_called()
+            self.assertEqual(
+                (external_dir / "run.log").read_bytes(), b"existing log"
+            )
+            self.assertEqual(
+                (external_dir / "competitions.json").read_bytes(), b"managed data"
+            )
+            self.assertEqual(
+                (external_dir / "custom.txt").read_bytes(), b"custom data"
+            )
 
     def test_default_analyzer_records_chart_paths_relative_to_output(self):
         record = Competition(

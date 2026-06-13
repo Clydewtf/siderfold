@@ -382,6 +382,43 @@ class AnalyticsTests(unittest.TestCase):
 
             self.assertEqual(charts_dir.read_bytes(), b"existing file")
 
+    def test_generate_charts_rejects_missing_path_below_symlink_parent(
+        self,
+    ) -> None:
+        for link_kind in ("relative", "absolute"):
+            for missing_parts in (("new",), ("missing", "new")):
+                with self.subTest(
+                    link_kind=link_kind, missing_parts=missing_parts
+                ):
+                    with TemporaryDirectory() as directory:
+                        root = Path(directory)
+                        external_dir = root / "external"
+                        external_dir.mkdir()
+                        sentinel = external_dir / "sentinel.png"
+                        sentinel.write_bytes(b"external sentinel")
+                        link = root / "link"
+                        target = (
+                            Path("external")
+                            if link_kind == "relative"
+                            else external_dir
+                        )
+                        link.symlink_to(target, target_is_directory=True)
+                        charts_dir = link.joinpath(*missing_parts)
+
+                        with self.assertRaisesRegex(
+                            ValueError, "charts_dir must be below a real directory"
+                        ):
+                            generate_charts(
+                                [competition(status="Прием заявок")], charts_dir
+                            )
+
+                        self.assertEqual(
+                            sentinel.read_bytes(), b"external sentinel"
+                        )
+                        self.assertFalse(
+                            external_dir.joinpath(*missing_parts).exists()
+                        )
+
     def test_generate_charts_replaces_managed_symlink_without_touching_target(
         self,
     ) -> None:
