@@ -300,7 +300,7 @@ git commit -m "feat: add resilient collection pipeline"
 - Create: `tests/test_exporters.py`
 - Create: `tests/test_analytics.py`
 
-- [ ] **Step 1: Write failing export tests**
+- [x] **Step 1: Write failing export tests**
 
 Create two `Competition` objects, export them to a temporary directory, reload JSON with `json.load`, read CSV with `csv.DictReader`, and assert that nested contacts are valid JSON strings and Russian text is preserved.
 
@@ -308,7 +308,7 @@ Create two `Competition` objects, export them to a temporary directory, reload J
 
 Assert that `build_summary` returns total records, status counts, records with deadlines/funding, min/max support and warning count. Assert that chart generation creates non-empty PNG files in `charts/`.
 
-- [ ] **Step 3: Run tests to verify failure**
+- [x] **Step 3: Run tests to verify failure**
 
 Run: `PYTHONPATH=src python3 -m unittest tests.test_exporters tests.test_analytics -v`
 
