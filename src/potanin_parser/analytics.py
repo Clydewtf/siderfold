@@ -58,7 +58,7 @@ def _funding_chart_values(
     visible = []
     for group in groups:
         if len(visible) + len(group) > MAX_CHART_BARS:
-            break
+            continue
         visible.extend(group)
     note = f"Показано {len(visible)} из {total}" if len(visible) < total else None
     return visible, note

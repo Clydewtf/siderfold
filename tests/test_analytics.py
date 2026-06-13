@@ -294,6 +294,37 @@ class AnalyticsTests(unittest.TestCase):
         self.assertFalse(any("Конкурс 8" in label for label, _ in values))
         self.assertEqual(draw_chart.call_args.kwargs["note"], "Показано 14 из 16")
 
+    def test_funding_chart_limit_skips_unfit_group_and_keeps_scanning(self) -> None:
+        records = [
+            competition(
+                title=f"Одиночный {index}",
+                max_support_rub=index * 1_000_000,
+            )
+            for index in range(1, 15)
+        ]
+        records.extend(
+            [
+                competition(
+                    title="Пара",
+                    max_support_rub=15_000_000,
+                    grant_fund_rub=150_000_000,
+                ),
+                competition(title="Финальный", grant_fund_rub=160_000_000),
+            ]
+        )
+
+        with (
+            TemporaryDirectory() as directory,
+            patch("potanin_parser.analytics._draw_bar_chart") as draw_chart,
+        ):
+            generate_charts(records, Path(directory) / "charts")
+
+        values = draw_chart.call_args.args[2]
+        self.assertEqual(len(values), 15)
+        self.assertEqual(values[-1][0], "Грантовый фонд — Финальный")
+        self.assertFalse(any("Пара" in label for label, _ in values))
+        self.assertEqual(draw_chart.call_args.kwargs["note"], "Показано 15 из 17")
+
     def test_generate_charts_uses_only_combined_funding_filename(self) -> None:
         records = [
             competition(max_support_rub=1_000_000, grant_fund_rub=25_000_000)
