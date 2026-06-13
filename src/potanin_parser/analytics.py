@@ -6,6 +6,7 @@ from typing import Iterable
 
 from PIL import Image, ImageDraw, ImageFont
 
+from ._path_safety import validate_directory_path
 from .models import Competition
 
 
@@ -178,31 +179,6 @@ def _value_label_layout(
     return (min(bar_right + 12, chart_right - text_width), y), "#111827"
 
 
-def _validate_charts_dir(charts_dir: Path) -> int | None:
-    try:
-        mode = charts_dir.stat(follow_symlinks=False).st_mode
-    except (FileNotFoundError, NotADirectoryError):
-        mode = None
-    if mode is not None:
-        if not stat.S_ISDIR(mode):
-            raise ValueError("charts_dir must be a real directory")
-        return mode
-
-    ancestor = charts_dir.parent
-    while True:
-        try:
-            ancestor_mode = ancestor.stat(follow_symlinks=False).st_mode
-        except (FileNotFoundError, NotADirectoryError):
-            parent = ancestor.parent
-            if parent == ancestor:
-                raise ValueError("charts_dir must be below a real directory")
-            ancestor = parent
-            continue
-        if not stat.S_ISDIR(ancestor_mode):
-            raise ValueError("charts_dir must be below a real directory")
-        return None
-
-
 def _draw_bar_chart(
     path: Path,
     title: str,
@@ -275,9 +251,9 @@ def generate_charts(records: list[Competition], charts_dir: Path) -> list[Path]:
     charts_dir = Path(charts_dir)
     generated = []
 
-    charts_mode = _validate_charts_dir(charts_dir)
+    charts_exists = validate_directory_path(charts_dir, label="charts_dir")
 
-    if charts_mode is not None:
+    if charts_exists:
         for filename in MANAGED_CHART_FILENAMES:
             path = charts_dir / filename
             try:

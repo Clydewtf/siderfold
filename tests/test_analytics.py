@@ -419,6 +419,37 @@ class AnalyticsTests(unittest.TestCase):
                             external_dir.joinpath(*missing_parts).exists()
                         )
 
+    def test_generate_charts_rejects_existing_directory_below_symlink_component(
+        self,
+    ) -> None:
+        for link_kind in ("relative", "absolute"):
+            with self.subTest(link_kind=link_kind):
+                with TemporaryDirectory() as directory:
+                    root = Path(directory)
+                    external_dir = root / "external"
+                    existing_dir = external_dir / "existing"
+                    existing_dir.mkdir(parents=True)
+                    sentinel = existing_dir / "statuses.png"
+                    sentinel.write_bytes(b"external status")
+                    link = root / "link"
+                    target = (
+                        Path("external")
+                        if link_kind == "relative"
+                        else external_dir
+                    )
+                    link.symlink_to(target, target_is_directory=True)
+                    charts_dir = link / "existing" / "new"
+
+                    with self.assertRaisesRegex(
+                        ValueError, "charts_dir must be below a real directory"
+                    ):
+                        generate_charts(
+                            [competition(status="Прием заявок")], charts_dir
+                        )
+
+                    self.assertEqual(sentinel.read_bytes(), b"external status")
+                    self.assertFalse((existing_dir / "new").exists())
+
     def test_generate_charts_replaces_managed_symlink_without_touching_target(
         self,
     ) -> None:

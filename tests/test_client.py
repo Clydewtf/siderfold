@@ -852,6 +852,41 @@ class PipelineTests(unittest.TestCase):
                             external_dir.joinpath(*missing_parts).exists()
                         )
 
+    def test_pipeline_rejects_existing_directory_below_symlink_component(self):
+        for link_kind in ("relative", "absolute"):
+            with self.subTest(link_kind=link_kind):
+                with TemporaryDirectory() as directory:
+                    root = Path(directory)
+                    external_dir = root / "external"
+                    existing_dir = external_dir / "existing"
+                    existing_dir.mkdir(parents=True)
+                    sentinel = existing_dir / "sentinel.txt"
+                    sentinel.write_bytes(b"external sentinel")
+                    link = root / "link"
+                    target = (
+                        Path("external")
+                        if link_kind == "relative"
+                        else external_dir
+                    )
+                    link.symlink_to(target, target_is_directory=True)
+                    output_dir = link / "existing" / "new"
+                    client = FakePipelineClient()
+
+                    with self.assertRaisesRegex(
+                        ValueError, "output_dir must be below a real directory"
+                    ):
+                        run_pipeline(
+                            catalog_url="https://example.test/competitions/",
+                            output_dir=output_dir,
+                            delay_seconds=0,
+                            limit=None,
+                            client=client,
+                        )
+
+                    self.assertEqual(client.urls, [])
+                    self.assertEqual(sentinel.read_bytes(), b"external sentinel")
+                    self.assertFalse((existing_dir / "new").exists())
+
 
 class CliTests(unittest.TestCase):
     def test_cli_rejects_non_finite_delays(self):

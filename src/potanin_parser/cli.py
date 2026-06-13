@@ -12,6 +12,7 @@ from pathlib import Path
 from tempfile import TemporaryDirectory, mkdtemp
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
+from ._path_safety import validate_directory_path
 from .client import HttpClient
 from .html_parser import parse_catalog, parse_competition
 from .models import Competition
@@ -101,20 +102,7 @@ def _entry_mode(path: Path) -> int | None:
 
 
 def _validate_output_dir(output_dir: Path) -> None:
-    mode = _entry_mode(output_dir)
-    if mode is not None:
-        if not stat.S_ISDIR(mode):
-            raise ValueError("output_dir must be a real directory")
-        return
-
-    ancestor = output_dir.parent
-    while (mode := _entry_mode(ancestor)) is None:
-        parent = ancestor.parent
-        if parent == ancestor:
-            break
-        ancestor = parent
-    if mode is None or not stat.S_ISDIR(mode):
-        raise ValueError("output_dir must be below a real directory")
+    validate_directory_path(output_dir, label="output_dir")
 
 
 def _validate_staged_artifacts(staging_dir: Path) -> None:
