@@ -3,9 +3,13 @@ from potanin_parser.normalization import extract_application_dates, parse_money_
 
 
 class NormalizationTest(unittest.TestCase):
-    def test_extracts_russian_application_period(self):
+    def test_extracts_valid_explicit_year_application_period(self):
         text = "Прием заявок осуществляется с 19 декабря 2025 года по 30 ноября 2026 года."
         self.assertEqual(extract_application_dates(text), ("2025-12-19", "2026-11-30"))
+
+    def test_rejects_inverted_explicit_year_application_period(self):
+        text = "Прием заявок осуществляется с 19 декабря 2026 года по 30 ноября 2025 года."
+        self.assertEqual(extract_application_dates(text), (None, None))
 
     def test_extracts_application_period_with_shared_year(self):
         text = "Конкурс проводился с 25 марта по 15 декабря 2020 года."
@@ -68,8 +72,8 @@ class NormalizationTest(unittest.TestCase):
     def test_invalid_calendar_dates_return_none(self):
         invalid_start = "с 31 февраля 2025 года по 1 марта 2025 года"
         invalid_end = "с 1 марта 2025 года по 31 апреля 2025 года"
-        self.assertEqual(extract_application_dates(invalid_start), (None, "2025-03-01"))
-        self.assertEqual(extract_application_dates(invalid_end), ("2025-03-01", None))
+        self.assertEqual(extract_application_dates(invalid_start), (None, None))
+        self.assertEqual(extract_application_dates(invalid_end), (None, None))
 
     def test_parses_thousand_and_billion_units(self):
         self.assertEqual(parse_money_values("2 тыс рублей и 3 млрд рублей"), [2_000, 3_000_000_000])

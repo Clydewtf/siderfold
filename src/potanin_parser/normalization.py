@@ -58,21 +58,29 @@ def _to_iso_date(day: str, month: str, year: str) -> str | None:
         return None
 
 
+def _valid_date_range(
+    start_date: str | None, end_date: str | None
+) -> tuple[str | None, str | None]:
+    if start_date is None or end_date is None or start_date > end_date:
+        return None, None
+    return start_date, end_date
+
+
 def extract_application_dates(text: str) -> tuple[str | None, str | None]:
     normalized = _normalize_whitespace(text)
     match = _APPLICATION_PERIOD_RE.search(normalized)
     if match is not None:
         groups = match.groups()
-        return _to_iso_date(*groups[:3]), _to_iso_date(*groups[3:])
+        return _valid_date_range(
+            _to_iso_date(*groups[:3]), _to_iso_date(*groups[3:])
+        )
 
     shared_year_match = _SHARED_YEAR_APPLICATION_PERIOD_RE.search(normalized)
     if shared_year_match is not None:
         start_day, start_month, end_day, end_month, year = shared_year_match.groups()
         start_date = _to_iso_date(start_day, start_month, year)
         end_date = _to_iso_date(end_day, end_month, year)
-        if start_date is None or end_date is None or start_date > end_date:
-            return None, None
-        return start_date, end_date
+        return _valid_date_range(start_date, end_date)
 
     end_match = _APPLICATION_END_RE.search(normalized)
     if end_match is not None:
