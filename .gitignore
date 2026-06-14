@@ -1,1 +1,4 @@
 .worktrees/
+output-smoke/
+*.egg-info/
+__pycache__/

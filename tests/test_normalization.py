@@ -11,6 +11,10 @@ class NormalizationTest(unittest.TestCase):
         text = "Конкурс проводился с 25 марта по 15 декабря 2020 года."
         self.assertEqual(extract_application_dates(text), ("2020-03-25", "2020-12-15"))
 
+    def test_rejects_inverted_application_period_with_shared_year(self):
+        text = "Конкурс проводился с 15 декабря по 25 марта 2020 года."
+        self.assertEqual(extract_application_dates(text), (None, None))
+
     def test_parses_money_units(self):
         values = parse_money_values("500 000 рублей, 1 млн рублей и грантовый фонд 25 млн рублей")
         self.assertEqual(values, [500_000, 1_000_000, 25_000_000])

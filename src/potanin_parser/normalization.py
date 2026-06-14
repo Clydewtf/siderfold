@@ -68,10 +68,11 @@ def extract_application_dates(text: str) -> tuple[str | None, str | None]:
     shared_year_match = _SHARED_YEAR_APPLICATION_PERIOD_RE.search(normalized)
     if shared_year_match is not None:
         start_day, start_month, end_day, end_month, year = shared_year_match.groups()
-        return (
-            _to_iso_date(start_day, start_month, year),
-            _to_iso_date(end_day, end_month, year),
-        )
+        start_date = _to_iso_date(start_day, start_month, year)
+        end_date = _to_iso_date(end_day, end_month, year)
+        if start_date is None or end_date is None or start_date > end_date:
+            return None, None
+        return start_date, end_date
 
     end_match = _APPLICATION_END_RE.search(normalized)
     if end_match is not None:

@@ -40,7 +40,7 @@ def export_records(records: list[Competition], output_dir: Path) -> list[Path]:
 
     fieldnames = [field.name for field in fields(Competition)]
     with csv_path.open("w", encoding="utf-8", newline="") as file:
-        writer = csv.DictWriter(file, fieldnames=fieldnames)
+        writer = csv.DictWriter(file, fieldnames=fieldnames, lineterminator="\n")
         writer.writeheader()
         for record in records:
             values = record.to_dict()

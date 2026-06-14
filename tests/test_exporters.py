@@ -35,6 +35,15 @@ def sample_records() -> list[Competition]:
 
 
 class ExporterTests(unittest.TestCase):
+    def test_csv_uses_lf_line_endings(self) -> None:
+        with TemporaryDirectory() as directory:
+            csv_path = Path(directory) / "competitions.csv"
+            export_records(sample_records(), Path(directory))
+            csv_bytes = csv_path.read_bytes()
+
+        self.assertNotIn(b"\r\n", csv_bytes)
+        self.assertIn(b"\n", csv_bytes)
+
     def test_exports_json_and_csv_with_nested_values_and_russian_text(self) -> None:
         records = sample_records()
 
