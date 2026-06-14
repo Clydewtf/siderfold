@@ -58,6 +58,45 @@ class CatalogParserTests(unittest.TestCase):
 
 
 class CompetitionParserTests(unittest.TestCase):
+    def test_extracts_application_link_from_current_orange_button_class(self) -> None:
+        competition = parse_competition(
+            """
+            <html><body>
+              <h1>Открытый конкурс</h1>
+              <div class="contest__info">
+                <h2>Когда и как проводится</h2>
+                <p>Прием заявок осуществляется с 1 июня 2026 года по 30 июня 2026 года.</p>
+              </div>
+              <a class="aside__link button button--orange" href="https://apply.example/">
+                Отправить заявку на участие
+              </a>
+            </body></html>
+            """,
+            CARD_URL,
+            COLLECTED_AT,
+        )
+
+        self.assertEqual(competition.application_url, "https://apply.example/")
+
+    def test_extracts_application_end_date_from_current_schedule_markup(self) -> None:
+        competition = parse_competition(
+            """
+            <html><body>
+              <h1>Конкурс с графиком</h1>
+              <div class="contest__info"><p>Описание конкурса.</p></div>
+              <li class="schedule__item schedule__item--blue">
+                <h3 class="schedule__item-caption">Прием заявок на участие</h3>
+                <p>До 16 декабря 2025 года</p>
+              </li>
+            </body></html>
+            """,
+            CARD_URL,
+            COLLECTED_AT,
+        )
+
+        self.assertIsNone(competition.application_start_date)
+        self.assertEqual(competition.application_end_date, "2025-12-16")
+
     def test_handles_comments_and_nested_section_wrappers(self) -> None:
         competition = parse_competition(
             fixture("nested_competition.html"), CARD_URL, COLLECTED_AT

@@ -253,7 +253,15 @@ def parse_competition(html: str, source_url: str, collected_at: str) -> Competit
                 fields[field] = content
 
     procedure = fields.get("procedure")
-    date_text = " ".join(filter(None, [procedure, full_text]))
+    schedule_text = " ".join(
+        _text(node)
+        for node in root.xpath(
+            "//*[contains(concat(' ', normalize-space(@class), ' '), "
+            "' schedule__item ')]"
+        )
+        if re.search(r"при[её]м заявок", _text(node), re.IGNORECASE)
+    )
+    date_text = " ".join(filter(None, [procedure, full_text, schedule_text]))
     application_start_date, application_end_date = extract_application_dates(date_text)
     funding_text = " ".join(funding_parts) or None
     grant_fund_rub = _section_grant_fund_value(sections)
@@ -267,7 +275,8 @@ def parse_competition(html: str, source_url: str, collected_at: str) -> Competit
 
     application_nodes = root.xpath(
         "//a[contains(concat(' ', normalize-space(@class), ' '), "
-        "' button_orange ')]"
+        "' button_orange ') or contains(concat(' ', normalize-space(@class), ' '), "
+        "' button--orange ')]"
     )
     application_links = _unique_links(application_nodes, source_url)
     result_nodes = [

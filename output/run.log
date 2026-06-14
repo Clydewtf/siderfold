@@ -1,0 +1,32 @@
+Manual verification completed 2026-06-14 against live source pages.
+
+1. Open competition: "Конкурс событий для сообщества «#Мынасвязи»"
+   Source: https://fondpotanin.ru/competitions/konkurs-sobytiy-dlya-soobshchestva-mynasvyazi/
+   Match: title, publication date 2025-12-19, application period
+   2025-12-19 through 2026-11-30, grant fund 25,000,000 RUB, and application
+   URL. The page has two nomination-specific support limits (1,000,000 and
+   500,000 RUB), so max_support_rub remains empty because no single maximum is
+   unambiguous. The page has no dedicated status label, so status remains empty.
+
+2. Completed competition: "«Общее дело»"
+   Source: https://fondpotanin.ru/competitions/common-cause/
+   Match after parser fix: title, publication date 2026-02-26, and historical
+   competition period 2020-03-25 through 2020-12-15. No funding amount or
+   dedicated status label is published in the visible competition content.
+
+3. Multiple funding amounts: "«Креативный музей»"
+   Source: https://fondpotanin.ru/competitions/kreativnyy-muzey/
+   Match after parser fix: title, publication date 2025-10-23, application end
+   date 2025-12-16, grant fund 90,000,000 RUB, and maximum support 7,000,000
+   RUB. The page does not publish an application start date or dedicated status
+   label, so those fields remain empty.
+
+Systematic discrepancies fixed with regression tests:
+- Accepted the current button--orange application-link class while retaining
+  support for the legacy button_orange class.
+- Parsed historical application periods that state the year once at the end.
+- Parsed application end dates from current schedule__item markup labeled
+  "Прием заявок" when no start date is published.
+
+Final collection: 35 records, 0 failed pages. Artifact consistency validation
+passed for JSON, CSV, summary count, and non-empty source URLs.

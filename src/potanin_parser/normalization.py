@@ -24,6 +24,15 @@ _APPLICATION_PERIOD_RE = re.compile(
     rf"\bс\s+{_DATE_PATTERN}\s+по\s+{_DATE_PATTERN}",
     re.IGNORECASE,
 )
+_SHARED_YEAR_APPLICATION_PERIOD_RE = re.compile(
+    rf"\bс\s+(\d{{1,2}})\s+({_MONTH_PATTERN})\s+по\s+"
+    rf"(\d{{1,2}})\s+({_MONTH_PATTERN})\s+(\d{{4}})(?:\s+года?)?",
+    re.IGNORECASE,
+)
+_APPLICATION_END_RE = re.compile(
+    rf"при[её]м\s+заявок[^.!?]{{0,120}}?\bдо\s+{_DATE_PATTERN}",
+    re.IGNORECASE,
+)
 _MONEY_RE = re.compile(
     r"(?<![\w.,])(?<!\d )"
     r"(\d{1,3}(?: \d{3})+|\d+)(?:([.,]\d+))?\s*"
@@ -50,12 +59,25 @@ def _to_iso_date(day: str, month: str, year: str) -> str | None:
 
 
 def extract_application_dates(text: str) -> tuple[str | None, str | None]:
-    match = _APPLICATION_PERIOD_RE.search(_normalize_whitespace(text))
-    if match is None:
-        return None, None
+    normalized = _normalize_whitespace(text)
+    match = _APPLICATION_PERIOD_RE.search(normalized)
+    if match is not None:
+        groups = match.groups()
+        return _to_iso_date(*groups[:3]), _to_iso_date(*groups[3:])
 
-    groups = match.groups()
-    return _to_iso_date(*groups[:3]), _to_iso_date(*groups[3:])
+    shared_year_match = _SHARED_YEAR_APPLICATION_PERIOD_RE.search(normalized)
+    if shared_year_match is not None:
+        start_day, start_month, end_day, end_month, year = shared_year_match.groups()
+        return (
+            _to_iso_date(start_day, start_month, year),
+            _to_iso_date(end_day, end_month, year),
+        )
+
+    end_match = _APPLICATION_END_RE.search(normalized)
+    if end_match is not None:
+        return None, _to_iso_date(*end_match.groups())
+
+    return None, None
 
 
 def parse_money_values(text: str) -> list[int]:
