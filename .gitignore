@@ -1,4 +1,20 @@
+.DS_Store
+
+# Local Codex/worktree state
 .worktrees/
-output-smoke/
+
+# Keep this repository focused on the site app.
+/docs/
+/output/
+/output-smoke/
+/src/
+/tests/
+/pyproject.toml
 *.egg-info/
 __pycache__/
+
+# Local reports and generated documents
+*.docx
+*.pdf
+/*.md
+!/README.md
