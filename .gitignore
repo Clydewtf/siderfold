@@ -18,3 +18,4 @@ __pycache__/
 *.pdf
 /*.md
 !/README.md
+!/CHANGELOG.md

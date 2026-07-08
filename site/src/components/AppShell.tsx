@@ -1,5 +1,6 @@
 import type { KeyboardEvent, ReactNode } from 'react';
 import { BarChart3, Database, Home } from 'lucide-react';
+import { APP_VERSION } from '../version';
 
 export type TabId = 'home' | 'sources' | 'programs';
 
@@ -70,8 +71,11 @@ export function AppShell({
             <span className="flex h-10 w-10 items-center justify-center rounded-lg bg-ink text-sm font-semibold text-white">S</span>
             <span className="grid">
               <span className="text-lg font-semibold text-ink">Stargate</span>
-              <span className="w-fit rounded-full border border-ink/10 bg-white/70 px-2 py-0.5 text-[11px] font-semibold uppercase tracking-normal text-graphite">
-                MVP seed
+              <span className="flex w-fit items-center gap-1.5 rounded-full border border-ink/10 bg-white/70 px-2 py-0.5 text-[11px] font-semibold uppercase tracking-normal text-graphite">
+                <span>MVP seed</span>
+                <span aria-label={`Версия ${APP_VERSION}`} className="text-ink/70">
+                  v{APP_VERSION}
+                </span>
               </span>
             </span>
           </button>

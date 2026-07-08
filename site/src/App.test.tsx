@@ -3,6 +3,7 @@ import userEvent from '@testing-library/user-event';
 import { describe, expect, it } from 'vitest';
 import App from './App';
 import { programs, sources } from './data/seed';
+import { APP_VERSION } from './version';
 
 describe('App navigation', () => {
   it('shows the three MVP tabs', () => {
@@ -39,6 +40,7 @@ describe('App navigation', () => {
     expect(screen.getByRole('tab', { name: 'Каталог' })).toBeInTheDocument();
     expect(screen.queryByText('Frontend-only MVP на seed-данных')).not.toBeInTheDocument();
     expect(screen.getByText('MVP seed')).toBeInTheDocument();
+    expect(screen.getByLabelText(`Версия ${APP_VERSION}`)).toHaveTextContent(`v${APP_VERSION}`);
   });
 
   it('associates the selected tab with its panel', async () => {
