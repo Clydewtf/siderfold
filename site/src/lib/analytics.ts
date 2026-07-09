@@ -1,5 +1,99 @@
-import type { SupportProgram, SupportSource } from '../types';
-import { daysUntilDeadline, getComparableFundingRub, isActiveStatus } from './catalog';
+import type {
+  Audience,
+  CoverageLevel,
+  DeadlineFilter,
+  ProgramStatus,
+  SupportProgram,
+  SupportSource,
+  SupportType,
+  Topic
+} from '../types';
+import { daysUntilDeadline, isActiveStatus } from './catalog';
+
+export type AnalyticsFilters = {
+  region: string | 'Все регионы';
+  year: number | 'Все годы';
+  coverageLevel: CoverageLevel | 'Все уровни';
+  sourceId: string | 'Все источники';
+  supportType: SupportType | 'Все типы';
+  topic: Topic | 'Все тематики';
+  audience: Audience | 'Все аудитории';
+  status: ProgramStatus | 'Все статусы';
+  funding: 'all' | 'withFunding' | 'withoutFunding';
+  deadline: DeadlineFilter;
+};
+
+export const defaultAnalyticsFilters: AnalyticsFilters = {
+  region: 'Все регионы',
+  year: 'Все годы',
+  coverageLevel: 'Все уровни',
+  sourceId: 'Все источники',
+  supportType: 'Все типы',
+  topic: 'Все тематики',
+  audience: 'Все аудитории',
+  status: 'Все статусы',
+  funding: 'all',
+  deadline: 'all'
+};
+
+type FundingLike = Pick<SupportProgram, 'fundingAmountRub' | 'fundingMaxRub' | 'fundingMinRub'>;
+
+export function getProgramFundingValue(program: FundingLike): number | null {
+  return program.fundingAmountRub ?? program.fundingMaxRub ?? program.fundingMinRub;
+}
+
+export function median(values: readonly number[]): number | null {
+  if (values.length === 0) return null;
+  const sorted = [...values].sort((a, b) => a - b);
+  const midpoint = Math.floor(sorted.length / 2);
+  if (sorted.length % 2 === 1) return sorted[midpoint];
+  return (sorted[midpoint - 1] + sorted[midpoint]) / 2;
+}
+
+function matchesAnalyticsDeadline(program: SupportProgram, filter: DeadlineFilter): boolean {
+  const days = daysUntilDeadline(program.deadline);
+  if (filter === 'all') return true;
+  if (filter === 'withDeadline') return program.deadline !== null;
+  if (filter === 'withoutDeadline') return program.deadline === null;
+  if (filter === 'next30') return days !== null && days >= 0 && days <= 30;
+  if (filter === 'next90') return days !== null && days >= 0 && days <= 90;
+  return true;
+}
+
+export function normalizeAnalyticsFilters(filters: Partial<AnalyticsFilters> = {}): AnalyticsFilters {
+  const definedFilters = Object.fromEntries(
+    Object.entries(filters).filter(([, value]) => value !== undefined)
+  ) as Partial<AnalyticsFilters>;
+  return { ...defaultAnalyticsFilters, ...definedFilters };
+}
+
+export function applyAnalyticsFilters(
+  programs: readonly SupportProgram[],
+  filters: Partial<AnalyticsFilters> = {}
+): SupportProgram[] {
+  const normalized = normalizeAnalyticsFilters(filters);
+
+  return programs.filter((program) => {
+    const fundingValue = getProgramFundingValue(program);
+
+    return (
+      (normalized.region === 'Все регионы' || program.regions.includes(normalized.region)) &&
+      (normalized.year === 'Все годы' ||
+        program.launchYear === normalized.year ||
+        program.history.some((point) => point.year === normalized.year)) &&
+      (normalized.coverageLevel === 'Все уровни' || program.coverageLevel === normalized.coverageLevel) &&
+      (normalized.sourceId === 'Все источники' || program.sourceId === normalized.sourceId) &&
+      (normalized.supportType === 'Все типы' || program.supportType === normalized.supportType) &&
+      (normalized.topic === 'Все тематики' || program.topics.includes(normalized.topic)) &&
+      (normalized.audience === 'Все аудитории' || program.audience.includes(normalized.audience)) &&
+      (normalized.status === 'Все статусы' || program.status === normalized.status) &&
+      (normalized.funding === 'all' ||
+        (normalized.funding === 'withFunding' && fundingValue !== null) ||
+        (normalized.funding === 'withoutFunding' && fundingValue === null)) &&
+      matchesAnalyticsDeadline(program, normalized.deadline)
+    );
+  });
+}
 
 type DistributionItem = {
   id: string;
@@ -21,9 +115,11 @@ type DataQualitySummary = {
 export type AnalyticsSummary = MoneySummary & {
   totalPrograms: number;
   totalSources: number;
+  filteredPrograms: number;
   activePrograms: number;
   maxFundingRub: number | null;
   fundedShare: number;
+  filters: AnalyticsFilters;
   nearestDeadline: { programId: string; title: string; deadline: string } | null;
   nearestDeadlines: { programId: string; title: string; deadline: string }[];
   bySource: DistributionItem[];
@@ -32,13 +128,6 @@ export type AnalyticsSummary = MoneySummary & {
   byCoverageLevel: DistributionItem[];
   dataQuality: DataQualitySummary;
 };
-
-function median(values: readonly number[]): number {
-  if (values.length === 0) return 0;
-  const sorted = [...values].sort((a, b) => a - b);
-  const middle = Math.floor(sorted.length / 2);
-  return sorted.length % 2 === 0 ? (sorted[middle - 1] + sorted[middle]) / 2 : sorted[middle];
-}
 
 function buildDistribution(labels: readonly string[]): DistributionItem[] {
   return Array.from(new Set(labels))
@@ -50,13 +139,19 @@ function buildDistribution(labels: readonly string[]): DistributionItem[] {
     }));
 }
 
-export function buildAnalytics(sources: readonly SupportSource[], programs: readonly SupportProgram[]): AnalyticsSummary {
-  const fundingValues = programs
-    .map(getComparableFundingRub)
+export function buildAnalytics(
+  sources: readonly SupportSource[],
+  programs: readonly SupportProgram[],
+  filters: Partial<AnalyticsFilters> = {}
+): AnalyticsSummary {
+  const normalizedFilters = normalizeAnalyticsFilters(filters);
+  const filteredPrograms = applyAnalyticsFilters(programs, normalizedFilters);
+  const fundingValues = filteredPrograms
+    .map(getProgramFundingValue)
     .filter((value): value is number => typeof value === 'number');
-  const funded = programs.filter((program) => getComparableFundingRub(program) !== null);
+  const funded = filteredPrograms.filter((program) => getProgramFundingValue(program) !== null);
   const totalFundingRub = fundingValues.reduce((sum, value) => sum + value, 0);
-  const upcoming = programs
+  const upcoming = filteredPrograms
     .filter((program) => {
       const days = daysUntilDeadline(program.deadline);
       return days !== null && days >= 0;
@@ -64,14 +159,16 @@ export function buildAnalytics(sources: readonly SupportSource[], programs: read
     .sort((a, b) => (daysUntilDeadline(a.deadline) ?? 9999) - (daysUntilDeadline(b.deadline) ?? 9999));
 
   return {
-    totalPrograms: programs.length,
+    totalPrograms: filteredPrograms.length,
     totalSources: sources.length,
-    activePrograms: programs.filter((program) => isActiveStatus(program.status)).length,
+    filteredPrograms: filteredPrograms.length,
+    activePrograms: filteredPrograms.filter((program) => isActiveStatus(program.status)).length,
     maxFundingRub: fundingValues.length > 0 ? Math.max(...fundingValues) : null,
-    fundedShare: programs.length === 0 ? 0 : funded.length / programs.length,
+    fundedShare: filteredPrograms.length === 0 ? 0 : funded.length / filteredPrograms.length,
     totalFundingRub,
     averageFundingRub: fundingValues.length === 0 ? 0 : totalFundingRub / fundingValues.length,
-    medianFundingRub: median(fundingValues),
+    medianFundingRub: median(fundingValues) ?? 0,
+    filters: normalizedFilters,
     nearestDeadline: upcoming[0]
       ? { programId: upcoming[0].id, title: upcoming[0].title, deadline: upcoming[0].deadline as string }
       : null,
@@ -83,23 +180,23 @@ export function buildAnalytics(sources: readonly SupportSource[], programs: read
     bySource: sources.map((source) => ({
       id: source.id,
       label: source.name,
-      count: programs.filter((program) => program.sourceId === source.id).length
+      count: filteredPrograms.filter((program) => program.sourceId === source.id).length
     })),
-    bySupportType: Array.from(new Set(programs.map((program) => program.supportType)))
+    bySupportType: Array.from(new Set(filteredPrograms.map((program) => program.supportType)))
       .sort((a, b) => a.localeCompare(b, 'ru'))
       .map((supportType) => ({
         id: supportType,
         label: supportType,
-        count: programs.filter((program) => program.supportType === supportType).length
+        count: filteredPrograms.filter((program) => program.supportType === supportType).length
       })),
-    byRegion: buildDistribution(programs.flatMap((program) => program.regions)),
-    byCoverageLevel: buildDistribution(programs.map((program) => program.coverageLevel)),
+    byRegion: buildDistribution(filteredPrograms.flatMap((program) => program.regions)),
+    byCoverageLevel: buildDistribution(filteredPrograms.map((program) => program.coverageLevel)),
     dataQuality: {
       averageScore:
-        programs.length === 0
+        filteredPrograms.length === 0
           ? 0
-          : programs.reduce((sum, program) => sum + program.dataQuality.score, 0) / programs.length,
-      incompletePrograms: programs
+          : filteredPrograms.reduce((sum, program) => sum + program.dataQuality.score, 0) / filteredPrograms.length,
+      incompletePrograms: filteredPrograms
         .filter((program) => program.dataQuality.missingFields.length > 0)
         .map((program) => ({
           programId: program.id,
