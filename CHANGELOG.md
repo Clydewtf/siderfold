@@ -2,6 +2,22 @@
 
 All notable project milestones are documented in this file.
 
+## v0.1.1 - 2026-07-09
+
+Data foundation for the Stargate product-platform upgrade.
+
+### Added
+
+- Expanded support program data model with coverage level, regions, active period, funding ranges, currency, update metadata, data quality, and historical points.
+- Expanded source data model with coverage level and verification dates.
+- Seed validation for required metadata, links, dates, funding ranges, launch years, regions, references, data quality, and history.
+- Pure data quality calculation and analytics foundation metrics for finance, regions, coverage levels, and incomplete records.
+
+### Notes
+
+- No backend, authentication, profile, new catalog UI, or analytics UI is included in this version.
+- Existing UI changes are limited to TypeScript compatibility with the richer data model.
+
 ## v0.1.0 - 2026-07-08
 
 Initial MVP snapshot.
