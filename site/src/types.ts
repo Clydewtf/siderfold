@@ -36,6 +36,28 @@ export type Topic =
   | 'ИИ'
   | 'Региональное развитие';
 
+export type CoverageLevel = 'federal' | 'regional' | 'municipal' | 'private';
+
+export type CurrencyCode = 'RUB';
+
+export type DataQualityField = 'funding' | 'deadline' | 'regions' | 'source' | 'updatedAt' | 'sourceUrl';
+
+export type DataQualityLevel = 'high' | 'medium' | 'low';
+
+export type DataQuality = {
+  score: number;
+  level: DataQualityLevel;
+  missingFields: readonly DataQualityField[];
+  checkedAt: string;
+};
+
+export type ProgramHistoryPoint = {
+  year: number;
+  fundingAmountRub: number | null;
+  applicationsCount: number | null;
+  winnersCount: number | null;
+};
+
 export type SupportSource = {
   id: string;
   name: string;
@@ -43,9 +65,11 @@ export type SupportSource = {
   description: string;
   topics: readonly Topic[];
   region: string;
+  coverageLevel: CoverageLevel;
   websiteUrl: string;
   logoLabel: string;
   trustNote: string;
+  verifiedAt: string;
   featured: boolean;
 };
 
@@ -55,18 +79,28 @@ export type SupportProgram = {
   title: string;
   description: string;
   status: ProgramStatus;
-  deadline: string | null;
-  publishedAt: string;
-  fundingAmountRub: number | null;
-  fundingLabel: string;
   supportType: SupportType;
-  audience: readonly Audience[];
   topics: readonly Topic[];
-  region: string;
+  audience: readonly Audience[];
+  regions: readonly string[];
+  coverageLevel: CoverageLevel;
+  launchYear: number;
+  activeFrom: string;
+  activeTo: string | null;
+  deadline: string | null;
+  fundingAmountRub: number | null;
+  fundingMinRub: number | null;
+  fundingMaxRub: number | null;
+  fundingLabel: string;
+  currency: CurrencyCode;
   requirements: readonly string[];
   sourceUrl: string;
   documentUrls: readonly string[];
+  publishedAt: string;
+  updatedAt: string;
   featured: boolean;
+  dataQuality: DataQuality;
+  history: readonly ProgramHistoryPoint[];
 };
 
 export type ProgramSort = 'deadline' | 'funding' | 'newest' | 'source';
