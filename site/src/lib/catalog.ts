@@ -22,6 +22,10 @@ function matchesDeadline(program: SupportProgram, filter: DeadlineFilter): boole
   return true;
 }
 
+export function getComparableFundingRub(program: SupportProgram): number | null {
+  return program.fundingAmountRub ?? program.fundingMaxRub ?? program.fundingMinRub;
+}
+
 export function sortPrograms(
   input: readonly SupportProgram[],
   sources: readonly SupportSource[],
@@ -29,7 +33,7 @@ export function sortPrograms(
 ): SupportProgram[] {
   const sourceById = new Map(sources.map((source) => [source.id, source]));
   return [...input].sort((a, b) => {
-    if (sort === 'funding') return (b.fundingAmountRub ?? -1) - (a.fundingAmountRub ?? -1);
+    if (sort === 'funding') return (getComparableFundingRub(b) ?? -1) - (getComparableFundingRub(a) ?? -1);
     if (sort === 'newest') return b.publishedAt.localeCompare(a.publishedAt);
     if (sort === 'source') {
       return (sourceById.get(a.sourceId)?.name ?? '').localeCompare(sourceById.get(b.sourceId)?.name ?? '', 'ru');

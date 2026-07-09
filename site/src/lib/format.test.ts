@@ -1,11 +1,18 @@
 import { describe, expect, it } from 'vitest';
-import { formatDeadline, formatMoneyRub, isValidExternalUrl } from './format';
+import { programs } from '../data/seed';
+import { formatDeadline, formatMoneyRub, formatProgramFundingLabel, isValidExternalUrl } from './format';
 
 describe('format helpers', () => {
   it('formats ruble amounts compactly', () => {
     expect(formatMoneyRub(12000000)).toBe('12 млн ₽');
     expect(formatMoneyRub(700000)).toBe('700 тыс. ₽');
     expect(formatMoneyRub(null)).toBe('Сумма не указана');
+  });
+
+  it('formats program funding from the seed label when range data is richer than exact amount', () => {
+    const program = programs.find((item) => item.id === 'fasie-development');
+
+    expect(program ? formatProgramFundingLabel(program) : '').toBe('до 20 млн ₽');
   });
 
   it('formats deadlines and missing deadlines', () => {

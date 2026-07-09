@@ -38,6 +38,19 @@ describe('catalog selectors', () => {
     expect(sortPrograms(programs, sources, 'source')[0].sourceId).toBe('asi');
   });
 
+  it('sorts funding by exact amount or upper range when exact amount is missing', () => {
+    const result = sortPrograms(
+      [
+        { ...programs[0], id: 'range-only', fundingAmountRub: null, fundingMinRub: 1000000, fundingMaxRub: 9000000 },
+        { ...programs[1], id: 'exact-small', fundingAmountRub: 1500000, fundingMinRub: 500000, fundingMaxRub: 1500000 }
+      ],
+      sources,
+      'funding'
+    );
+
+    expect(result.map((program) => program.id)).toEqual(['range-only', 'exact-small']);
+  });
+
   it('counts all and active programs by source', () => {
     const counts = getSourceProgramCounts(sources, programs);
     expect(counts['fond-potanin']).toEqual({ total: 3, active: 2 });
