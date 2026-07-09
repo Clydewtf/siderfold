@@ -64,4 +64,14 @@ describe('calculateProgramDataQuality', () => {
     expect(quality.missingFields).toEqual(['funding', 'deadline', 'regions', 'updatedAt', 'sourceUrl']);
     expect(quality.checkedAt).toBe('unknown');
   });
+
+  it('uses unknown checkedAt when updatedAt is whitespace only', () => {
+    const quality = calculateProgramDataQuality({
+      ...baseProgram,
+      updatedAt: '   '
+    });
+
+    expect(quality.missingFields).toContain('updatedAt');
+    expect(quality.checkedAt).toBe('unknown');
+  });
 });

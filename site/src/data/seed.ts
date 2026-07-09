@@ -3,6 +3,7 @@ import type { ProgramHistoryPoint, SupportProgram, SupportSource } from '../type
 
 const docs = (slug: string): readonly string[] => [`https://example.org/docs/${slug}-rules.pdf`];
 
+// Seed history intentionally uses the table's 2024-2026 retrospective values; launchYear is inception metadata.
 const history = (
   funding2024: number | null,
   funding2025: number | null,

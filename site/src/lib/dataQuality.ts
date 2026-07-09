@@ -27,6 +27,6 @@ export function calculateProgramDataQuality(program: ProgramQualityInput): DataQ
     score,
     level,
     missingFields,
-    checkedAt: program.updatedAt || 'unknown'
+    checkedAt: program.updatedAt.trim() || 'unknown'
   };
 }

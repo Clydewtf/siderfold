@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { calculateProgramDataQuality } from '../lib/dataQuality';
 import { programs, sources } from './seed';
 
 const expectUniqueIds = (ids: readonly string[]) => {
@@ -132,6 +133,12 @@ describe('seed data foundation metadata', () => {
     });
   });
 
+  it('stores program data quality derived from current program metadata', () => {
+    programs.forEach(({ dataQuality, ...program }) => {
+      expect(dataQuality).toEqual(calculateProgramDataQuality(program));
+    });
+  });
+
   it('uses valid funding ranges and keeps exact amounts inside ranges', () => {
     programs.forEach((program) => {
       if (program.fundingMinRub !== null) expectPositiveInteger(program.fundingMinRub);
@@ -158,6 +165,7 @@ describe('seed data foundation metadata', () => {
   it('contains historical points that can power demo forecast calculations', () => {
     programs.forEach((program) => {
       expect(program.history).toHaveLength(3);
+      expect(program.history.map((point) => point.year)).toEqual([2024, 2025, 2026]);
       expect(program.history.map((point) => point.year)).toEqual(
         [...program.history.map((point) => point.year)].sort()
       );
