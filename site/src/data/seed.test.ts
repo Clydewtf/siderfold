@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { calculateProgramDataQuality } from '../lib/dataQuality';
 import { programs, sources } from './seed';
 
 const expectUniqueIds = (ids: readonly string[]) => {
@@ -17,6 +18,17 @@ const expectDateOnly = (value: string) => {
 
   expect(Number.isNaN(parsed.getTime())).toBe(false);
   expect(parsed.toISOString().slice(0, 10)).toBe(value);
+};
+
+const coverageLevels = new Set(['federal', 'regional', 'municipal', 'private']);
+
+const expectPositiveInteger = (value: number) => {
+  expect(Number.isInteger(value)).toBe(true);
+  expect(value).toBeGreaterThan(0);
+};
+
+const expectNullableDateOnly = (value: string | null) => {
+  if (value !== null) expectDateOnly(value);
 };
 
 const assertReadonlySeedTypes = () => {
@@ -50,7 +62,7 @@ describe('seed data', () => {
   });
 
   it('links every program to an existing source', () => {
-    const sourceIds = new Set(sources.map((source) => source.id));
+    const sourceIds = new Set<string>(sources.map((source) => source.id));
     expect(programs.every((program) => sourceIds.has(program.sourceId))).toBe(true);
   });
 
@@ -84,6 +96,88 @@ describe('seed data', () => {
       if (program.deadline !== null) {
         expectDateOnly(program.deadline);
       }
+    });
+  });
+});
+
+describe('seed data foundation metadata', () => {
+  it('adds required source metadata for backend-ready source records', () => {
+    sources.forEach((source) => {
+      expect(coverageLevels.has(source.coverageLevel)).toBe(true);
+      expect(source.region.trim().length).toBeGreaterThan(0);
+      expectDateOnly(source.verifiedAt);
+    });
+
+    expect(new Set(sources.map((source) => source.coverageLevel))).toEqual(
+      new Set(['federal', 'regional', 'private'])
+    );
+  });
+
+  it('adds required program timing, region, coverage, funding, currency, and quality metadata', () => {
+    programs.forEach((program) => {
+      expect(program.regions.length).toBeGreaterThan(0);
+      program.regions.forEach((region) => expect(region.trim().length).toBeGreaterThan(0));
+      expect(coverageLevels.has(program.coverageLevel)).toBe(true);
+      expectPositiveInteger(program.launchYear);
+      expect(program.launchYear).toBeGreaterThanOrEqual(2000);
+      expect(program.launchYear).toBeLessThanOrEqual(2026);
+      expectDateOnly(program.activeFrom);
+      expectNullableDateOnly(program.activeTo);
+      expectDateOnly(program.publishedAt);
+      expectDateOnly(program.updatedAt);
+      expect(program.currency).toBe('RUB');
+      expect(program.fundingLabel.trim().length).toBeGreaterThan(0);
+      expect(program.dataQuality.checkedAt).toBe(program.updatedAt);
+      expect(program.dataQuality.score).toBeGreaterThanOrEqual(0);
+      expect(program.dataQuality.score).toBeLessThanOrEqual(100);
+    });
+  });
+
+  it('stores program data quality derived from current program metadata', () => {
+    programs.forEach(({ dataQuality, ...program }) => {
+      expect(dataQuality).toEqual(calculateProgramDataQuality(program));
+    });
+  });
+
+  it('uses valid funding ranges and keeps exact amounts inside ranges', () => {
+    programs.forEach((program) => {
+      if (program.fundingMinRub !== null) expectPositiveInteger(program.fundingMinRub);
+      if (program.fundingMaxRub !== null) expectPositiveInteger(program.fundingMaxRub);
+      if (program.fundingMinRub !== null && program.fundingMaxRub !== null) {
+        expect(program.fundingMinRub).toBeLessThanOrEqual(program.fundingMaxRub);
+      }
+      if (program.fundingAmountRub !== null && program.fundingMinRub !== null) {
+        expect(program.fundingAmountRub).toBeGreaterThanOrEqual(program.fundingMinRub);
+      }
+      if (program.fundingAmountRub !== null && program.fundingMaxRub !== null) {
+        expect(program.fundingAmountRub).toBeLessThanOrEqual(program.fundingMaxRub);
+      }
+      if (
+        program.fundingAmountRub === null &&
+        program.fundingMinRub === null &&
+        program.fundingMaxRub === null
+      ) {
+        expect(program.dataQuality.missingFields).toContain('funding');
+      }
+    });
+  });
+
+  it('contains historical points that can power demo forecast calculations', () => {
+    programs.forEach((program) => {
+      expect(program.history).toHaveLength(3);
+      expect(program.history.map((point) => point.year)).toEqual([2024, 2025, 2026]);
+      expect(program.history.map((point) => point.year)).toEqual(
+        [...program.history.map((point) => point.year)].sort()
+      );
+      expect(program.history.at(-1)?.year).toBe(2026);
+
+      program.history.forEach((point) => {
+        expect(point.year).toBeGreaterThanOrEqual(program.launchYear);
+        expect(point.year).toBeLessThanOrEqual(2026);
+        if (point.fundingAmountRub !== null) expectPositiveInteger(point.fundingAmountRub);
+        if (point.applicationsCount !== null) expectPositiveInteger(point.applicationsCount);
+        if (point.winnersCount !== null) expectPositiveInteger(point.winnersCount);
+      });
     });
   });
 });

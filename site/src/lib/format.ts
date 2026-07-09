@@ -1,3 +1,5 @@
+import type { SupportProgram } from '../types';
+
 const dateFormatter = new Intl.DateTimeFormat('ru-RU', {
   day: 'numeric',
   month: 'long',
@@ -17,6 +19,10 @@ export function formatMoneyRub(value: number | null): string {
   }
   if (value >= 1_000) return `${Math.round(value / 1_000)} тыс. ₽`;
   return `${value.toLocaleString('ru-RU')} ₽`;
+}
+
+export function formatProgramFundingLabel(program: SupportProgram): string {
+  return program.fundingLabel || formatMoneyRub(program.fundingAmountRub ?? program.fundingMaxRub ?? program.fundingMinRub);
 }
 
 export function isValidExternalUrl(value: string): boolean {
