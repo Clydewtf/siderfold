@@ -133,6 +133,153 @@ describe('analytics', () => {
   });
 });
 
+describe('financial analytics', () => {
+  it('computes total, average, median, max, and missing funding counts', () => {
+    const analytics = buildAnalytics(sources, programs);
+
+    expect(analytics.finance.totalFundingRub).toBe(54000000);
+    expect(analytics.finance.averageFundingRub).toBe(3600000);
+    expect(analytics.finance.medianFundingRub).toBe(1500000);
+    expect(analytics.finance.maxFundingRub).toBe(20000000);
+    expect(analytics.finance.fundedPrograms).toBe(15);
+    expect(analytics.finance.unknownFundingPrograms).toBe(15);
+  });
+
+  it('builds funding distributions by support type, source, region, and coverage level', () => {
+    const analytics = buildAnalytics(sources, programs);
+
+    expect(analytics.finance.bySupportType.find((item) => item.id === 'Грант')).toMatchObject({
+      label: 'Грант',
+      count: 10,
+      totalFundingRub: 49100000
+    });
+
+    expect(analytics.finance.bySource.find((item) => item.id === 'fasie')).toMatchObject({
+      label: 'Фонд содействия инновациям',
+      count: 3,
+      totalFundingRub: 24500000
+    });
+
+    expect(analytics.finance.byRegion.find((item) => item.id === 'Россия')?.totalFundingRub).toBeGreaterThan(50000000);
+    expect(analytics.finance.byCoverageLevel.find((item) => item.id === 'federal')).toMatchObject({
+      label: 'federal',
+      totalFundingRub: 44200000
+    });
+  });
+
+  it('returns null averages for empty funded groups', () => {
+    const analytics = buildAnalytics(sources, programs, { funding: 'withoutFunding' });
+
+    expect(analytics.finance.totalFundingRub).toBe(0);
+    expect(analytics.finance.averageFundingRub).toBeNull();
+    expect(analytics.finance.medianFundingRub).toBeNull();
+    expect(analytics.finance.maxFundingRub).toBeNull();
+  });
+
+  it('preserves fractional average funding values', () => {
+    const analytics = buildAnalytics(syntheticSources, [
+      syntheticProgram({
+        id: 'one-ruble',
+        title: 'One ruble',
+        fundingAmountRub: 1
+      }),
+      syntheticProgram({
+        id: 'two-rubles',
+        title: 'Two rubles',
+        fundingAmountRub: 2
+      })
+    ]);
+
+    expect(analytics.finance.averageFundingRub).toBe(1.5);
+    expect(analytics.finance.bySupportType.find((item) => item.id === 'Грант')?.averageFundingRub).toBe(1.5);
+    expect(analytics.averageFundingRub).toBe(1.5);
+  });
+
+  it('uses unique known funding as the regional share denominator', () => {
+    const analytics = buildAnalytics(syntheticSources, [
+      syntheticProgram({
+        id: 'multi-region-funded',
+        title: 'Multi-region funded',
+        fundingAmountRub: 100,
+        regions: ['Россия', 'Татарстан']
+      }),
+      syntheticProgram({
+        id: 'single-region-funded',
+        title: 'Single-region funded',
+        fundingAmountRub: 100,
+        regions: ['Россия']
+      })
+    ]);
+
+    expect(analytics.finance.totalFundingRub).toBe(200);
+    expect(analytics.finance.byRegion.find((item) => item.id === 'Россия')).toMatchObject({
+      totalFundingRub: 200,
+      shareOfKnownFunding: 1
+    });
+    expect(analytics.finance.byRegion.find((item) => item.id === 'Татарстан')).toMatchObject({
+      totalFundingRub: 100,
+      shareOfKnownFunding: 0.5
+    });
+  });
+
+  it('sorts money distributions by total funding, count, and label', () => {
+    const sortSources = [
+      { ...syntheticSources[0], id: 'high', name: 'High total' },
+      { ...syntheticSources[0], id: 'count-wins', name: 'Count wins' },
+      { ...syntheticSources[0], id: 'single-loses', name: 'Single loses' },
+      { ...syntheticSources[0], id: 'alpha', name: 'Alpha' },
+      { ...syntheticSources[0], id: 'bravo', name: 'Bravo' }
+    ] as const satisfies readonly SupportSource[];
+    const analytics = buildAnalytics(sortSources, [
+      syntheticProgram({
+        id: 'high-total',
+        title: 'High total',
+        sourceId: 'high',
+        fundingAmountRub: 50
+      }),
+      syntheticProgram({
+        id: 'count-wins-1',
+        title: 'Count wins 1',
+        sourceId: 'count-wins',
+        fundingAmountRub: 10
+      }),
+      syntheticProgram({
+        id: 'count-wins-2',
+        title: 'Count wins 2',
+        sourceId: 'count-wins',
+        fundingAmountRub: 10
+      }),
+      syntheticProgram({
+        id: 'single-loses',
+        title: 'Single loses',
+        sourceId: 'single-loses',
+        fundingAmountRub: 20
+      }),
+      syntheticProgram({
+        id: 'alpha',
+        title: 'Alpha',
+        sourceId: 'alpha',
+        fundingAmountRub: 5
+      }),
+      syntheticProgram({
+        id: 'bravo',
+        title: 'Bravo',
+        sourceId: 'bravo',
+        fundingAmountRub: 5
+      })
+    ]);
+
+    expect(analytics.finance.bySource.map((item) => item.id)).toEqual([
+      'high',
+      'count-wins',
+      'single-loses',
+      'alpha',
+      'bravo'
+    ]);
+    expect(analytics.finance.bySource.find((item) => item.id === 'high')?.shareOfKnownFunding).toBe(0.5);
+  });
+});
+
 describe('analytics filters and funding helpers', () => {
   it('keeps a complete default filter contract', () => {
     expect(defaultAnalyticsFilters).toEqual({

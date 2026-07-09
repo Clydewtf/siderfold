@@ -101,6 +101,28 @@ type DistributionItem = {
   count: number;
 };
 
+export type MoneyDistributionItem = {
+  id: string;
+  label: string;
+  count: number;
+  totalFundingRub: number;
+  averageFundingRub: number | null;
+  shareOfKnownFunding: number;
+};
+
+export type FinancialAnalytics = {
+  totalFundingRub: number;
+  averageFundingRub: number | null;
+  medianFundingRub: number | null;
+  maxFundingRub: number | null;
+  fundedPrograms: number;
+  unknownFundingPrograms: number;
+  bySupportType: MoneyDistributionItem[];
+  bySource: MoneyDistributionItem[];
+  byRegion: MoneyDistributionItem[];
+  byCoverageLevel: MoneyDistributionItem[];
+};
+
 type MoneySummary = {
   totalFundingRub: number;
   averageFundingRub: number;
@@ -126,6 +148,7 @@ export type AnalyticsSummary = MoneySummary & {
   bySupportType: DistributionItem[];
   byRegion: DistributionItem[];
   byCoverageLevel: DistributionItem[];
+  finance: FinancialAnalytics;
   dataQuality: DataQualitySummary;
 };
 
@@ -139,6 +162,99 @@ function buildDistribution(labels: readonly string[]): DistributionItem[] {
     }));
 }
 
+function sum(values: readonly number[]): number {
+  return values.reduce((total, value) => total + value, 0);
+}
+
+function average(values: readonly number[]): number | null {
+  if (values.length === 0) return null;
+  return sum(values) / values.length;
+}
+
+function fundingValues(programs: readonly SupportProgram[]): number[] {
+  return programs.map(getProgramFundingValue).filter((value): value is number => value !== null);
+}
+
+function buildMoneyDistribution(
+  entries: readonly { id: string; label: string; program: SupportProgram }[],
+  knownFundingDenominator = sum(entries.map((entry) => getProgramFundingValue(entry.program) ?? 0))
+): MoneyDistributionItem[] {
+  const groups = new Map<string, { label: string; programs: SupportProgram[] }>();
+
+  entries.forEach((entry) => {
+    const group = groups.get(entry.id) ?? { label: entry.label, programs: [] };
+    group.programs.push(entry.program);
+    groups.set(entry.id, group);
+  });
+
+  return Array.from(groups.entries())
+    .map(([id, group]) => {
+      const values = fundingValues(group.programs);
+      const totalFundingRub = sum(values);
+      return {
+        id,
+        label: group.label,
+        count: group.programs.length,
+        totalFundingRub,
+        averageFundingRub: average(values),
+        shareOfKnownFunding: knownFundingDenominator === 0 ? 0 : totalFundingRub / knownFundingDenominator
+      };
+    })
+    .sort((a, b) => b.totalFundingRub - a.totalFundingRub || b.count - a.count || a.label.localeCompare(b.label, 'ru'));
+}
+
+function buildFinancialAnalytics(
+  sources: readonly SupportSource[],
+  programs: readonly SupportProgram[]
+): FinancialAnalytics {
+  const sourceById = new Map(sources.map((source) => [source.id, source]));
+  const values = fundingValues(programs);
+  const totalFundingRub = sum(values);
+
+  return {
+    totalFundingRub,
+    averageFundingRub: average(values),
+    medianFundingRub: median(values),
+    maxFundingRub: values.length > 0 ? Math.max(...values) : null,
+    fundedPrograms: values.length,
+    unknownFundingPrograms: programs.length - values.length,
+    bySupportType: buildMoneyDistribution(
+      programs.map((program) => ({
+        id: program.supportType,
+        label: program.supportType,
+        program
+      }))
+    ),
+    bySource: buildMoneyDistribution(
+      programs.map((program) => {
+        const source = sourceById.get(program.sourceId);
+        return {
+          id: program.sourceId,
+          label: source?.name ?? program.sourceId,
+          program
+        };
+      })
+    ),
+    byRegion: buildMoneyDistribution(
+      programs.flatMap((program) =>
+        program.regions.map((region) => ({
+          id: region,
+          label: region,
+          program
+        }))
+      ),
+      totalFundingRub
+    ),
+    byCoverageLevel: buildMoneyDistribution(
+      programs.map((program) => ({
+        id: program.coverageLevel,
+        label: program.coverageLevel,
+        program
+      }))
+    )
+  };
+}
+
 export function buildAnalytics(
   sources: readonly SupportSource[],
   programs: readonly SupportProgram[],
@@ -146,11 +262,7 @@ export function buildAnalytics(
 ): AnalyticsSummary {
   const normalizedFilters = normalizeAnalyticsFilters(filters);
   const filteredPrograms = applyAnalyticsFilters(programs, normalizedFilters);
-  const fundingValues = filteredPrograms
-    .map(getProgramFundingValue)
-    .filter((value): value is number => typeof value === 'number');
-  const funded = filteredPrograms.filter((program) => getProgramFundingValue(program) !== null);
-  const totalFundingRub = fundingValues.reduce((sum, value) => sum + value, 0);
+  const finance = buildFinancialAnalytics(sources, filteredPrograms);
   const upcoming = filteredPrograms
     .filter((program) => {
       const days = daysUntilDeadline(program.deadline);
@@ -163,11 +275,11 @@ export function buildAnalytics(
     totalSources: sources.length,
     filteredPrograms: filteredPrograms.length,
     activePrograms: filteredPrograms.filter((program) => isActiveStatus(program.status)).length,
-    maxFundingRub: fundingValues.length > 0 ? Math.max(...fundingValues) : null,
-    fundedShare: filteredPrograms.length === 0 ? 0 : funded.length / filteredPrograms.length,
-    totalFundingRub,
-    averageFundingRub: fundingValues.length === 0 ? 0 : totalFundingRub / fundingValues.length,
-    medianFundingRub: median(fundingValues) ?? 0,
+    maxFundingRub: finance.maxFundingRub,
+    fundedShare: filteredPrograms.length === 0 ? 0 : finance.fundedPrograms / filteredPrograms.length,
+    totalFundingRub: finance.totalFundingRub,
+    averageFundingRub: finance.averageFundingRub ?? 0,
+    medianFundingRub: finance.medianFundingRub ?? 0,
     filters: normalizedFilters,
     nearestDeadline: upcoming[0]
       ? { programId: upcoming[0].id, title: upcoming[0].title, deadline: upcoming[0].deadline as string }
@@ -191,6 +303,7 @@ export function buildAnalytics(
       })),
     byRegion: buildDistribution(filteredPrograms.flatMap((program) => program.regions)),
     byCoverageLevel: buildDistribution(filteredPrograms.map((program) => program.coverageLevel)),
+    finance,
     dataQuality: {
       averageScore:
         filteredPrograms.length === 0
