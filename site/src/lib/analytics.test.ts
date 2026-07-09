@@ -280,6 +280,159 @@ describe('financial analytics', () => {
   });
 });
 
+describe('regional analytics', () => {
+  it('computes region counts, active counts, funding, and coverage-level breakdowns', () => {
+    const analytics = buildAnalytics(sources, programs);
+    const russia = analytics.regional.regions.find((item) => item.region === 'Россия');
+
+    expect(russia).toMatchObject({
+      region: 'Россия',
+      programCount: 26,
+      activeProgramCount: 18,
+      federalProgramCount: 17,
+      regionalProgramCount: 0,
+      privateProgramCount: 9,
+      municipalProgramCount: 0
+    });
+    expect(russia?.totalFundingRub).toBe(53400000);
+    expect(russia?.coverageScore).toBeGreaterThan(0);
+  });
+
+  it('identifies high and low coverage regions from observed seed coverage', () => {
+    const analytics = buildAnalytics(sources, programs);
+
+    expect(analytics.regional.highCoverageRegions[0].region).toBe('Россия');
+    expect(analytics.regional.lowCoverageRegions.map((item) => item.region)).toContain('Москва');
+  });
+
+  it('counts federal, regional, private, and municipal programs', () => {
+    const analytics = buildAnalytics(sources, programs);
+
+    expect(analytics.regional.federalPrograms).toBe(18);
+    expect(analytics.regional.regionalPrograms).toBe(3);
+    expect(analytics.regional.privatePrograms).toBe(9);
+    expect(analytics.regional.municipalPrograms).toBe(0);
+  });
+
+  it('counts coverage levels from filtered programs only', () => {
+    const analytics = buildAnalytics(
+      syntheticSources,
+      [
+        syntheticProgram({
+          id: 'filtered-federal',
+          title: 'Filtered federal',
+          coverageLevel: 'federal',
+          status: 'Открыта'
+        }),
+        syntheticProgram({
+          id: 'filtered-private',
+          title: 'Filtered private',
+          coverageLevel: 'private',
+          status: 'Открыта'
+        }),
+        syntheticProgram({
+          id: 'filtered-municipal',
+          title: 'Filtered municipal',
+          coverageLevel: 'municipal',
+          status: 'Открыта'
+        }),
+        syntheticProgram({
+          id: 'excluded-regional',
+          title: 'Excluded regional',
+          coverageLevel: 'regional',
+          status: 'Закрыта'
+        }),
+        syntheticProgram({
+          id: 'excluded-private',
+          title: 'Excluded private',
+          coverageLevel: 'private',
+          status: 'Закрыта'
+        })
+      ],
+      { status: 'Открыта' }
+    );
+
+    expect(analytics.regional.federalPrograms).toBe(1);
+    expect(analytics.regional.regionalPrograms).toBe(0);
+    expect(analytics.regional.privatePrograms).toBe(1);
+    expect(analytics.regional.municipalPrograms).toBe(1);
+  });
+
+  it('attributes full funding to every region on multi-region programs', () => {
+    const analytics = buildAnalytics(syntheticSources, [
+      syntheticProgram({
+        id: 'multi-region-full-funding',
+        title: 'Multi-region full funding',
+        fundingAmountRub: 1200000,
+        regions: ['Россия', 'Татарстан']
+      })
+    ]);
+
+    expect(analytics.regional.regions.find((item) => item.region === 'Россия')).toMatchObject({
+      totalFundingRub: 1200000,
+      averageFundingRub: 1200000
+    });
+    expect(analytics.regional.regions.find((item) => item.region === 'Татарстан')).toMatchObject({
+      totalFundingRub: 1200000,
+      averageFundingRub: 1200000
+    });
+  });
+
+  it('sorts regions deterministically by score and region name', () => {
+    const analytics = buildAnalytics(syntheticSources, [
+      syntheticProgram({
+        id: 'gamma-funded-1',
+        title: 'Gamma funded 1',
+        fundingAmountRub: 2000000,
+        regions: ['Гамма']
+      }),
+      syntheticProgram({
+        id: 'gamma-funded-2',
+        title: 'Gamma funded 2',
+        fundingAmountRub: 1000000,
+        regions: ['Гамма']
+      }),
+      syntheticProgram({
+        id: 'alpha-funded',
+        title: 'Alpha funded',
+        fundingAmountRub: 1000000,
+        regions: ['Альфа']
+      }),
+      syntheticProgram({
+        id: 'beta-funded',
+        title: 'Beta funded',
+        fundingAmountRub: 1000000,
+        regions: ['Бета']
+      }),
+      syntheticProgram({
+        id: 'delta-unfunded',
+        title: 'Delta unfunded',
+        regions: ['Дельта']
+      })
+    ]);
+    const gamma = analytics.regional.regions.find((item) => item.region === 'Гамма');
+
+    expect(analytics.regional.regions.map((item) => item.region)).toEqual(['Гамма', 'Альфа', 'Бета', 'Дельта']);
+    expect(analytics.regional.highCoverageRegions.map((item) => item.region)).toEqual([
+      'Гамма',
+      'Альфа',
+      'Бета',
+      'Дельта'
+    ]);
+    expect(analytics.regional.lowCoverageRegions.map((item) => item.region)).toEqual([
+      'Дельта',
+      'Альфа',
+      'Бета',
+      'Гамма'
+    ]);
+    expect(gamma).toMatchObject({
+      programCount: 2,
+      totalFundingRub: 3000000,
+      coverageScore: 2 * 2 + Math.round(3000000 / 1_000_000)
+    });
+  });
+});
+
 describe('analytics filters and funding helpers', () => {
   it('keeps a complete default filter contract', () => {
     expect(defaultAnalyticsFilters).toEqual({

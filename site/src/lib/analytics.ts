@@ -123,6 +123,29 @@ export type FinancialAnalytics = {
   byCoverageLevel: MoneyDistributionItem[];
 };
 
+export type RegionAnalyticsItem = {
+  region: string;
+  programCount: number;
+  activeProgramCount: number;
+  totalFundingRub: number;
+  averageFundingRub: number | null;
+  federalProgramCount: number;
+  regionalProgramCount: number;
+  privateProgramCount: number;
+  municipalProgramCount: number;
+  coverageScore: number;
+};
+
+export type RegionalAnalytics = {
+  regions: RegionAnalyticsItem[];
+  highCoverageRegions: RegionAnalyticsItem[];
+  lowCoverageRegions: RegionAnalyticsItem[];
+  federalPrograms: number;
+  regionalPrograms: number;
+  privatePrograms: number;
+  municipalPrograms: number;
+};
+
 type MoneySummary = {
   totalFundingRub: number;
   averageFundingRub: number;
@@ -149,6 +172,7 @@ export type AnalyticsSummary = MoneySummary & {
   byRegion: DistributionItem[];
   byCoverageLevel: DistributionItem[];
   finance: FinancialAnalytics;
+  regional: RegionalAnalytics;
   dataQuality: DataQualitySummary;
 };
 
@@ -255,6 +279,49 @@ function buildFinancialAnalytics(
   };
 }
 
+function countCoverage(programs: readonly SupportProgram[], level: CoverageLevel): number {
+  return programs.filter((program) => program.coverageLevel === level).length;
+}
+
+function buildRegionalAnalytics(programs: readonly SupportProgram[]): RegionalAnalytics {
+  const regions = Array.from(new Set(programs.flatMap((program) => program.regions))).sort((a, b) =>
+    a.localeCompare(b, 'ru')
+  );
+
+  const items = regions
+    .map((region) => {
+      const related = programs.filter((program) => program.regions.includes(region));
+      const values = fundingValues(related);
+      const totalFundingRub = sum(values);
+
+      return {
+        region,
+        programCount: related.length,
+        activeProgramCount: related.filter((program) => isActiveStatus(program.status)).length,
+        totalFundingRub,
+        averageFundingRub: average(values),
+        federalProgramCount: countCoverage(related, 'federal'),
+        regionalProgramCount: countCoverage(related, 'regional'),
+        privateProgramCount: countCoverage(related, 'private'),
+        municipalProgramCount: countCoverage(related, 'municipal'),
+        coverageScore: related.length * 2 + Math.round(totalFundingRub / 1_000_000)
+      };
+    })
+    .sort((a, b) => b.coverageScore - a.coverageScore || a.region.localeCompare(b.region, 'ru'));
+
+  return {
+    regions: items,
+    highCoverageRegions: items.slice(0, 5),
+    lowCoverageRegions: [...items]
+      .sort((a, b) => a.coverageScore - b.coverageScore || a.region.localeCompare(b.region, 'ru'))
+      .slice(0, 5),
+    federalPrograms: countCoverage(programs, 'federal'),
+    regionalPrograms: countCoverage(programs, 'regional'),
+    privatePrograms: countCoverage(programs, 'private'),
+    municipalPrograms: countCoverage(programs, 'municipal')
+  };
+}
+
 export function buildAnalytics(
   sources: readonly SupportSource[],
   programs: readonly SupportProgram[],
@@ -263,6 +330,7 @@ export function buildAnalytics(
   const normalizedFilters = normalizeAnalyticsFilters(filters);
   const filteredPrograms = applyAnalyticsFilters(programs, normalizedFilters);
   const finance = buildFinancialAnalytics(sources, filteredPrograms);
+  const regional = buildRegionalAnalytics(filteredPrograms);
   const upcoming = filteredPrograms
     .filter((program) => {
       const days = daysUntilDeadline(program.deadline);
@@ -304,6 +372,7 @@ export function buildAnalytics(
     byRegion: buildDistribution(filteredPrograms.flatMap((program) => program.regions)),
     byCoverageLevel: buildDistribution(filteredPrograms.map((program) => program.coverageLevel)),
     finance,
+    regional,
     dataQuality: {
       averageScore:
         filteredPrograms.length === 0
