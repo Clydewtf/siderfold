@@ -5,6 +5,7 @@ import type {
   ProgramStatus,
   SupportProgram,
   SupportSource,
+  SourceType,
   SupportType,
   Topic
 } from '../types';
@@ -146,6 +147,26 @@ export type RegionalAnalytics = {
   municipalPrograms: number;
 };
 
+export type SourceAnalyticsItem = {
+  sourceId: string;
+  sourceName: string;
+  sourceType: SourceType;
+  coverageLevel: CoverageLevel;
+  programCount: number;
+  activeProgramCount: number;
+  totalFundingRub: number;
+  averageFundingRub: number | null;
+  dataCompletenessScore: number;
+  incompleteProgramCount: number;
+};
+
+export type SourceAnalytics = {
+  byProgramCount: SourceAnalyticsItem[];
+  byActiveProgramCount: SourceAnalyticsItem[];
+  byFunding: SourceAnalyticsItem[];
+  byDataQuality: SourceAnalyticsItem[];
+};
+
 type MoneySummary = {
   totalFundingRub: number;
   averageFundingRub: number;
@@ -173,6 +194,7 @@ export type AnalyticsSummary = MoneySummary & {
   byCoverageLevel: DistributionItem[];
   finance: FinancialAnalytics;
   regional: RegionalAnalytics;
+  sources: SourceAnalytics;
   dataQuality: DataQualitySummary;
 };
 
@@ -322,6 +344,45 @@ function buildRegionalAnalytics(programs: readonly SupportProgram[]): RegionalAn
   };
 }
 
+function buildSourceAnalytics(
+  sources: readonly SupportSource[],
+  programs: readonly SupportProgram[]
+): SourceAnalytics {
+  const items = sources.map((source) => {
+    const related = programs.filter((program) => program.sourceId === source.id);
+    const values = fundingValues(related);
+    const completenessScores = related.map((program) => program.dataQuality.score);
+
+    return {
+      sourceId: source.id,
+      sourceName: source.name,
+      sourceType: source.type,
+      coverageLevel: source.coverageLevel,
+      programCount: related.length,
+      activeProgramCount: related.filter((program) => isActiveStatus(program.status)).length,
+      totalFundingRub: sum(values),
+      averageFundingRub: average(values),
+      dataCompletenessScore: average(completenessScores) ?? 0,
+      incompleteProgramCount: related.filter((program) => program.dataQuality.score < 100).length
+    };
+  });
+
+  const byProgramCount = [...items].sort(
+    (a, b) => b.programCount - a.programCount || a.sourceName.localeCompare(b.sourceName, 'ru')
+  );
+  const byActiveProgramCount = [...items].sort(
+    (a, b) => b.activeProgramCount - a.activeProgramCount || a.sourceName.localeCompare(b.sourceName, 'ru')
+  );
+  const byFunding = [...items].sort(
+    (a, b) => b.totalFundingRub - a.totalFundingRub || a.sourceName.localeCompare(b.sourceName, 'ru')
+  );
+  const byDataQuality = [...items].sort(
+    (a, b) => b.dataCompletenessScore - a.dataCompletenessScore || a.sourceName.localeCompare(b.sourceName, 'ru')
+  );
+
+  return { byProgramCount, byActiveProgramCount, byFunding, byDataQuality };
+}
+
 export function buildAnalytics(
   sources: readonly SupportSource[],
   programs: readonly SupportProgram[],
@@ -331,6 +392,7 @@ export function buildAnalytics(
   const filteredPrograms = applyAnalyticsFilters(programs, normalizedFilters);
   const finance = buildFinancialAnalytics(sources, filteredPrograms);
   const regional = buildRegionalAnalytics(filteredPrograms);
+  const sourceAnalytics = buildSourceAnalytics(sources, filteredPrograms);
   const upcoming = filteredPrograms
     .filter((program) => {
       const days = daysUntilDeadline(program.deadline);
@@ -373,6 +435,7 @@ export function buildAnalytics(
     byCoverageLevel: buildDistribution(filteredPrograms.map((program) => program.coverageLevel)),
     finance,
     regional,
+    sources: sourceAnalytics,
     dataQuality: {
       averageScore:
         filteredPrograms.length === 0

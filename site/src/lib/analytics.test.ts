@@ -433,6 +433,36 @@ describe('regional analytics', () => {
   });
 });
 
+describe('source analytics', () => {
+  it('ranks sources by total programs, active programs, funding, and data quality', () => {
+    const analytics = buildAnalytics(sources, programs);
+
+    expect(analytics.sources.byProgramCount.find((item) => item.sourceId === 'asi')).toMatchObject({
+      sourceId: 'asi',
+      programCount: 3
+    });
+    expect(analytics.sources.byActiveProgramCount[0].activeProgramCount).toBe(3);
+    expect(analytics.sources.byFunding[0]).toMatchObject({
+      sourceId: 'fasie',
+      totalFundingRub: 24500000
+    });
+    expect(analytics.sources.byDataQuality[0].dataCompletenessScore).toBeGreaterThanOrEqual(
+      analytics.sources.byDataQuality.at(-1)?.dataCompletenessScore ?? 0
+    );
+  });
+
+  it('counts incomplete programs per source', () => {
+    const analytics = buildAnalytics(sources, programs);
+    const skolkovo = analytics.sources.byProgramCount.find((item) => item.sourceId === 'skolkovo');
+
+    expect(skolkovo).toMatchObject({
+      sourceName: 'Сколково',
+      programCount: 3,
+      incompleteProgramCount: 2
+    });
+  });
+});
+
 describe('analytics filters and funding helpers', () => {
   it('keeps a complete default filter contract', () => {
     expect(defaultAnalyticsFilters).toEqual({
