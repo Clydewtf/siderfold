@@ -310,6 +310,10 @@ function share(count: number, total: number): number {
   return total === 0 ? 0 : count / total;
 }
 
+function isIncompleteProgram(program: SupportProgram): boolean {
+  return program.dataQuality.score < 100;
+}
+
 function buildDataQualityAnalytics(
   sources: readonly SupportSource[],
   programs: readonly SupportProgram[]
@@ -342,7 +346,7 @@ function buildDataQualityAnalytics(
           sourceId: source.id,
           sourceName: source.name,
           completenessIndex: average(related.map((program) => program.dataQuality.score)),
-          incompleteProgramCount: related.filter((program) => program.dataQuality.score < 100).length
+          incompleteProgramCount: related.filter(isIncompleteProgram).length
         };
       })
       .sort(
@@ -360,7 +364,7 @@ function buildDataQualityAnalytics(
       ),
     averageScore: completenessIndex,
     incompletePrograms: programs
-      .filter((program) => program.dataQuality.missingFields.length > 0)
+      .filter(isIncompleteProgram)
       .map((program) => ({
         programId: program.id,
         title: program.title,
@@ -398,7 +402,13 @@ function buildMoneyDistribution(
         shareOfKnownFunding: knownFundingDenominator === 0 ? 0 : totalFundingRub / knownFundingDenominator
       };
     })
-    .sort((a, b) => b.totalFundingRub - a.totalFundingRub || b.count - a.count || a.label.localeCompare(b.label, 'ru'));
+    .sort(
+      (a, b) =>
+        b.totalFundingRub - a.totalFundingRub ||
+        b.count - a.count ||
+        a.label.localeCompare(b.label, 'ru') ||
+        a.id.localeCompare(b.id)
+    );
 }
 
 function buildFinancialAnalytics(
@@ -524,7 +534,12 @@ function buildTopicAnalytics(programs: readonly SupportProgram[]): TopicAnalytic
         strength: topicStrength(related.length, totalFundingRub)
       };
     })
-    .sort((a, b) => b.programCount - a.programCount || b.totalFundingRub - a.totalFundingRub);
+    .sort(
+      (a, b) =>
+        b.programCount - a.programCount ||
+        b.totalFundingRub - a.totalFundingRub ||
+        a.topic.localeCompare(b.topic, 'ru')
+    );
 
   const intersections = topics
     .flatMap((topic) => {
@@ -578,7 +593,12 @@ function buildSupportGapsAnalytics(regional: RegionalAnalytics, topics: TopicAna
     }));
 
   const weakTopics = [...topics.topics]
-    .sort((a, b) => a.programCount - b.programCount || a.totalFundingRub - b.totalFundingRub)
+    .sort(
+      (a, b) =>
+        a.programCount - b.programCount ||
+        a.totalFundingRub - b.totalFundingRub ||
+        a.topic.localeCompare(b.topic, 'ru')
+    )
     .slice(0, 5)
     .map((topic) => ({
       id: `topic:${topic.topic}`,
@@ -590,7 +610,13 @@ function buildSupportGapsAnalytics(regional: RegionalAnalytics, topics: TopicAna
     }));
 
   const weakRegionTopicPairs = [...topics.intersections]
-    .sort((a, b) => a.programCount - b.programCount || a.totalFundingRub - b.totalFundingRub)
+    .sort(
+      (a, b) =>
+        a.programCount - b.programCount ||
+        a.totalFundingRub - b.totalFundingRub ||
+        a.topic.localeCompare(b.topic, 'ru') ||
+        a.region.localeCompare(b.region, 'ru')
+    )
     .slice(0, 8)
     .map((intersection) => ({
       id: `topic-region:${intersection.topic}:${intersection.region}`,
@@ -623,18 +649,27 @@ function buildSourceAnalytics(
       totalFundingRub: sum(values),
       averageFundingRub: average(values),
       dataCompletenessScore: average(completenessScores),
-      incompleteProgramCount: related.filter((program) => program.dataQuality.score < 100).length
+      incompleteProgramCount: related.filter(isIncompleteProgram).length
     };
   });
 
   const byProgramCount = [...items].sort(
-    (a, b) => b.programCount - a.programCount || a.sourceName.localeCompare(b.sourceName, 'ru')
+    (a, b) =>
+      b.programCount - a.programCount ||
+      a.sourceName.localeCompare(b.sourceName, 'ru') ||
+      a.sourceId.localeCompare(b.sourceId)
   );
   const byActiveProgramCount = [...items].sort(
-    (a, b) => b.activeProgramCount - a.activeProgramCount || a.sourceName.localeCompare(b.sourceName, 'ru')
+    (a, b) =>
+      b.activeProgramCount - a.activeProgramCount ||
+      a.sourceName.localeCompare(b.sourceName, 'ru') ||
+      a.sourceId.localeCompare(b.sourceId)
   );
   const byFunding = [...items].sort(
-    (a, b) => b.totalFundingRub - a.totalFundingRub || a.sourceName.localeCompare(b.sourceName, 'ru')
+    (a, b) =>
+      b.totalFundingRub - a.totalFundingRub ||
+      a.sourceName.localeCompare(b.sourceName, 'ru') ||
+      a.sourceId.localeCompare(b.sourceId)
   );
   const byDataQuality = [...items].sort(
     (a, b) =>
@@ -665,7 +700,12 @@ function buildTemporalAnalytics(programs: readonly SupportProgram[]): TemporalAn
       };
     })
     .filter((item): item is DeadlineAnalyticsItem => item !== null)
-    .sort((a, b) => a.daysUntilDeadline - b.daysUntilDeadline || a.title.localeCompare(b.title, 'ru'))
+    .sort(
+      (a, b) =>
+        a.daysUntilDeadline - b.daysUntilDeadline ||
+        a.title.localeCompare(b.title, 'ru') ||
+        a.programId.localeCompare(b.programId)
+    )
     .slice(0, 5);
 
   const years = Array.from(new Set(programs.flatMap((program) => program.history.map((point) => point.year)))).sort(
@@ -692,7 +732,7 @@ function buildTemporalAnalytics(programs: readonly SupportProgram[]): TemporalAn
     withoutDeadline: programs
       .filter((program) => program.deadline === null)
       .map((program) => ({ programId: program.id, title: program.title }))
-      .sort((a, b) => a.title.localeCompare(b.title, 'ru')),
+      .sort((a, b) => a.title.localeCompare(b.title, 'ru') || a.programId.localeCompare(b.programId)),
     byYear
   };
 }
@@ -778,7 +818,7 @@ function buildForecastAnalytics(programs: readonly SupportProgram[], temporal: T
       };
     })
     .filter((item) => item.growthRate > 0)
-    .sort((a, b) => b.growthRate - a.growthRate)
+    .sort((a, b) => b.growthRate - a.growthRate || a.topic.localeCompare(b.topic, 'ru'))
     .slice(0, 5);
 
   return {

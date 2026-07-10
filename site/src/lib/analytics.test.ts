@@ -188,8 +188,69 @@ describe('temporal analytics', () => {
     const year2026 = analytics.temporal.byYear.find((item) => item.year === 2026);
 
     expect(analytics.temporal.byYear.map((item) => item.year)).toEqual([2024, 2025, 2026]);
+    expect(year2026?.launchedPrograms).toBe(0);
     expect(year2026?.totalFundingRub).toBe(54000000);
     expect(year2026?.activePrograms).toBe(30);
+  });
+
+  it('builds temporal analytics from filtered programs only', () => {
+    const analytics = buildAnalytics(
+      syntheticSources,
+      [
+        syntheticProgram({
+          id: 'included-temporal',
+          title: 'Included temporal',
+          status: 'Открыта',
+          deadline: '2026-07-02',
+          launchYear: 2026,
+          history: [{ year: 2026, fundingAmountRub: 100, applicationsCount: null, winnersCount: null }]
+        }),
+        syntheticProgram({
+          id: 'excluded-temporal',
+          title: 'Excluded temporal',
+          status: 'Закрыта',
+          deadline: '2026-07-01',
+          launchYear: 2026,
+          history: [{ year: 2026, fundingAmountRub: 900, applicationsCount: null, winnersCount: null }]
+        })
+      ],
+      { status: 'Открыта' }
+    );
+
+    expect(analytics.temporal.nearestDeadlines.map((item) => item.programId)).toEqual(['included-temporal']);
+    expect(analytics.temporal.byYear).toEqual([
+      { year: 2026, launchedPrograms: 1, activePrograms: 1, totalFundingRub: 100 }
+    ]);
+  });
+
+  it('returns empty temporal analytics for empty input', () => {
+    const analytics = buildAnalytics(syntheticSources, []);
+
+    expect(analytics.temporal).toEqual({
+      nearestDeadline: null,
+      nearestDeadlines: [],
+      withoutDeadline: [],
+      byYear: []
+    });
+  });
+
+  it('includes today, excludes past deadlines, and uses program IDs as final tie-breakers', () => {
+    const analytics = buildAnalytics(syntheticSources, [
+      syntheticProgram({ id: 'same-title-b', title: 'Same title', deadline: '2026-07-01' }),
+      syntheticProgram({ id: 'same-title-a', title: 'Same title', deadline: '2026-07-01' }),
+      syntheticProgram({ id: 'past', title: 'Past', deadline: '2026-06-30' }),
+      syntheticProgram({ id: 'without-b', title: 'Without', deadline: null }),
+      syntheticProgram({ id: 'without-a', title: 'Without', deadline: null })
+    ]);
+
+    expect(analytics.temporal.nearestDeadlines.map(({ programId, daysUntilDeadline }) => ({
+      programId,
+      daysUntilDeadline
+    }))).toEqual([
+      { programId: 'same-title-a', daysUntilDeadline: 0 },
+      { programId: 'same-title-b', daysUntilDeadline: 0 }
+    ]);
+    expect(analytics.temporal.withoutDeadline.map((item) => item.programId)).toEqual(['without-a', 'without-b']);
   });
 });
 
@@ -377,6 +438,19 @@ describe('financial analytics', () => {
     ]);
     expect(analytics.finance.bySource.find((item) => item.id === 'high')?.shareOfKnownFunding).toBe(0.5);
   });
+
+  it('uses distribution IDs when metrics and labels are identical', () => {
+    const sameNameSources = [
+      { ...syntheticSources[0], id: 'source-b', name: 'Same source' },
+      { ...syntheticSources[0], id: 'source-a', name: 'Same source' }
+    ] as const satisfies readonly SupportSource[];
+    const analytics = buildAnalytics(sameNameSources, [
+      syntheticProgram({ id: 'program-b', sourceId: 'source-b', fundingAmountRub: 100 }),
+      syntheticProgram({ id: 'program-a', sourceId: 'source-a', fundingAmountRub: 100 })
+    ]);
+
+    expect(analytics.finance.bySource.map((item) => item.id)).toEqual(['source-a', 'source-b']);
+  });
 });
 
 describe('support gap analytics', () => {
@@ -401,6 +475,103 @@ describe('support gap analytics', () => {
       severity: expect.stringMatching(/high|medium|low/)
     });
     expect(weakPair.reason.length).toBeGreaterThan(20);
+  });
+
+  it('returns empty gaps and respects filtered input', () => {
+    expect(buildAnalytics(syntheticSources, []).supportGaps).toEqual({
+      weakRegions: [],
+      weakTopics: [],
+      weakRegionTopicPairs: []
+    });
+
+    const filtered = buildAnalytics(
+      syntheticSources,
+      [
+        syntheticProgram({ id: 'included-gap', status: 'Открыта', regions: ['Included'] }),
+        syntheticProgram({ id: 'excluded-gap', status: 'Закрыта', regions: ['Excluded'] })
+      ],
+      { status: 'Открыта' }
+    );
+
+    expect(filtered.supportGaps.weakRegions.map((gap) => gap.id)).toEqual(['region:Included']);
+    expect(filtered.supportGaps.weakTopics).toMatchObject([
+      { id: 'topic:Технологии', programCount: 1, totalFundingRub: 0 }
+    ]);
+    expect(filtered.supportGaps.weakRegionTopicPairs).toMatchObject([
+      { id: 'topic-region:Технологии:Included', programCount: 1, totalFundingRub: 0 }
+    ]);
+  });
+
+  it('classifies support-gap severity at exact count and funding boundaries', () => {
+    const analytics = buildAnalytics(syntheticSources, [
+      syntheticProgram({ id: 'high', regions: ['High'], fundingAmountRub: 999999 }),
+      syntheticProgram({ id: 'exact-million', regions: ['Exact million'], fundingAmountRub: 1000000 }),
+      syntheticProgram({ id: 'medium-1', regions: ['Medium'], fundingAmountRub: 1000000 }),
+      syntheticProgram({ id: 'medium-2', regions: ['Medium'], fundingAmountRub: 1999999 }),
+      syntheticProgram({ id: 'low-count-1', regions: ['Low count'] }),
+      syntheticProgram({ id: 'low-count-2', regions: ['Low count'] }),
+      syntheticProgram({ id: 'low-count-3', regions: ['Low count'] }),
+      syntheticProgram({ id: 'low-funding', regions: ['Low funding'], fundingAmountRub: 3000000 })
+    ]);
+    const severityById = Object.fromEntries(
+      analytics.supportGaps.weakRegions.map((gap) => [gap.id, gap.severity])
+    );
+
+    expect(severityById).toMatchObject({
+      'region:High': 'high',
+      'region:Exact million': 'medium',
+      'region:Medium': 'medium',
+      'region:Low count': 'low',
+      'region:Low funding': 'low'
+    });
+  });
+
+  it('sorts equal support gaps deterministically and enforces list limits', () => {
+    const topicNames = [
+      'Экология',
+      'Технологии',
+      'Социальные проекты',
+      'Региональное развитие',
+      'Предпринимательство',
+      'Образование',
+      'Наука',
+      'Культура',
+      'ИИ'
+    ] as const;
+    const analytics = buildAnalytics(
+      syntheticSources,
+      topicNames.map((topic, index) =>
+        syntheticProgram({ id: `gap-${index}`, topics: [topic], regions: [`Region ${index}`] })
+      )
+    );
+
+    expect(analytics.supportGaps.weakRegions).toHaveLength(5);
+    expect(analytics.supportGaps.weakTopics).toHaveLength(5);
+    expect(analytics.supportGaps.weakRegionTopicPairs).toHaveLength(8);
+    expect(analytics.supportGaps.weakRegions.map((gap) => gap.id)).toEqual([
+      'region:Region 0',
+      'region:Region 1',
+      'region:Region 2',
+      'region:Region 3',
+      'region:Region 4'
+    ]);
+    expect(analytics.supportGaps.weakTopics.map((gap) => gap.label)).toEqual([
+      'ИИ',
+      'Культура',
+      'Наука',
+      'Образование',
+      'Предпринимательство'
+    ]);
+    expect(analytics.supportGaps.weakRegionTopicPairs.map((gap) => gap.id)).toEqual([
+      'topic-region:ИИ:Region 8',
+      'topic-region:Культура:Region 7',
+      'topic-region:Наука:Region 6',
+      'topic-region:Образование:Region 5',
+      'topic-region:Предпринимательство:Region 4',
+      'topic-region:Региональное развитие:Region 3',
+      'topic-region:Социальные проекты:Region 2',
+      'topic-region:Технологии:Region 1'
+    ]);
   });
 });
 
@@ -585,6 +756,22 @@ describe('source analytics', () => {
       incompleteProgramCount: 2
     });
   });
+
+  it('uses source IDs as final tie-breakers for every source ranking', () => {
+    const sameNameSources = [
+      { ...syntheticSources[0], id: 'source-b', name: 'Same source' },
+      { ...syntheticSources[0], id: 'source-a', name: 'Same source' }
+    ] as const satisfies readonly SupportSource[];
+    const analytics = buildAnalytics(sameNameSources, [
+      syntheticProgram({ id: 'program-b', sourceId: 'source-b', fundingAmountRub: 100 }),
+      syntheticProgram({ id: 'program-a', sourceId: 'source-a', fundingAmountRub: 100 })
+    ]);
+
+    expect(analytics.sources.byProgramCount.map((item) => item.sourceId)).toEqual(['source-a', 'source-b']);
+    expect(analytics.sources.byActiveProgramCount.map((item) => item.sourceId)).toEqual(['source-a', 'source-b']);
+    expect(analytics.sources.byFunding.map((item) => item.sourceId)).toEqual(['source-a', 'source-b']);
+    expect(analytics.sources.byDataQuality.map((item) => item.sourceId)).toEqual(['source-a', 'source-b']);
+  });
 });
 
 describe('data quality analytics', () => {
@@ -668,6 +855,41 @@ describe('data quality analytics', () => {
       completenessIndex: 0
     });
   });
+
+  it('uses score below 100 as the canonical incomplete-program rule', () => {
+    const analytics = buildAnalytics(syntheticSources, [
+      syntheticProgram({
+        id: 'perfect-with-missing-field',
+        title: 'Perfect with missing field',
+        dataQuality: {
+          score: 100,
+          level: 'high',
+          missingFields: ['deadline'],
+          checkedAt: '2026-07-01'
+        }
+      }),
+      syntheticProgram({
+        id: 'imperfect-without-missing-fields',
+        title: 'Imperfect without missing fields',
+        dataQuality: {
+          score: 99,
+          level: 'high',
+          missingFields: [],
+          checkedAt: '2026-07-01'
+        }
+      })
+    ]);
+
+    expect(analytics.sources.byProgramCount[0].incompleteProgramCount).toBe(1);
+    expect(analytics.dataQuality.bySource[0].incompleteProgramCount).toBe(1);
+    expect(analytics.dataQuality.incompletePrograms).toEqual([
+      {
+        programId: 'imperfect-without-missing-fields',
+        title: 'Imperfect without missing fields',
+        missingFields: []
+      }
+    ]);
+  });
 });
 
 describe('topic analytics', () => {
@@ -716,6 +938,36 @@ describe('topic analytics', () => {
         totalFundingRub: expect.any(Number)
       })
     );
+  });
+
+  it('builds exact topic-region intersections in deterministic order', () => {
+    const analytics = buildAnalytics(syntheticSources, [
+      syntheticProgram({
+        id: 'technology-ecology',
+        topics: ['Технологии', 'Экология'],
+        regions: ['Россия', 'Татарстан'],
+        fundingAmountRub: 100
+      }),
+      syntheticProgram({
+        id: 'technology',
+        topics: ['Технологии'],
+        regions: ['Россия'],
+        fundingAmountRub: 200
+      }),
+      syntheticProgram({
+        id: 'ecology',
+        topics: ['Экология'],
+        regions: ['Татарстан'],
+        fundingAmountRub: 50
+      })
+    ]);
+
+    expect(analytics.topics.intersections).toEqual([
+      { topic: 'Технологии', region: 'Россия', programCount: 2, totalFundingRub: 300 },
+      { topic: 'Экология', region: 'Татарстан', programCount: 2, totalFundingRub: 150 },
+      { topic: 'Технологии', region: 'Татарстан', programCount: 1, totalFundingRub: 100 },
+      { topic: 'Экология', region: 'Россия', programCount: 1, totalFundingRub: 100 }
+    ]);
   });
 });
 
