@@ -463,6 +463,55 @@ describe('source analytics', () => {
   });
 });
 
+describe('topic analytics', () => {
+  it('computes program counts, active counts, funding, region counts, and strength by topic', () => {
+    const analytics = buildAnalytics(sources, programs);
+    const technology = analytics.topics.topics.find((item) => item.topic === 'Технологии');
+
+    expect(technology).toMatchObject({
+      topic: 'Технологии',
+      programCount: 13,
+      activeProgramCount: 10,
+      strength: 'strong'
+    });
+    expect(technology?.totalFundingRub).toBeGreaterThan(30000000);
+    expect(technology?.regionCount).toBeGreaterThanOrEqual(2);
+  });
+
+  it('identifies strong and weak topics', () => {
+    const analytics = buildAnalytics(sources, programs);
+    const weakAnalytics = buildAnalytics(syntheticSources, [
+      syntheticProgram({
+        id: 'weak-ecology-topic',
+        title: 'Weak ecology topic',
+        topics: ['Экология'],
+        fundingAmountRub: 1000000
+      })
+    ]);
+
+    expect(analytics.topics.strongTopics.map((item) => item.topic)).toContain('Технологии');
+    expect(weakAnalytics.topics.topics.find((item) => item.topic === 'Экология')).toMatchObject({
+      programCount: 1,
+      totalFundingRub: 1000000,
+      strength: 'weak'
+    });
+    expect(weakAnalytics.topics.weakTopics.map((item) => item.topic)).toContain('Экология');
+  });
+
+  it('builds topic and region intersections', () => {
+    const analytics = buildAnalytics(sources, programs);
+
+    expect(analytics.topics.intersections).toContainEqual(
+      expect.objectContaining({
+        topic: 'ИИ',
+        region: 'Россия',
+        programCount: expect.any(Number),
+        totalFundingRub: expect.any(Number)
+      })
+    );
+  });
+});
+
 describe('analytics filters and funding helpers', () => {
   it('keeps a complete default filter contract', () => {
     expect(defaultAnalyticsFilters).toEqual({

@@ -167,6 +167,30 @@ export type SourceAnalytics = {
   byDataQuality: SourceAnalyticsItem[];
 };
 
+export type TopicAnalyticsItem = {
+  topic: Topic;
+  programCount: number;
+  activeProgramCount: number;
+  totalFundingRub: number;
+  averageFundingRub: number | null;
+  regionCount: number;
+  strength: 'strong' | 'moderate' | 'weak';
+};
+
+export type TopicRegionIntersection = {
+  topic: Topic;
+  region: string;
+  programCount: number;
+  totalFundingRub: number;
+};
+
+export type TopicAnalytics = {
+  topics: TopicAnalyticsItem[];
+  strongTopics: TopicAnalyticsItem[];
+  weakTopics: TopicAnalyticsItem[];
+  intersections: TopicRegionIntersection[];
+};
+
 type MoneySummary = {
   totalFundingRub: number;
   averageFundingRub: number;
@@ -195,6 +219,7 @@ export type AnalyticsSummary = MoneySummary & {
   finance: FinancialAnalytics;
   regional: RegionalAnalytics;
   sources: SourceAnalytics;
+  topics: TopicAnalytics;
   dataQuality: DataQualitySummary;
 };
 
@@ -344,6 +369,68 @@ function buildRegionalAnalytics(programs: readonly SupportProgram[]): RegionalAn
   };
 }
 
+function topicStrength(programCount: number, totalFundingRub: number): TopicAnalyticsItem['strength'] {
+  if (programCount >= 5 || totalFundingRub >= 10_000_000) return 'strong';
+  if (programCount >= 3 || totalFundingRub >= 2_000_000) return 'moderate';
+  return 'weak';
+}
+
+function buildTopicAnalytics(programs: readonly SupportProgram[]): TopicAnalytics {
+  const topics = Array.from(new Set(programs.flatMap((program) => program.topics))).sort((a, b) =>
+    a.localeCompare(b, 'ru')
+  );
+
+  const items = topics
+    .map((topic) => {
+      const related = programs.filter((program) => program.topics.includes(topic));
+      const values = fundingValues(related);
+      const regions = new Set(related.flatMap((program) => program.regions));
+      const totalFundingRub = sum(values);
+
+      return {
+        topic,
+        programCount: related.length,
+        activeProgramCount: related.filter((program) => isActiveStatus(program.status)).length,
+        totalFundingRub,
+        averageFundingRub: average(values),
+        regionCount: regions.size,
+        strength: topicStrength(related.length, totalFundingRub)
+      };
+    })
+    .sort((a, b) => b.programCount - a.programCount || b.totalFundingRub - a.totalFundingRub);
+
+  const intersections = topics
+    .flatMap((topic) => {
+      const regions = Array.from(
+        new Set(programs.filter((program) => program.topics.includes(topic)).flatMap((program) => program.regions))
+      );
+
+      return regions.map((region) => {
+        const related = programs.filter((program) => program.topics.includes(topic) && program.regions.includes(region));
+        return {
+          topic,
+          region,
+          programCount: related.length,
+          totalFundingRub: sum(fundingValues(related))
+        };
+      });
+    })
+    .sort(
+      (a, b) =>
+        b.programCount - a.programCount ||
+        b.totalFundingRub - a.totalFundingRub ||
+        a.topic.localeCompare(b.topic, 'ru') ||
+        a.region.localeCompare(b.region, 'ru')
+    );
+
+  return {
+    topics: items,
+    strongTopics: items.filter((item) => item.strength === 'strong'),
+    weakTopics: items.filter((item) => item.strength === 'weak'),
+    intersections
+  };
+}
+
 function buildSourceAnalytics(
   sources: readonly SupportSource[],
   programs: readonly SupportProgram[]
@@ -393,6 +480,7 @@ export function buildAnalytics(
   const finance = buildFinancialAnalytics(sources, filteredPrograms);
   const regional = buildRegionalAnalytics(filteredPrograms);
   const sourceAnalytics = buildSourceAnalytics(sources, filteredPrograms);
+  const topicAnalytics = buildTopicAnalytics(filteredPrograms);
   const upcoming = filteredPrograms
     .filter((program) => {
       const days = daysUntilDeadline(program.deadline);
@@ -436,6 +524,7 @@ export function buildAnalytics(
     finance,
     regional,
     sources: sourceAnalytics,
+    topics: topicAnalytics,
     dataQuality: {
       averageScore:
         filteredPrograms.length === 0
