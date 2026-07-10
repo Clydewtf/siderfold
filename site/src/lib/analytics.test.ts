@@ -310,6 +310,31 @@ describe('financial analytics', () => {
   });
 });
 
+describe('support gap analytics', () => {
+  it('identifies weak regions, topics, and region-topic pairs', () => {
+    const analytics = buildAnalytics(sources, programs);
+
+    expect(analytics.supportGaps.weakRegions.length).toBeGreaterThan(0);
+    expect(analytics.supportGaps.weakTopics.length).toBeGreaterThan(0);
+    expect(analytics.supportGaps.weakRegionTopicPairs.length).toBeGreaterThan(0);
+  });
+
+  it('explains support gap reasons and severity', () => {
+    const analytics = buildAnalytics(sources, programs);
+    const weakPair = analytics.supportGaps.weakRegionTopicPairs[0];
+
+    expect(weakPair).toMatchObject({
+      id: expect.any(String),
+      label: expect.any(String),
+      reason: expect.any(String),
+      programCount: expect.any(Number),
+      totalFundingRub: expect.any(Number),
+      severity: expect.stringMatching(/high|medium|low/)
+    });
+    expect(weakPair.reason.length).toBeGreaterThan(20);
+  });
+});
+
 describe('regional analytics', () => {
   it('computes region counts, active counts, funding, and coverage-level breakdowns', () => {
     const analytics = buildAnalytics(sources, programs);

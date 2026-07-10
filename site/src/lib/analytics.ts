@@ -191,6 +191,21 @@ export type TopicAnalytics = {
   intersections: TopicRegionIntersection[];
 };
 
+export type SupportGap = {
+  id: string;
+  label: string;
+  reason: string;
+  programCount: number;
+  totalFundingRub: number;
+  severity: 'high' | 'medium' | 'low';
+};
+
+export type SupportGapsAnalytics = {
+  weakRegions: SupportGap[];
+  weakTopics: SupportGap[];
+  weakRegionTopicPairs: SupportGap[];
+};
+
 export type YearAnalyticsItem = {
   year: number;
   launchedPrograms: number;
@@ -255,6 +270,7 @@ export type AnalyticsSummary = MoneySummary & {
   regional: RegionalAnalytics;
   sources: SourceAnalytics;
   topics: TopicAnalytics;
+  supportGaps: SupportGapsAnalytics;
   temporal: TemporalAnalytics;
   dataQuality: DataQualityAnalytics;
 };
@@ -523,6 +539,52 @@ function buildTopicAnalytics(programs: readonly SupportProgram[]): TopicAnalytic
   };
 }
 
+function gapSeverity(programCount: number, totalFundingRub: number): SupportGap['severity'] {
+  if (programCount <= 1 && totalFundingRub < 1_000_000) return 'high';
+  if (programCount <= 2 && totalFundingRub < 3_000_000) return 'medium';
+  return 'low';
+}
+
+function buildSupportGapsAnalytics(regional: RegionalAnalytics, topics: TopicAnalytics): SupportGapsAnalytics {
+  const weakRegions = [...regional.regions]
+    .sort((a, b) => a.coverageScore - b.coverageScore || a.region.localeCompare(b.region, 'ru'))
+    .slice(0, 5)
+    .map((region) => ({
+      id: `region:${region.region}`,
+      label: region.region,
+      reason: `В текущей seed-базе регион имеет ${region.programCount} программ и ${region.totalFundingRub} ₽ известного объема поддержки.`,
+      programCount: region.programCount,
+      totalFundingRub: region.totalFundingRub,
+      severity: gapSeverity(region.programCount, region.totalFundingRub)
+    }));
+
+  const weakTopics = [...topics.topics]
+    .sort((a, b) => a.programCount - b.programCount || a.totalFundingRub - b.totalFundingRub)
+    .slice(0, 5)
+    .map((topic) => ({
+      id: `topic:${topic.topic}`,
+      label: topic.topic,
+      reason: `В текущей seed-базе тематика имеет ${topic.programCount} программ и ${topic.totalFundingRub} ₽ известного объема поддержки.`,
+      programCount: topic.programCount,
+      totalFundingRub: topic.totalFundingRub,
+      severity: gapSeverity(topic.programCount, topic.totalFundingRub)
+    }));
+
+  const weakRegionTopicPairs = [...topics.intersections]
+    .sort((a, b) => a.programCount - b.programCount || a.totalFundingRub - b.totalFundingRub)
+    .slice(0, 8)
+    .map((intersection) => ({
+      id: `topic-region:${intersection.topic}:${intersection.region}`,
+      label: `${intersection.topic} / ${intersection.region}`,
+      reason: `Сочетание тематики и региона в текущей seed-базе представлено ${intersection.programCount} программами и ${intersection.totalFundingRub} ₽ известного объема поддержки.`,
+      programCount: intersection.programCount,
+      totalFundingRub: intersection.totalFundingRub,
+      severity: gapSeverity(intersection.programCount, intersection.totalFundingRub)
+    }));
+
+  return { weakRegions, weakTopics, weakRegionTopicPairs };
+}
+
 function buildSourceAnalytics(
   sources: readonly SupportSource[],
   programs: readonly SupportProgram[]
@@ -618,6 +680,7 @@ export function buildAnalytics(
   const regional = buildRegionalAnalytics(filteredPrograms);
   const sourceAnalytics = buildSourceAnalytics(sources, filteredPrograms);
   const topicAnalytics = buildTopicAnalytics(filteredPrograms);
+  const supportGaps = buildSupportGapsAnalytics(regional, topicAnalytics);
   const temporal = buildTemporalAnalytics(filteredPrograms);
   const dataQuality = buildDataQualityAnalytics(sources, filteredPrograms);
 
@@ -662,6 +725,7 @@ export function buildAnalytics(
     regional,
     sources: sourceAnalytics,
     topics: topicAnalytics,
+    supportGaps,
     temporal,
     dataQuality
   };
