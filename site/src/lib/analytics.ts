@@ -156,7 +156,7 @@ export type SourceAnalyticsItem = {
   activeProgramCount: number;
   totalFundingRub: number;
   averageFundingRub: number | null;
-  dataCompletenessScore: number;
+  dataCompletenessScore: number | null;
   incompleteProgramCount: number;
 };
 
@@ -258,7 +258,7 @@ export type DataQualityAnalytics = DataQualitySummary & {
   bySource: {
     sourceId: string;
     sourceName: string;
-    completenessIndex: number;
+    completenessIndex: number | null;
     incompleteProgramCount: number;
   }[];
 };
@@ -341,15 +341,22 @@ function buildDataQualityAnalytics(
         return {
           sourceId: source.id,
           sourceName: source.name,
-          completenessIndex: average(related.map((program) => program.dataQuality.score)) ?? 0,
+          completenessIndex: average(related.map((program) => program.dataQuality.score)),
           incompleteProgramCount: related.filter((program) => program.dataQuality.score < 100).length
         };
       })
       .sort(
         (a, b) =>
-          a.completenessIndex - b.completenessIndex ||
+          (a.completenessIndex === null
+            ? b.completenessIndex === null
+              ? 0
+              : 1
+            : b.completenessIndex === null
+              ? -1
+              : a.completenessIndex - b.completenessIndex) ||
           b.incompleteProgramCount - a.incompleteProgramCount ||
-          a.sourceName.localeCompare(b.sourceName, 'ru')
+          a.sourceName.localeCompare(b.sourceName, 'ru') ||
+          a.sourceId.localeCompare(b.sourceId)
       ),
     averageScore: completenessIndex,
     incompletePrograms: programs
@@ -615,7 +622,7 @@ function buildSourceAnalytics(
       activeProgramCount: related.filter((program) => isActiveStatus(program.status)).length,
       totalFundingRub: sum(values),
       averageFundingRub: average(values),
-      dataCompletenessScore: average(completenessScores) ?? 0,
+      dataCompletenessScore: average(completenessScores),
       incompleteProgramCount: related.filter((program) => program.dataQuality.score < 100).length
     };
   });
@@ -630,7 +637,16 @@ function buildSourceAnalytics(
     (a, b) => b.totalFundingRub - a.totalFundingRub || a.sourceName.localeCompare(b.sourceName, 'ru')
   );
   const byDataQuality = [...items].sort(
-    (a, b) => b.dataCompletenessScore - a.dataCompletenessScore || a.sourceName.localeCompare(b.sourceName, 'ru')
+    (a, b) =>
+      (a.dataCompletenessScore === null
+        ? b.dataCompletenessScore === null
+          ? 0
+          : 1
+        : b.dataCompletenessScore === null
+          ? -1
+          : b.dataCompletenessScore - a.dataCompletenessScore) ||
+      a.sourceName.localeCompare(b.sourceName, 'ru') ||
+      a.sourceId.localeCompare(b.sourceId)
   );
 
   return { byProgramCount, byActiveProgramCount, byFunding, byDataQuality };

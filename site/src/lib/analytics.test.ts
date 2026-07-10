@@ -579,6 +579,54 @@ describe('data quality analytics', () => {
     expect(fasie?.completenessIndex).toBeGreaterThan(80);
   });
 
+  it('keeps unobserved sources nullable and behind measured quality under a narrow filter', () => {
+    const filteredSources = [
+      syntheticSources[0],
+      { ...syntheticSources[0], id: 'unobserved-z', name: 'Unobserved' },
+      { ...syntheticSources[0], id: 'unobserved-a', name: 'Unobserved' }
+    ] as const satisfies readonly SupportSource[];
+    const analytics = buildAnalytics(
+      filteredSources,
+      [
+        syntheticProgram({
+          dataQuality: {
+            score: 75,
+            level: 'medium',
+            missingFields: ['deadline'],
+            checkedAt: '2026-07-01'
+          }
+        })
+      ],
+      { sourceId: 'synthetic-source' }
+    );
+
+    expect(analytics.dataQuality.completenessIndex).toBe(75);
+    expect(
+      analytics.dataQuality.bySource.map(({ sourceId, completenessIndex }) => ({
+        sourceId,
+        completenessIndex
+      }))
+    ).toEqual([
+      { sourceId: 'synthetic-source', completenessIndex: 75 },
+      { sourceId: 'unobserved-a', completenessIndex: null },
+      { sourceId: 'unobserved-z', completenessIndex: null }
+    ]);
+    expect(
+      analytics.sources.byDataQuality.map(({ sourceId, dataCompletenessScore }) => ({
+        sourceId,
+        dataCompletenessScore
+      }))
+    ).toEqual([
+      { sourceId: 'synthetic-source', dataCompletenessScore: 75 },
+      { sourceId: 'unobserved-a', dataCompletenessScore: null },
+      { sourceId: 'unobserved-z', dataCompletenessScore: null }
+    ]);
+    expect(analytics.sources.byProgramCount).toHaveLength(3);
+    expect(
+      analytics.sources.byProgramCount.find((item) => item.sourceId === 'unobserved-a')?.programCount
+    ).toBe(0);
+  });
+
   it('handles empty data quality input safely', () => {
     const analytics = buildAnalytics(sources, []);
 
