@@ -287,13 +287,13 @@ export type AnalyticsSummary = MoneySummary & {
   dataQuality: DataQualityAnalytics;
 };
 
-function buildDistribution(labels: readonly string[]): DistributionItem[] {
-  return Array.from(new Set(labels))
+function buildCountDistribution(values: readonly string[]): { id: string; label: string; count: number }[] {
+  return Array.from(new Set(values))
     .sort((a, b) => a.localeCompare(b, 'ru'))
-    .map((label) => ({
-      id: label,
-      label,
-      count: labels.filter((item) => item === label).length
+    .map((value) => ({
+      id: value,
+      label: value,
+      count: values.filter((candidate) => candidate === value).length
     }));
 }
 
@@ -832,20 +832,14 @@ export function buildAnalytics(
       title: item.title,
       deadline: item.deadline
     })),
-    bySource: sources.map((source) => ({
-      id: source.id,
-      label: source.name,
-      count: filteredPrograms.filter((program) => program.sourceId === source.id).length
+    bySource: sourceAnalytics.byProgramCount.map((item) => ({
+      id: item.sourceId,
+      label: item.sourceName,
+      count: item.programCount
     })),
-    bySupportType: Array.from(new Set(filteredPrograms.map((program) => program.supportType)))
-      .sort((a, b) => a.localeCompare(b, 'ru'))
-      .map((supportType) => ({
-        id: supportType,
-        label: supportType,
-        count: filteredPrograms.filter((program) => program.supportType === supportType).length
-      })),
-    byRegion: buildDistribution(filteredPrograms.flatMap((program) => program.regions)),
-    byCoverageLevel: buildDistribution(filteredPrograms.map((program) => program.coverageLevel)),
+    bySupportType: buildCountDistribution(filteredPrograms.map((program) => program.supportType)),
+    byRegion: buildCountDistribution(filteredPrograms.flatMap((program) => program.regions)),
+    byCoverageLevel: buildCountDistribution(filteredPrograms.map((program) => program.coverageLevel)),
     finance,
     regional,
     sources: sourceAnalytics,

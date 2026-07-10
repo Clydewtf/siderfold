@@ -144,6 +144,9 @@ describe('analytics compatibility and empty states', () => {
     expect(analytics.fundedShare).toBeCloseTo(15 / 30, 4);
     expect(analytics.bySource.find((item) => item.label === 'Фонд Потанина')?.count).toBe(3);
     expect(analytics.bySupportType.find((item) => item.label === 'Грант')?.count).toBe(10);
+    expect(analytics.bySource.map((item) => item.id)).toEqual(
+      analytics.sources.byProgramCount.map((item) => item.sourceId)
+    );
   });
 
   it('returns stable empty analytics structures', () => {
