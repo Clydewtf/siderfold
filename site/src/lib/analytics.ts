@@ -223,6 +223,20 @@ type DataQualitySummary = {
   incompletePrograms: { programId: string; title: string; missingFields: readonly string[] }[];
 };
 
+export type DataQualityAnalytics = DataQualitySummary & {
+  missingFundingShare: number;
+  missingDeadlineShare: number;
+  missingRegionShare: number;
+  missingUpdatedAtShare: number;
+  completenessIndex: number;
+  bySource: {
+    sourceId: string;
+    sourceName: string;
+    completenessIndex: number;
+    incompleteProgramCount: number;
+  }[];
+};
+
 export type AnalyticsSummary = MoneySummary & {
   totalPrograms: number;
   totalSources: number;
@@ -242,7 +256,7 @@ export type AnalyticsSummary = MoneySummary & {
   sources: SourceAnalytics;
   topics: TopicAnalytics;
   temporal: TemporalAnalytics;
-  dataQuality: DataQualitySummary;
+  dataQuality: DataQualityAnalytics;
 };
 
 function buildDistribution(labels: readonly string[]): DistributionItem[] {
@@ -262,6 +276,62 @@ function sum(values: readonly number[]): number {
 function average(values: readonly number[]): number | null {
   if (values.length === 0) return null;
   return sum(values) / values.length;
+}
+
+function share(count: number, total: number): number {
+  return total === 0 ? 0 : count / total;
+}
+
+function buildDataQualityAnalytics(
+  sources: readonly SupportSource[],
+  programs: readonly SupportProgram[]
+): DataQualityAnalytics {
+  const total = programs.length;
+  const completenessIndex = average(programs.map((program) => program.dataQuality.score)) ?? 0;
+
+  return {
+    missingFundingShare: share(
+      programs.filter((program) => program.dataQuality.missingFields.includes('funding')).length,
+      total
+    ),
+    missingDeadlineShare: share(
+      programs.filter((program) => program.dataQuality.missingFields.includes('deadline')).length,
+      total
+    ),
+    missingRegionShare: share(
+      programs.filter((program) => program.dataQuality.missingFields.includes('regions')).length,
+      total
+    ),
+    missingUpdatedAtShare: share(
+      programs.filter((program) => program.dataQuality.missingFields.includes('updatedAt')).length,
+      total
+    ),
+    completenessIndex,
+    bySource: sources
+      .map((source) => {
+        const related = programs.filter((program) => program.sourceId === source.id);
+        return {
+          sourceId: source.id,
+          sourceName: source.name,
+          completenessIndex: average(related.map((program) => program.dataQuality.score)) ?? 0,
+          incompleteProgramCount: related.filter((program) => program.dataQuality.score < 100).length
+        };
+      })
+      .sort(
+        (a, b) =>
+          a.completenessIndex - b.completenessIndex ||
+          b.incompleteProgramCount - a.incompleteProgramCount ||
+          a.sourceName.localeCompare(b.sourceName, 'ru')
+      ),
+    averageScore: completenessIndex,
+    incompletePrograms: programs
+      .filter((program) => program.dataQuality.missingFields.length > 0)
+      .map((program) => ({
+        programId: program.id,
+        title: program.title,
+        missingFields: program.dataQuality.missingFields
+      }))
+  };
 }
 
 function fundingValues(programs: readonly SupportProgram[]): number[] {
@@ -549,6 +619,7 @@ export function buildAnalytics(
   const sourceAnalytics = buildSourceAnalytics(sources, filteredPrograms);
   const topicAnalytics = buildTopicAnalytics(filteredPrograms);
   const temporal = buildTemporalAnalytics(filteredPrograms);
+  const dataQuality = buildDataQualityAnalytics(sources, filteredPrograms);
 
   return {
     totalPrograms: filteredPrograms.length,
@@ -592,18 +663,6 @@ export function buildAnalytics(
     sources: sourceAnalytics,
     topics: topicAnalytics,
     temporal,
-    dataQuality: {
-      averageScore:
-        filteredPrograms.length === 0
-          ? 0
-          : filteredPrograms.reduce((sum, program) => sum + program.dataQuality.score, 0) / filteredPrograms.length,
-      incompletePrograms: filteredPrograms
-        .filter((program) => program.dataQuality.missingFields.length > 0)
-        .map((program) => ({
-          programId: program.id,
-          title: program.title,
-          missingFields: program.dataQuality.missingFields
-        }))
-    }
+    dataQuality
   };
 }

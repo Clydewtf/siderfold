@@ -493,6 +493,41 @@ describe('source analytics', () => {
   });
 });
 
+describe('data quality analytics', () => {
+  it('computes missing-field shares and overall completeness index', () => {
+    const analytics = buildAnalytics(sources, programs);
+
+    expect(analytics.dataQuality.missingFundingShare).toBeCloseTo(15 / 30, 4);
+    expect(analytics.dataQuality.missingDeadlineShare).toBeCloseTo(10 / 30, 4);
+    expect(analytics.dataQuality.missingRegionShare).toBe(0);
+    expect(analytics.dataQuality.missingUpdatedAtShare).toBe(0);
+    expect(analytics.dataQuality.completenessIndex).toBeGreaterThan(70);
+  });
+
+  it('computes completeness by source', () => {
+    const analytics = buildAnalytics(sources, programs);
+    const fasie = analytics.dataQuality.bySource.find((item) => item.sourceId === 'fasie');
+
+    expect(fasie).toMatchObject({
+      sourceName: 'Фонд содействия инновациям',
+      incompleteProgramCount: 1
+    });
+    expect(fasie?.completenessIndex).toBeGreaterThan(80);
+  });
+
+  it('handles empty data quality input safely', () => {
+    const analytics = buildAnalytics(sources, []);
+
+    expect(analytics.dataQuality).toMatchObject({
+      missingFundingShare: 0,
+      missingDeadlineShare: 0,
+      missingRegionShare: 0,
+      missingUpdatedAtShare: 0,
+      completenessIndex: 0
+    });
+  });
+});
+
 describe('topic analytics', () => {
   it('computes program counts, active counts, funding, region counts, and strength by topic', () => {
     const analytics = buildAnalytics(sources, programs);
