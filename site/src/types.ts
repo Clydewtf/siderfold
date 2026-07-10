@@ -1,3 +1,14 @@
+export type TabId = 'home' | 'programs' | 'analytics' | 'sources' | 'profile';
+export type ThemePreference = 'light' | 'dark' | 'system';
+export type ResolvedTheme = 'light' | 'dark';
+export type CardDensity = 'comfortable' | 'compact';
+
+export type DisplayPreferences = {
+  density: CardDensity;
+  showDataQuality: boolean;
+  reduceMotion: boolean;
+};
+
 export type SourceType =
   | 'Фонд'
   | 'Госпрограмма'
@@ -35,6 +46,33 @@ export type Topic =
   | 'Экология'
   | 'ИИ'
   | 'Региональное развитие';
+
+export type PersistedAppState = {
+  theme: ThemePreference;
+  favoriteProgramIds: readonly string[];
+  favoriteSourceIds: readonly string[];
+  recentProgramIds: readonly string[];
+  preferredRegions: readonly string[];
+  preferredTopics: readonly Topic[];
+  display: DisplayPreferences;
+};
+
+export type BackendFeature =
+  | 'signIn'
+  | 'registration'
+  | 'notifications'
+  | 'documents'
+  | 'applications'
+  | 'reportExport'
+  | 'profileSync';
+
+export type BackendNotice = { feature: BackendFeature; message: string };
+
+export type AppState = PersistedAppState & {
+  activeTab: TabId;
+  selectedProgramId: string | null;
+  backendNotice: BackendNotice | null;
+};
 
 export type CoverageLevel = 'federal' | 'regional' | 'municipal' | 'private';
 
