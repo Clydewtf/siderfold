@@ -133,6 +133,33 @@ describe('analytics', () => {
   });
 });
 
+describe('analytics compatibility and empty states', () => {
+  it('preserves lightweight widget fields', () => {
+    const analytics = buildAnalytics(sources, programs);
+
+    expect(analytics.totalPrograms).toBe(30);
+    expect(analytics.totalSources).toBe(10);
+    expect(analytics.activePrograms).toBe(22);
+    expect(analytics.maxFundingRub).toBe(20000000);
+    expect(analytics.fundedShare).toBeCloseTo(15 / 30, 4);
+    expect(analytics.bySource.find((item) => item.label === 'Фонд Потанина')?.count).toBe(3);
+    expect(analytics.bySupportType.find((item) => item.label === 'Грант')?.count).toBe(10);
+  });
+
+  it('returns stable empty analytics structures', () => {
+    const analytics = buildAnalytics(sources, []);
+
+    expect(analytics.totalPrograms).toBe(0);
+    expect(analytics.activePrograms).toBe(0);
+    expect(analytics.maxFundingRub).toBeNull();
+    expect(analytics.nearestDeadline).toBeNull();
+    expect(analytics.nearestDeadlines).toEqual([]);
+    expect(analytics.finance.bySupportType).toEqual([]);
+    expect(analytics.regional.regions).toEqual([]);
+    expect(analytics.topics.topics).toEqual([]);
+  });
+});
+
 describe('temporal analytics', () => {
   it('keeps nearest deadline compatibility while exposing richer deadline items', () => {
     const analytics = buildAnalytics(sources, programs);
