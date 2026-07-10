@@ -2,6 +2,21 @@
 
 All notable project milestones are documented in this file.
 
+## v0.1.2 - 2026-07-09
+
+Analytics Engine.
+
+### Added
+
+- Pure analytics engine for financial, regional, source, topic, temporal, data-quality, support-gap, and demo forecast calculations.
+- Filterable analytics API over the expanded seed model.
+- Unit coverage for incomplete data, empty inputs, distribution rankings, deadline dynamics, and transparent forecast behavior.
+
+### Notes
+
+- No new UI screen is included in this version.
+- Forecast values are demo calculations over seed history, not a real ML model.
+
 ## v0.1.1 - 2026-07-09
 
 Data foundation for the Stargate product-platform upgrade.
