@@ -163,6 +163,45 @@ describe('temporal analytics', () => {
   });
 });
 
+describe('demo forecast analytics', () => {
+  it('forecasts next year funding and program count from seed history', () => {
+    const analytics = buildAnalytics(sources, programs);
+
+    expect(analytics.forecast.nextYear).toBe(2027);
+    expect(analytics.forecast.expectedFundingRub).toBeGreaterThan(54000000);
+    expect(analytics.forecast.expectedProgramCount).toBeGreaterThanOrEqual(30);
+    expect(analytics.forecast.expectedProgramCountChange).not.toBeNull();
+    expect(analytics.forecast.confidenceScore).toBeGreaterThan(0);
+  });
+
+  it('returns growing topics with confidence and a transparent method explanation', () => {
+    const analytics = buildAnalytics(sources, programs);
+
+    expect(analytics.forecast.growingTopics.length).toBeGreaterThan(0);
+    expect(analytics.forecast.growingTopics[0]).toMatchObject({
+      topic: expect.any(String),
+      growthRate: expect.any(Number),
+      confidence: expect.stringMatching(/high|medium|low/)
+    });
+    expect(analytics.forecast.method).toContain('Демо-прогноз');
+    expect(analytics.forecast.method).toContain('seed');
+    expect(analytics.forecast.method).toContain('не настоящая ML');
+  });
+
+  it('handles empty forecast input without fake certainty', () => {
+    const analytics = buildAnalytics(sources, []);
+
+    expect(analytics.forecast).toMatchObject({
+      expectedFundingRub: null,
+      expectedProgramCount: null,
+      expectedProgramCountChange: null,
+      growingTopics: [],
+      confidence: 'low',
+      confidenceScore: 0
+    });
+  });
+});
+
 describe('financial analytics', () => {
   it('computes total, average, median, max, and missing funding counts', () => {
     const analytics = buildAnalytics(sources, programs);

@@ -227,6 +227,17 @@ export type TemporalAnalytics = {
   byYear: YearAnalyticsItem[];
 };
 
+export type ForecastAnalytics = {
+  nextYear: number;
+  expectedFundingRub: number | null;
+  expectedProgramCount: number | null;
+  expectedProgramCountChange: number | null;
+  growingTopics: { topic: Topic; growthRate: number; confidence: 'high' | 'medium' | 'low' }[];
+  confidence: 'high' | 'medium' | 'low';
+  confidenceScore: number;
+  method: string;
+};
+
 type MoneySummary = {
   totalFundingRub: number;
   averageFundingRub: number;
@@ -272,6 +283,7 @@ export type AnalyticsSummary = MoneySummary & {
   topics: TopicAnalytics;
   supportGaps: SupportGapsAnalytics;
   temporal: TemporalAnalytics;
+  forecast: ForecastAnalytics;
   dataQuality: DataQualityAnalytics;
 };
 
@@ -669,6 +681,102 @@ function buildTemporalAnalytics(programs: readonly SupportProgram[]): TemporalAn
   };
 }
 
+function growthRate(previous: number, current: number): number | null {
+  if (previous <= 0) return null;
+  return (current - previous) / previous;
+}
+
+function smoothGrowthRate(rates: readonly number[]): number {
+  if (rates.length === 0) return 0;
+  const clamped = rates.map((rate) => Math.max(-0.5, Math.min(0.75, rate)));
+  return average(clamped) ?? 0;
+}
+
+function forecastConfidence(programs: readonly SupportProgram[], yearCount: number): {
+  confidence: ForecastAnalytics['confidence'];
+  confidenceScore: number;
+} {
+  if (programs.length === 0 || yearCount < 2) return { confidence: 'low', confidenceScore: 0 };
+  const historyCompleteness = programs.filter((program) => program.history.length >= 3).length / programs.length;
+  const fundingCompleteness = fundingValues(programs).length / programs.length;
+  const confidenceScore = Math.round(((historyCompleteness + fundingCompleteness) / 2) * 100);
+  const confidence = confidenceScore >= 75 ? 'high' : confidenceScore >= 45 ? 'medium' : 'low';
+  return { confidence, confidenceScore };
+}
+
+function buildForecastAnalytics(programs: readonly SupportProgram[], temporal: TemporalAnalytics): ForecastAnalytics {
+  const years = temporal.byYear.map((item) => item.year);
+  const latestYear = years.at(-1) ?? 2026;
+  const method =
+    'Демо-прогноз по историческим seed-данным: группировка по годам, расчет темпа роста, сглаживание резких скачков и тренд по тематикам. Это не настоящая ML-система.';
+
+  if (programs.length === 0 || temporal.byYear.length === 0) {
+    return {
+      nextYear: latestYear + 1,
+      expectedFundingRub: null,
+      expectedProgramCount: null,
+      expectedProgramCountChange: null,
+      growingTopics: [],
+      confidence: 'low',
+      confidenceScore: 0,
+      method
+    };
+  }
+
+  const fundingRates = temporal.byYear
+    .slice(1)
+    .map((item, index) => growthRate(temporal.byYear[index].totalFundingRub, item.totalFundingRub))
+    .filter((rate): rate is number => rate !== null);
+  const programRates = temporal.byYear
+    .slice(1)
+    .map((item, index) => growthRate(temporal.byYear[index].activePrograms, item.activePrograms))
+    .filter((rate): rate is number => rate !== null);
+
+  const latest = temporal.byYear.at(-1);
+  const smoothedFundingGrowth = smoothGrowthRate(fundingRates);
+  const smoothedProgramGrowth = smoothGrowthRate(programRates);
+  const confidence = forecastConfidence(programs, temporal.byYear.length);
+
+  const topics = Array.from(new Set(programs.flatMap((program) => program.topics)));
+  const growingTopics = topics
+    .map((topic) => {
+      const totals = temporal.byYear.map((yearItem) => {
+        const related = programs.filter((program) => program.topics.includes(topic));
+        return sum(
+          related.flatMap((program) =>
+            program.history
+              .filter((point) => point.year === yearItem.year)
+              .map((point) => point.fundingAmountRub)
+              .filter((value): value is number => value !== null)
+          )
+        );
+      });
+      const rates = totals
+        .slice(1)
+        .map((value, index) => growthRate(totals[index], value))
+        .filter((rate): rate is number => rate !== null);
+      return {
+        topic,
+        growthRate: smoothGrowthRate(rates),
+        confidence: confidence.confidence
+      };
+    })
+    .filter((item) => item.growthRate > 0)
+    .sort((a, b) => b.growthRate - a.growthRate)
+    .slice(0, 5);
+
+  return {
+    nextYear: latestYear + 1,
+    expectedFundingRub: latest ? Math.round(latest.totalFundingRub * (1 + smoothedFundingGrowth)) : null,
+    expectedProgramCount: latest ? Math.round(latest.activePrograms * (1 + smoothedProgramGrowth)) : null,
+    expectedProgramCountChange: latest ? Math.round(latest.activePrograms * smoothedProgramGrowth) : null,
+    growingTopics,
+    confidence: confidence.confidence,
+    confidenceScore: confidence.confidenceScore,
+    method
+  };
+}
+
 export function buildAnalytics(
   sources: readonly SupportSource[],
   programs: readonly SupportProgram[],
@@ -682,6 +790,7 @@ export function buildAnalytics(
   const topicAnalytics = buildTopicAnalytics(filteredPrograms);
   const supportGaps = buildSupportGapsAnalytics(regional, topicAnalytics);
   const temporal = buildTemporalAnalytics(filteredPrograms);
+  const forecast = buildForecastAnalytics(filteredPrograms, temporal);
   const dataQuality = buildDataQualityAnalytics(sources, filteredPrograms);
 
   return {
@@ -727,6 +836,7 @@ export function buildAnalytics(
     topics: topicAnalytics,
     supportGaps,
     temporal,
+    forecast,
     dataQuality
   };
 }
