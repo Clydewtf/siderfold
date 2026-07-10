@@ -191,6 +191,27 @@ export type TopicAnalytics = {
   intersections: TopicRegionIntersection[];
 };
 
+export type YearAnalyticsItem = {
+  year: number;
+  launchedPrograms: number;
+  activePrograms: number;
+  totalFundingRub: number;
+};
+
+export type DeadlineAnalyticsItem = {
+  programId: string;
+  title: string;
+  deadline: string;
+  daysUntilDeadline: number;
+};
+
+export type TemporalAnalytics = {
+  nearestDeadline: DeadlineAnalyticsItem | null;
+  nearestDeadlines: DeadlineAnalyticsItem[];
+  withoutDeadline: { programId: string; title: string }[];
+  byYear: YearAnalyticsItem[];
+};
+
 type MoneySummary = {
   totalFundingRub: number;
   averageFundingRub: number;
@@ -220,6 +241,7 @@ export type AnalyticsSummary = MoneySummary & {
   regional: RegionalAnalytics;
   sources: SourceAnalytics;
   topics: TopicAnalytics;
+  temporal: TemporalAnalytics;
   dataQuality: DataQualitySummary;
 };
 
@@ -470,6 +492,51 @@ function buildSourceAnalytics(
   return { byProgramCount, byActiveProgramCount, byFunding, byDataQuality };
 }
 
+function buildTemporalAnalytics(programs: readonly SupportProgram[]): TemporalAnalytics {
+  const nearestDeadlines = programs
+    .map((program) => {
+      const days = daysUntilDeadline(program.deadline);
+      if (program.deadline === null || days === null || days < 0) return null;
+      return {
+        programId: program.id,
+        title: program.title,
+        deadline: program.deadline,
+        daysUntilDeadline: days
+      };
+    })
+    .filter((item): item is DeadlineAnalyticsItem => item !== null)
+    .sort((a, b) => a.daysUntilDeadline - b.daysUntilDeadline || a.title.localeCompare(b.title, 'ru'))
+    .slice(0, 5);
+
+  const years = Array.from(new Set(programs.flatMap((program) => program.history.map((point) => point.year)))).sort(
+    (a, b) => a - b
+  );
+
+  const byYear = years.map((year) => ({
+    year,
+    launchedPrograms: programs.filter((program) => program.launchYear === year).length,
+    activePrograms: programs.filter((program) => program.history.some((point) => point.year === year)).length,
+    totalFundingRub: sum(
+      programs.flatMap((program) =>
+        program.history
+          .filter((point) => point.year === year)
+          .map((point) => point.fundingAmountRub)
+          .filter((value): value is number => value !== null)
+      )
+    )
+  }));
+
+  return {
+    nearestDeadline: nearestDeadlines[0] ?? null,
+    nearestDeadlines,
+    withoutDeadline: programs
+      .filter((program) => program.deadline === null)
+      .map((program) => ({ programId: program.id, title: program.title }))
+      .sort((a, b) => a.title.localeCompare(b.title, 'ru')),
+    byYear
+  };
+}
+
 export function buildAnalytics(
   sources: readonly SupportSource[],
   programs: readonly SupportProgram[],
@@ -481,12 +548,7 @@ export function buildAnalytics(
   const regional = buildRegionalAnalytics(filteredPrograms);
   const sourceAnalytics = buildSourceAnalytics(sources, filteredPrograms);
   const topicAnalytics = buildTopicAnalytics(filteredPrograms);
-  const upcoming = filteredPrograms
-    .filter((program) => {
-      const days = daysUntilDeadline(program.deadline);
-      return days !== null && days >= 0;
-    })
-    .sort((a, b) => (daysUntilDeadline(a.deadline) ?? 9999) - (daysUntilDeadline(b.deadline) ?? 9999));
+  const temporal = buildTemporalAnalytics(filteredPrograms);
 
   return {
     totalPrograms: filteredPrograms.length,
@@ -499,13 +561,17 @@ export function buildAnalytics(
     averageFundingRub: finance.averageFundingRub ?? 0,
     medianFundingRub: finance.medianFundingRub ?? 0,
     filters: normalizedFilters,
-    nearestDeadline: upcoming[0]
-      ? { programId: upcoming[0].id, title: upcoming[0].title, deadline: upcoming[0].deadline as string }
+    nearestDeadline: temporal.nearestDeadline
+      ? {
+          programId: temporal.nearestDeadline.programId,
+          title: temporal.nearestDeadline.title,
+          deadline: temporal.nearestDeadline.deadline
+        }
       : null,
-    nearestDeadlines: upcoming.slice(0, 5).map((program) => ({
-      programId: program.id,
-      title: program.title,
-      deadline: program.deadline as string
+    nearestDeadlines: temporal.nearestDeadlines.map((item) => ({
+      programId: item.programId,
+      title: item.title,
+      deadline: item.deadline
     })),
     bySource: sources.map((source) => ({
       id: source.id,
@@ -525,6 +591,7 @@ export function buildAnalytics(
     regional,
     sources: sourceAnalytics,
     topics: topicAnalytics,
+    temporal,
     dataQuality: {
       averageScore:
         filteredPrograms.length === 0

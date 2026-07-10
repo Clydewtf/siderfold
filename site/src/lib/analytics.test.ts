@@ -133,6 +133,36 @@ describe('analytics', () => {
   });
 });
 
+describe('temporal analytics', () => {
+  it('keeps nearest deadline compatibility while exposing richer deadline items', () => {
+    const analytics = buildAnalytics(sources, programs);
+
+    expect(analytics.nearestDeadline?.programId).toBe('impact-hub-eco-impact');
+    expect(analytics.temporal.nearestDeadline).toMatchObject({
+      programId: 'impact-hub-eco-impact',
+      deadline: '2026-07-12',
+      daysUntilDeadline: 11
+    });
+    expect(analytics.temporal.nearestDeadlines).toHaveLength(5);
+  });
+
+  it('lists programs without deadlines', () => {
+    const analytics = buildAnalytics(sources, programs);
+
+    expect(analytics.temporal.withoutDeadline.map((item) => item.programId)).toContain('fasie-umnik');
+    expect(analytics.temporal.withoutDeadline.length).toBeGreaterThan(5);
+  });
+
+  it('computes launch and funding dynamics by year', () => {
+    const analytics = buildAnalytics(sources, programs);
+    const year2026 = analytics.temporal.byYear.find((item) => item.year === 2026);
+
+    expect(analytics.temporal.byYear.map((item) => item.year)).toEqual([2024, 2025, 2026]);
+    expect(year2026?.totalFundingRub).toBe(54000000);
+    expect(year2026?.activePrograms).toBe(30);
+  });
+});
+
 describe('financial analytics', () => {
   it('computes total, average, median, max, and missing funding counts', () => {
     const analytics = buildAnalytics(sources, programs);
