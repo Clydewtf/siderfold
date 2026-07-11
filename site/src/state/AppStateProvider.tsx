@@ -154,7 +154,7 @@ export function AppStateProvider({
     storageRef.current,
     (value) => appState(loadPersistedAppState(value))
   );
-  const didMount = useRef(false);
+  const persistedSnapshotRef = useRef(JSON.stringify(persisted(state)));
   const systemDark = useSystemDark();
   const resolvedTheme: ResolvedTheme =
     state.theme === 'system' ? (systemDark ? 'dark' : 'light') : state.theme;
@@ -168,11 +168,12 @@ export function AppStateProvider({
   }, [resolvedTheme, state.display.density, state.display.reduceMotion]);
 
   useEffect(() => {
-    if (!didMount.current) {
-      didMount.current = true;
-      return;
+    const persistedState = persisted(state);
+    const snapshot = JSON.stringify(persistedState);
+    if (snapshot !== persistedSnapshotRef.current) {
+      savePersistedAppState(storageRef.current, persistedState);
+      persistedSnapshotRef.current = snapshot;
     }
-    savePersistedAppState(storageRef.current, persisted(state));
   }, [
     state.theme, state.favoriteProgramIds, state.favoriteSourceIds, state.recentProgramIds,
     state.preferredRegions, state.preferredTopics, state.display

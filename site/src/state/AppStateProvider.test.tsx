@@ -1,15 +1,23 @@
+import { StrictMode } from 'react';
 import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { describe, expect, it } from 'vitest';
 import { APP_STATE_STORAGE_KEY, type StorageLike } from '../lib/storage';
 import { AppStateProvider, useAppState } from './AppStateProvider';
 
-function memory(initial?: string): StorageLike {
+type MemoryStorage = StorageLike & { writes: string[] };
+
+function memory(initial?: string): MemoryStorage {
   const values = new Map<string, string>();
+  const writes: string[] = [];
   if (initial) values.set(APP_STATE_STORAGE_KEY, initial);
   return {
+    writes,
     getItem: (key) => values.get(key) ?? null,
-    setItem: (key, value) => values.set(key, value),
+    setItem: (key, value) => {
+      writes.push(value);
+      values.set(key, value);
+    },
     removeItem: (key) => values.delete(key)
   };
 }
@@ -36,6 +44,20 @@ function Harness() {
 }
 
 describe('AppStateProvider', () => {
+  it('does not overwrite future-version state during StrictMode mount replay', () => {
+    const futureState = JSON.stringify({ version: 2, state: { theme: 'dark' } });
+    const storage = memory(futureState);
+
+    render(
+      <StrictMode>
+        <AppStateProvider storage={storage}><Harness /></AppStateProvider>
+      </StrictMode>
+    );
+
+    expect(storage.writes).toEqual([]);
+    expect(storage.getItem(APP_STATE_STORAGE_KEY)).toBe(futureState);
+  });
+
   it('hydrates persisted state and keeps navigation transient', () => {
     const storage = memory(JSON.stringify({
       version: 1,
