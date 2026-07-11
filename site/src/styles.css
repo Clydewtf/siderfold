@@ -3,9 +3,47 @@
 @tailwind utilities;
 
 :root {
+  --color-ink: 16 16 15;
+  --color-paper: 247 242 232;
+  --color-surface: 255 255 255;
+  --color-moss: 82 102 75;
+  --color-clay: 164 106 77;
+  --color-cobalt: 47 95 158;
+  --color-graphite: 39 42 47;
   color-scheme: light;
-  background: #f7f2e8;
+  background: rgb(var(--color-paper));
   font-family: Geist, ui-sans-serif, system-ui, sans-serif;
+}
+
+:root[data-theme='dark'] {
+  --color-ink: 239 235 225;
+  --color-paper: 23 25 29;
+  --color-surface: 36 39 45;
+  --color-moss: 116 143 105;
+  --color-clay: 203 139 105;
+  --color-cobalt: 119 164 225;
+  --color-graphite: 201 204 211;
+}
+
+:root[data-theme='dark'] [class*='bg-white'] {
+  background-color: rgb(var(--color-surface) / 0.82);
+}
+
+:root[data-theme='dark'] [class*='bg-ink'] {
+  background-color: rgb(10 12 15);
+}
+
+:root[data-density='compact'] [data-motion-card] {
+  padding: 1rem;
+}
+
+:root[data-reduced-motion='true'] *,
+:root[data-reduced-motion='true'] *::before,
+:root[data-reduced-motion='true'] *::after {
+  animation-duration: 0.01ms !important;
+  animation-iteration-count: 1 !important;
+  scroll-behavior: auto !important;
+  transition-duration: 0.01ms !important;
 }
 
 * {

@@ -50,7 +50,7 @@ function AppContent() {
             onToggleFavoriteSource={actions.toggleFavoriteSource}
           />
         ) : null}
-        {state.activeTab === 'profile' ? <ProfileTab /> : null}
+        {state.activeTab === 'profile' ? <ProfileTab programs={programs} sources={sources} /> : null}
       </section>
       <ProgramDrawer
         program={selectedProgram}

@@ -9,12 +9,12 @@ export default {
         sans: ['Geist', 'ui-sans-serif', 'system-ui', 'sans-serif']
       },
       colors: {
-        ink: '#10100f',
-        paper: '#f7f2e8',
-        moss: '#52664b',
-        clay: '#a46a4d',
-        cobalt: '#2f5f9e',
-        graphite: '#272a2f'
+        ink: 'rgb(var(--color-ink) / <alpha-value>)',
+        paper: 'rgb(var(--color-paper) / <alpha-value>)',
+        moss: 'rgb(var(--color-moss) / <alpha-value>)',
+        clay: 'rgb(var(--color-clay) / <alpha-value>)',
+        cobalt: 'rgb(var(--color-cobalt) / <alpha-value>)',
+        graphite: 'rgb(var(--color-graphite) / <alpha-value>)'
       },
       boxShadow: {
         panel: '0 24px 80px rgba(16, 16, 15, 0.12)'

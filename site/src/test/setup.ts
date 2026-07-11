@@ -1,4 +1,5 @@
 import '@testing-library/jest-dom/vitest';
+import { afterEach } from 'vitest';
 
 if (typeof window.matchMedia !== 'function') {
   Object.defineProperty(window, 'matchMedia', {
@@ -15,3 +16,11 @@ if (typeof window.matchMedia !== 'function') {
     })
   });
 }
+
+afterEach(() => {
+  window.localStorage.clear?.();
+  delete document.documentElement.dataset.theme;
+  delete document.documentElement.dataset.density;
+  delete document.documentElement.dataset.reducedMotion;
+  document.documentElement.style.removeProperty('color-scheme');
+});
