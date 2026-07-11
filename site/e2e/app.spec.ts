@@ -24,6 +24,20 @@ test('tabs, search, filters, and drawer work on desktop', async ({ page }, testI
   await expect(page.getByRole('dialog')).toHaveCount(0);
 });
 
+test('five-section shell and local theme work on desktop', async ({ page }, testInfo) => {
+  test.skip(testInfo.project.name !== 'desktop');
+  await page.goto('/');
+  await expect(page.getByRole('tab')).toHaveCount(5);
+  await page.getByRole('tab', { name: 'Аналитика' }).click();
+  await expect(page.getByRole('heading', { name: 'Аналитика мер поддержки' })).toBeVisible();
+  await page.getByRole('tab', { name: 'Профиль' }).click();
+  await page.getByLabel('Тема интерфейса').selectOption('dark');
+  await page.reload();
+  await page.getByRole('tab', { name: 'Профиль' }).click();
+  await expect(page.getByLabel('Тема интерфейса')).toHaveValue('dark');
+  await expect(page.locator('html')).toHaveAttribute('data-theme', 'dark');
+});
+
 test('mobile layout has no horizontal scroll', async ({ page }, testInfo) => {
   test.skip(testInfo.project.name !== 'mobile', 'Responsive overflow coverage runs only in the mobile project.');
 
@@ -35,6 +49,18 @@ test('mobile layout has no horizontal scroll', async ({ page }, testInfo) => {
   await page.getByRole('tab', { name: 'Каталог' }).click();
   const overflowAfterCatalog = await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth);
   expect(overflowAfterCatalog).toBeLessThanOrEqual(1);
+
+  await page.getByRole('tab', { name: 'Аналитика' }).click();
+  const overflowAfterAnalytics = await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth);
+  expect(overflowAfterAnalytics).toBeLessThanOrEqual(1);
+
+  await page.getByRole('tab', { name: 'Источники' }).click();
+  const overflowAfterSources = await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth);
+  expect(overflowAfterSources).toBeLessThanOrEqual(1);
+
+  await page.getByRole('tab', { name: 'Профиль' }).click();
+  const overflowAfterProfile = await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth);
+  expect(overflowAfterProfile).toBeLessThanOrEqual(1);
 });
 
 test('mobile catalog keeps search and active filters visible while filters are collapsed', async ({ page }, testInfo) => {
