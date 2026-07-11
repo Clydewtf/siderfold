@@ -2,6 +2,26 @@
 
 All notable project milestones are documented in this file.
 
+## v0.2.0 - 2026-07-10
+
+App Shell, Navigation And Local State.
+
+### Added
+
+- Five-section navigation for Home, Catalog, Analytics, Sources, and Profile with keyboard-accessible tab behavior.
+- Versioned local user state for theme, program and source favorites, recent programs, preferred regions and topics, and display settings.
+- Local profile controls and honest demo states for account features that require backend services.
+
+### Changed
+
+- Program details are owned by the shared app state so recent views and favorites behave consistently across entry points.
+- Theme colors use light and dark CSS tokens with system-theme support.
+
+### Notes
+
+- User state remains local to the current browser and device.
+- Authentication, server sync, notifications, documents, applications, and report export are not connected.
+
 ## v0.1.2 - 2026-07-09
 
 Analytics Engine.
