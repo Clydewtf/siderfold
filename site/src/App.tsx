@@ -34,7 +34,13 @@ function AppContent() {
             onOpenProgram={(program) => actions.openProgram(program.id)}
           />
         ) : null}
-        {state.activeTab === 'programs' ? <ProgramsTab sources={sources} programs={programs} /> : null}
+        {state.activeTab === 'programs' ? (
+          <ProgramsTab
+            sources={sources}
+            programs={programs}
+            onOpenProgram={(program) => actions.openProgram(program.id)}
+          />
+        ) : null}
         {state.activeTab === 'analytics' ? <AnalyticsTab /> : null}
         {state.activeTab === 'sources' ? <SourcesTab sources={sources} programs={programs} /> : null}
         {state.activeTab === 'profile' ? <ProfileTab /> : null}
@@ -42,6 +48,10 @@ function AppContent() {
       <ProgramDrawer
         program={selectedProgram}
         source={selectedSource}
+        isFavorite={selectedProgram ? state.favoriteProgramIds.includes(selectedProgram.id) : false}
+        onToggleFavorite={() => {
+          if (selectedProgram) actions.toggleFavoriteProgram(selectedProgram.id);
+        }}
         onClose={actions.closeProgram}
       />
     </AppShell>

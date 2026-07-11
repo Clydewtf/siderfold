@@ -16,10 +16,14 @@ const focusableSelector = [
 export function ProgramDrawer({
   program,
   source,
+  isFavorite,
+  onToggleFavorite,
   onClose
 }: {
   program: SupportProgram | null;
   source: SupportSource | null;
+  isFavorite: boolean;
+  onToggleFavorite: () => void;
   onClose: () => void;
 }) {
   const dialogRef = useRef<HTMLElement>(null);
@@ -91,15 +95,26 @@ export function ProgramDrawer({
             <p className="text-sm font-semibold text-cobalt">{source?.name ?? 'Источник не найден'}</p>
             <h2 className="mt-2 text-3xl font-semibold text-ink">{program.title}</h2>
           </div>
-          <button
-            ref={closeButtonRef}
-            type="button"
-            onClick={onClose}
-            aria-label="Закрыть детали"
-            className="rounded-full border border-ink/10 bg-white p-2 text-ink"
-          >
-            <X className="h-5 w-5" aria-hidden="true" />
-          </button>
+          <div className="flex items-center gap-2">
+            <button
+              ref={closeButtonRef}
+              type="button"
+              onClick={onClose}
+              aria-label="Закрыть детали"
+              className="rounded-full border border-ink/10 bg-white p-2 text-ink"
+            >
+              <X className="h-5 w-5" aria-hidden="true" />
+            </button>
+            <button
+              type="button"
+              aria-pressed={isFavorite}
+              aria-label={isFavorite ? `Удалить ${program.title} из избранного` : `Добавить ${program.title} в избранное`}
+              onClick={onToggleFavorite}
+              className="rounded-full border border-ink/10 bg-white px-3 py-2 text-sm font-semibold text-ink"
+            >
+              {isFavorite ? 'В избранном' : 'В избранное'}
+            </button>
+          </div>
         </div>
 
         <div className="mt-5 flex flex-wrap gap-2">

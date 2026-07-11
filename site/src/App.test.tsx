@@ -119,4 +119,79 @@ describe('App navigation', () => {
     expect(within(dialog).getByRole('heading', { name: firstFeaturedProgram.title })).toBeInTheDocument();
     expect(within(dialog).getByText(source.name)).toBeInTheDocument();
   });
+
+  it('records a viewed program and toggles its favorite state in the shared drawer', async () => {
+    const user = userEvent.setup();
+    render(<App />);
+    await user.click(screen.getByRole('tab', { name: 'Каталог' }));
+    await user.click(screen.getByRole('button', { name: /Подробнее о программе Старт-ИИ/i }));
+    const dialog = screen.getByRole('dialog', { name: 'Старт-ИИ' });
+    const favorite = within(dialog).getByRole('button', { name: 'Добавить Старт-ИИ в избранное' });
+    expect(favorite).toHaveAttribute('aria-pressed', 'false');
+    await user.click(favorite);
+    expect(favorite).toHaveAttribute('aria-pressed', 'true');
+  });
+
+  it('shows requirements, documents, source, and external link in shared program details', async () => {
+    const user = userEvent.setup();
+    render(<App />);
+    await user.click(screen.getByRole('tab', { name: 'Каталог' }));
+    await user.click(screen.getByRole('button', { name: /Подробнее о программе Старт-ИИ/i }));
+
+    const dialog = screen.getByRole('dialog', { name: 'Старт-ИИ' });
+    expect(within(dialog).getByText('Фонд содействия инновациям')).toBeInTheDocument();
+    expect(within(dialog).getByText('Российское юридическое лицо')).toBeInTheDocument();
+    expect(within(dialog).getByRole('link', { name: 'Открыть первоисточник' })).toHaveAttribute(
+      'href',
+      'https://fasie.ru/programs/start-ai'
+    );
+    expect(within(dialog).getByRole('link', { name: /Документ 1/i })).toBeInTheDocument();
+  });
+
+  it('moves focus into shared program details, traps tab focus, and restores focus on close', async () => {
+    const user = userEvent.setup();
+    render(<App />);
+    await user.click(screen.getByRole('tab', { name: 'Каталог' }));
+
+    const openButton = screen.getByRole('button', { name: /Подробнее о программе Старт-ИИ/i });
+    await user.click(openButton);
+
+    const dialog = screen.getByRole('dialog', { name: 'Старт-ИИ' });
+    const closeButton = within(dialog).getByRole('button', { name: 'Закрыть детали' });
+    const documentLink = within(dialog).getByRole('link', { name: /Документ 1/i });
+    expect(closeButton).toHaveFocus();
+
+    await user.keyboard('{Shift>}{Tab}{/Shift}');
+    expect(documentLink).toHaveFocus();
+
+    await user.click(closeButton);
+    expect(screen.queryByRole('dialog', { name: 'Старт-ИИ' })).not.toBeInTheDocument();
+    expect(openButton).toHaveFocus();
+  });
+
+  it('closes shared program details with Escape and restores focus to the opener', async () => {
+    const user = userEvent.setup();
+    render(<App />);
+    await user.click(screen.getByRole('tab', { name: 'Каталог' }));
+
+    const openButton = screen.getByRole('button', { name: /Подробнее о программе Старт-ИИ/i });
+    await user.click(openButton);
+
+    expect(screen.getByRole('dialog', { name: 'Старт-ИИ' })).toBeInTheDocument();
+
+    await user.keyboard('{Escape}');
+    expect(screen.queryByRole('dialog', { name: 'Старт-ИИ' })).not.toBeInTheDocument();
+    expect(openButton).toHaveFocus();
+  });
+
+  it('shows document fallback in shared program details when documents are unavailable', async () => {
+    const user = userEvent.setup();
+    render(<App />);
+    await user.click(screen.getByRole('tab', { name: 'Каталог' }));
+    await user.click(screen.getByRole('button', { name: /Подробнее о программе Музейная лаборатория/i }));
+
+    const dialog = screen.getByRole('dialog', { name: 'Музейная лаборатория' });
+    expect(within(dialog).getByText('Документы не приложены.')).toBeInTheDocument();
+    expect(within(dialog).queryByRole('link', { name: /Документ/i })).not.toBeInTheDocument();
+  });
 });

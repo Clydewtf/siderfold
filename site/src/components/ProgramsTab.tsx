@@ -15,7 +15,6 @@ import type {
   Topic
 } from '../types';
 import { EmptyState, Tag } from './ui';
-import { ProgramDrawer } from './ProgramDrawer';
 
 const defaultFilters: ProgramFilters = {
   query: '',
@@ -51,9 +50,16 @@ function hasActiveFilters(filters: ProgramFilters) {
   return getActiveFilterLabels(filters).length > 0;
 }
 
-export function ProgramsTab({ sources, programs }: { sources: readonly SupportSource[]; programs: readonly SupportProgram[] }) {
+export function ProgramsTab({
+  sources,
+  programs,
+  onOpenProgram
+}: {
+  sources: readonly SupportSource[];
+  programs: readonly SupportProgram[];
+  onOpenProgram: (program: SupportProgram) => void;
+}) {
   const [filters, setFilters] = useState<ProgramFilters>(defaultFilters);
-  const [selectedProgram, setSelectedProgram] = useState<SupportProgram | null>(null);
   const [filtersOpen, setFiltersOpen] = useState(false);
   const [isDesktopFiltersOpen, setIsDesktopFiltersOpen] = useState(false);
 
@@ -297,7 +303,7 @@ export function ProgramsTab({ sources, programs }: { sources: readonly SupportSo
                 <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
                   <button
                     type="button"
-                    onClick={() => setSelectedProgram(program)}
+                    onClick={() => onOpenProgram(program)}
                     aria-label={`Подробнее о программе ${program.title}`}
                     className="inline-flex min-h-11 items-center justify-center rounded-lg bg-ink px-4 py-2 text-sm font-semibold text-white transition hover:bg-ink/85 focus:outline-none focus:ring-2 focus:ring-cobalt focus:ring-offset-2"
                   >
@@ -341,11 +347,6 @@ export function ProgramsTab({ sources, programs }: { sources: readonly SupportSo
         </div>
       ) : null}
 
-      <ProgramDrawer
-        program={selectedProgram}
-        source={selectedProgram ? sourceById.get(selectedProgram.sourceId) ?? null : null}
-        onClose={() => setSelectedProgram(null)}
-      />
     </div>
   );
 }
