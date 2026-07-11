@@ -1,13 +1,14 @@
 import type { KeyboardEvent, ReactNode } from 'react';
-import { BarChart3, Database, Home } from 'lucide-react';
+import { BarChart3, Database, Home, LibraryBig, UserRound } from 'lucide-react';
+import type { TabId } from '../types';
 import { APP_VERSION } from '../version';
-
-export type TabId = 'home' | 'sources' | 'programs';
 
 const tabs: { id: TabId; label: string; icon: typeof Home }[] = [
   { id: 'home', label: 'Главная', icon: Home },
+  { id: 'programs', label: 'Каталог', icon: LibraryBig },
+  { id: 'analytics', label: 'Аналитика', icon: BarChart3 },
   { id: 'sources', label: 'Источники', icon: Database },
-  { id: 'programs', label: 'Каталог', icon: BarChart3 }
+  { id: 'profile', label: 'Профиль', icon: UserRound }
 ];
 
 function getTabId(tab: TabId) {
@@ -82,7 +83,7 @@ export function AppShell({
           <nav
             aria-label="Основные разделы"
             role="tablist"
-            className="grid grid-cols-3 gap-1 rounded-full border border-ink/10 bg-white/70 p-1 shadow-sm sm:gap-2"
+            className="grid grid-cols-5 gap-1 rounded-full border border-ink/10 bg-white/70 p-1 shadow-sm"
           >
             {tabs.map((tab, index) => {
               const Icon = tab.icon;

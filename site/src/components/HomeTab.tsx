@@ -10,12 +10,14 @@ export function HomeTab({
   sources,
   programs,
   onOpenPrograms,
+  onOpenAnalytics,
   onOpenSources,
   onOpenProgram
 }: {
   sources: readonly SupportSource[];
   programs: readonly SupportProgram[];
   onOpenPrograms: () => void;
+  onOpenAnalytics: () => void;
   onOpenSources: () => void;
   onOpenProgram: (program: SupportProgram) => void;
 }) {
@@ -36,6 +38,9 @@ export function HomeTab({
             <IconButton onClick={onOpenPrograms}>
               Открыть каталог <ArrowRight className="ml-2 h-4 w-4" aria-hidden="true" />
             </IconButton>
+            <button type="button" onClick={onOpenAnalytics} className="inline-flex min-h-11 items-center justify-center rounded-lg border border-ink/15 bg-white px-4 py-2 text-sm font-semibold text-ink">
+              Открыть аналитику
+            </button>
             <button
               type="button"
               onClick={onOpenSources}

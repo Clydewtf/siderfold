@@ -6,23 +6,20 @@ import { programs, sources } from './data/seed';
 import { APP_VERSION } from './version';
 
 describe('App navigation', () => {
-  it('shows the three MVP tabs', () => {
+  it('shows five primary tabs in product order', () => {
     render(<App />);
-
-    expect(screen.getByRole('tab', { name: 'Главная' })).toBeInTheDocument();
-    expect(screen.getByRole('tab', { name: 'Источники' })).toBeInTheDocument();
-    expect(screen.getByRole('tab', { name: 'Каталог' })).toBeInTheDocument();
+    expect(screen.getAllByRole('tab').map((tab) => tab.textContent)).toEqual([
+      'Главная', 'Каталог', 'Аналитика', 'Источники', 'Профиль'
+    ]);
   });
 
-  it('switches tabs without reloading the page', async () => {
+  it('switches every new shell section without reload', async () => {
     const user = userEvent.setup();
     render(<App />);
-
-    await user.click(screen.getByRole('tab', { name: 'Источники' }));
-    expect(screen.getByRole('heading', { name: 'Источники программ' })).toBeInTheDocument();
-
-    await user.click(screen.getByRole('tab', { name: 'Каталог' }));
-    expect(screen.getByRole('heading', { name: 'Каталог программ' })).toBeInTheDocument();
+    await user.click(screen.getByRole('tab', { name: 'Аналитика' }));
+    expect(screen.getByRole('heading', { name: 'Аналитика мер поддержки' })).toBeInTheDocument();
+    await user.click(screen.getByRole('tab', { name: 'Профиль' }));
+    expect(screen.getByRole('heading', { name: 'Профиль' })).toBeInTheDocument();
   });
 
   it('renders clickable Stargate brand and primary navigation labels', async () => {
@@ -36,8 +33,10 @@ describe('App navigation', () => {
     expect(screen.getByRole('heading', { name: /Единая база программ поддержки/i })).toBeInTheDocument();
 
     expect(screen.getByRole('tab', { name: 'Главная' })).toBeInTheDocument();
-    expect(screen.getByRole('tab', { name: 'Источники' })).toBeInTheDocument();
     expect(screen.getByRole('tab', { name: 'Каталог' })).toBeInTheDocument();
+    expect(screen.getByRole('tab', { name: 'Аналитика' })).toBeInTheDocument();
+    expect(screen.getByRole('tab', { name: 'Источники' })).toBeInTheDocument();
+    expect(screen.getByRole('tab', { name: 'Профиль' })).toBeInTheDocument();
     expect(screen.queryByText('Frontend-only MVP на seed-данных')).not.toBeInTheDocument();
     expect(screen.getByText('MVP seed')).toBeInTheDocument();
     expect(screen.getByLabelText(`Версия ${APP_VERSION}`)).toHaveTextContent(`v${APP_VERSION}`);
@@ -78,32 +77,22 @@ describe('App navigation', () => {
     }
   });
 
-  it('supports keyboard navigation across tabs', async () => {
+  it('supports automatic keyboard activation across five tabs', async () => {
     const user = userEvent.setup();
     render(<App />);
-
-    const homeTab = screen.getByRole('tab', { name: 'Главная' });
-    const sourcesTab = screen.getByRole('tab', { name: 'Источники' });
-    const programsTab = screen.getByRole('tab', { name: 'Каталог' });
-
-    homeTab.focus();
+    const home = screen.getByRole('tab', { name: 'Главная' });
+    const catalog = screen.getByRole('tab', { name: 'Каталог' });
+    const profile = screen.getByRole('tab', { name: 'Профиль' });
+    home.focus();
     await user.keyboard('{ArrowRight}');
-    expect(sourcesTab).toHaveFocus();
-    expect(sourcesTab).toHaveAttribute('aria-selected', 'true');
-    expect(screen.getByRole('heading', { name: 'Источники программ' })).toBeInTheDocument();
-
+    expect(catalog).toHaveFocus();
+    expect(catalog).toHaveAttribute('aria-selected', 'true');
     await user.keyboard('{End}');
-    expect(programsTab).toHaveFocus();
-    expect(programsTab).toHaveAttribute('aria-selected', 'true');
-    expect(screen.getByRole('heading', { name: 'Каталог программ' })).toBeInTheDocument();
-
-    await user.keyboard('{Home}');
-    expect(homeTab).toHaveFocus();
-    expect(homeTab).toHaveAttribute('aria-selected', 'true');
-
+    expect(profile).toHaveFocus();
+    await user.keyboard('{ArrowRight}');
+    expect(home).toHaveFocus();
     await user.keyboard('{ArrowLeft}');
-    expect(programsTab).toHaveFocus();
-    expect(programsTab).toHaveAttribute('aria-selected', 'true');
+    expect(profile).toHaveFocus();
   });
 
   it('opens program details from a featured Home card', async () => {
