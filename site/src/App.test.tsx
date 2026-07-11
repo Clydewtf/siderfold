@@ -1,9 +1,22 @@
 import { render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import App from './App';
 import { programs, sources } from './data/seed';
 import { APP_VERSION } from './version';
+
+vi.mock('./data/seed', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('./data/seed')>();
+
+  return {
+    ...actual,
+    programs: actual.programs.map((program) =>
+      program.title === 'Музейная лаборатория'
+        ? { ...program, documentUrls: ['not-a-url', 'ftp://example.org/rules.pdf'] }
+        : program
+    )
+  };
+});
 
 describe('App navigation', () => {
   it('shows five primary tabs in product order', () => {
@@ -184,7 +197,7 @@ describe('App navigation', () => {
     expect(openButton).toHaveFocus();
   });
 
-  it('shows document fallback in shared program details when documents are unavailable', async () => {
+  it('shows document fallback in shared program details when all document URLs are invalid', async () => {
     const user = userEvent.setup();
     render(<App />);
     await user.click(screen.getByRole('tab', { name: 'Каталог' }));
