@@ -163,8 +163,22 @@ describe('App navigation', () => {
 
     render(<App />);
     await user.click(screen.getByRole('tab', { name: 'Профиль' }));
-    expect(screen.getAllByText('Старт-ИИ').length).toBeGreaterThanOrEqual(2);
-    expect(screen.getByText('Фонд содействия инновациям')).toBeInTheDocument();
+    const favoriteProgramsSection = screen
+      .getByRole('heading', { name: 'Избранные программы' })
+      .closest<HTMLElement>('section');
+    const recentProgramsSection = screen
+      .getByRole('heading', { name: 'Недавно просмотренные' })
+      .closest<HTMLElement>('section');
+    const favoriteSourcesSection = screen
+      .getByRole('heading', { name: 'Избранные источники' })
+      .closest<HTMLElement>('section');
+
+    expect(favoriteProgramsSection).not.toBeNull();
+    expect(recentProgramsSection).not.toBeNull();
+    expect(favoriteSourcesSection).not.toBeNull();
+    expect(within(favoriteProgramsSection!).getByText('Старт-ИИ')).toBeInTheDocument();
+    expect(within(recentProgramsSection!).getByText('Старт-ИИ')).toBeInTheDocument();
+    expect(within(favoriteSourcesSection!).getByText('Фонд содействия инновациям')).toBeInTheDocument();
     expect(screen.getByLabelText('Тема интерфейса')).toHaveValue('dark');
     expect(document.documentElement).toHaveAttribute('data-theme', 'dark');
   });
