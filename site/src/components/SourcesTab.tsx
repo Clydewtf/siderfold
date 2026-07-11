@@ -8,10 +8,14 @@ import { EmptyState, Tag } from './ui';
 
 export function SourcesTab({
   sources,
-  programs
+  programs,
+  favoriteSourceIds,
+  onToggleFavoriteSource
 }: {
   sources: readonly SupportSource[];
   programs: readonly SupportProgram[];
+  favoriteSourceIds: readonly string[];
+  onToggleFavoriteSource: (sourceId: string) => void;
 }) {
   const [type, setType] = useState<SourceType | 'Все типы'>('Все типы');
   const [topic, setTopic] = useState<Topic | 'Все тематики'>('Все тематики');
@@ -83,8 +87,11 @@ export function SourcesTab({
 
       <div className="mt-10 grid gap-6 lg:grid-cols-[1fr_420px] lg:items-start">
         <div className="grid gap-4 md:grid-cols-2">
-          {filtered.map((source) => (
-            <Fragment key={source.id}>
+          {filtered.map((source) => {
+            const isFavorite = favoriteSourceIds.includes(source.id);
+
+            return (
+              <Fragment key={source.id}>
               <article
                 aria-label={source.name}
                 data-testid={`source-card-${source.id}`}
@@ -114,6 +121,15 @@ export function SourcesTab({
                 <div data-testid={`source-card-actions-${source.id}`} className="mt-auto flex flex-col gap-3 pt-5">
                   <button
                     type="button"
+                    aria-pressed={isFavorite}
+                    aria-label={isFavorite ? `Удалить ${source.name} из избранного` : `Добавить ${source.name} в избранное`}
+                    onClick={() => onToggleFavoriteSource(source.id)}
+                    className="rounded-full border border-ink/10 bg-white/70 px-3 py-2 text-xs font-semibold text-ink"
+                  >
+                    {isFavorite ? 'В избранном' : 'В избранное'}
+                  </button>
+                  <button
+                    type="button"
                     onClick={() => setSelectedSourceId(source.id)}
                     className="inline-flex min-h-11 w-full min-w-0 items-center justify-center rounded-lg bg-ink px-4 py-2 text-center text-sm font-semibold leading-5 text-white transition hover:bg-ink/85 focus:outline-none focus:ring-2 focus:ring-cobalt focus:ring-offset-2"
                   >
@@ -139,8 +155,9 @@ export function SourcesTab({
                   <SourceDetails source={selected} related={related} />
                 </div>
               ) : null}
-            </Fragment>
-          ))}
+              </Fragment>
+            );
+          })}
           {filtered.length === 0 ? (
             <EmptyState title="Источники не найдены" description="Измените тип источника или тематику, чтобы увидеть карточки." />
           ) : null}

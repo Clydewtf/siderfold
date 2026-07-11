@@ -1,12 +1,12 @@
 import { render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { programs, sources } from '../data/seed';
 import { SourcesTab } from './SourcesTab';
 
 describe('SourcesTab', () => {
   it('renders source cards with program counters', () => {
-    render(<SourcesTab sources={sources} programs={programs} />);
+    render(<SourcesTab sources={sources} programs={programs} favoriteSourceIds={[]} onToggleFavoriteSource={vi.fn()} />);
 
     expect(screen.getByRole('heading', { name: 'Источники программ' })).toBeInTheDocument();
     expect(screen.getAllByText('Фонд Потанина').length).toBeGreaterThan(1);
@@ -16,7 +16,7 @@ describe('SourcesTab', () => {
 
   it('filters by source type and topic', async () => {
     const user = userEvent.setup();
-    render(<SourcesTab sources={sources} programs={programs} />);
+    render(<SourcesTab sources={sources} programs={programs} favoriteSourceIds={[]} onToggleFavoriteSource={vi.fn()} />);
 
     await user.selectOptions(screen.getByLabelText('Тип источника'), 'Акселератор');
     expect(screen.getByRole('article', { name: /Impact Hub Moscow/i })).toBeInTheDocument();
@@ -29,7 +29,7 @@ describe('SourcesTab', () => {
 
   it('opens selected source details with related programs and external link', async () => {
     const user = userEvent.setup();
-    render(<SourcesTab sources={sources} programs={programs} />);
+    render(<SourcesTab sources={sources} programs={programs} favoriteSourceIds={[]} onToggleFavoriteSource={vi.fn()} />);
 
     await user.click(screen.getByRole('button', { name: /Выбрать источник Impact Hub Moscow/i }));
 
@@ -45,7 +45,7 @@ describe('SourcesTab', () => {
   });
 
   it('keeps desktop source details sticky inside the reserved right column', () => {
-    render(<SourcesTab sources={sources} programs={programs} />);
+    render(<SourcesTab sources={sources} programs={programs} favoriteSourceIds={[]} onToggleFavoriteSource={vi.fn()} />);
 
     const desktopColumn = screen.getByTestId('desktop-source-details-column');
     const desktopDetails = screen.getByTestId('desktop-source-details');
@@ -57,7 +57,7 @@ describe('SourcesTab', () => {
   });
 
   it('pins source card actions to the bottom of equal-height cards', () => {
-    render(<SourcesTab sources={sources} programs={programs} />);
+    render(<SourcesTab sources={sources} programs={programs} favoriteSourceIds={[]} onToggleFavoriteSource={vi.fn()} />);
 
     const impactCard = screen.getByTestId('source-card-impact-hub');
     const impactActions = screen.getByTestId('source-card-actions-impact-hub');
@@ -68,7 +68,7 @@ describe('SourcesTab', () => {
 
   it('marks the selected source and separates select from external website actions', async () => {
     const user = userEvent.setup();
-    render(<SourcesTab sources={sources} programs={programs} />);
+    render(<SourcesTab sources={sources} programs={programs} favoriteSourceIds={[]} onToggleFavoriteSource={vi.fn()} />);
 
     const impactCard = screen.getByRole('article', { name: /Impact Hub Moscow/i });
     await user.click(within(impactCard).getByRole('button', { name: /Выбрать источник Impact Hub Moscow/i }));
@@ -83,7 +83,7 @@ describe('SourcesTab', () => {
 
   it('announces source detail updates', async () => {
     const user = userEvent.setup();
-    render(<SourcesTab sources={sources} programs={programs} />);
+    render(<SourcesTab sources={sources} programs={programs} favoriteSourceIds={[]} onToggleFavoriteSource={vi.fn()} />);
 
     await user.click(screen.getByRole('button', { name: /Выбрать источник Impact Hub Moscow/i }));
 
@@ -92,7 +92,7 @@ describe('SourcesTab', () => {
 
   it('falls back to a filtered source when filters exclude the selected source', async () => {
     const user = userEvent.setup();
-    render(<SourcesTab sources={sources} programs={programs} />);
+    render(<SourcesTab sources={sources} programs={programs} favoriteSourceIds={[]} onToggleFavoriteSource={vi.fn()} />);
 
     await user.click(screen.getByRole('button', { name: /Выбрать источник Impact Hub Moscow/i }));
     await user.selectOptions(screen.getByLabelText('Тип источника'), 'Фонд');
@@ -103,5 +103,21 @@ describe('SourcesTab', () => {
     const potaninCard = screen.getByRole('article', { name: /Фонд Потанина/i });
     expect(within(potaninCard).getByText('Выбран')).toBeInTheDocument();
     expect(screen.getAllByText('Стипендиальный конкурс для магистрантов').length).toBeGreaterThan(0);
+  });
+
+  it('exposes source favorites as pressed buttons and callbacks', async () => {
+    const user = userEvent.setup();
+    const onToggleFavoriteSource = vi.fn();
+    render(
+      <SourcesTab
+        sources={sources}
+        programs={programs}
+        favoriteSourceIds={['fond-potanin']}
+        onToggleFavoriteSource={onToggleFavoriteSource}
+      />
+    );
+    expect(screen.getByRole('button', { name: 'Удалить Фонд Потанина из избранного' })).toHaveAttribute('aria-pressed', 'true');
+    await user.click(screen.getByRole('button', { name: 'Добавить Impact Hub Moscow в избранное' }));
+    expect(onToggleFavoriteSource).toHaveBeenCalledWith('impact-hub');
   });
 });

@@ -42,7 +42,14 @@ function AppContent() {
           />
         ) : null}
         {state.activeTab === 'analytics' ? <AnalyticsTab /> : null}
-        {state.activeTab === 'sources' ? <SourcesTab sources={sources} programs={programs} /> : null}
+        {state.activeTab === 'sources' ? (
+          <SourcesTab
+            sources={sources}
+            programs={programs}
+            favoriteSourceIds={state.favoriteSourceIds}
+            onToggleFavoriteSource={actions.toggleFavoriteSource}
+          />
+        ) : null}
         {state.activeTab === 'profile' ? <ProfileTab /> : null}
       </section>
       <ProgramDrawer
