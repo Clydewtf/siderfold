@@ -38,6 +38,42 @@ test('five-section shell and local theme work on desktop', async ({ page }, test
   await expect(page.locator('html')).toHaveAttribute('data-theme', 'dark');
 });
 
+test('compact density visibly tightens cards across principal views', async ({ page }, testInfo) => {
+  test.skip(testInfo.project.name !== 'desktop', 'Display preference coverage runs only on desktop.');
+  await page.goto('/');
+
+  const homeCard = page.getByText('Что внутри', { exact: true }).locator('..');
+  await expect(homeCard).toHaveCSS('padding-top', '24px');
+
+  await page.getByRole('tab', { name: 'Источники' }).click();
+  await page.getByRole('button', {
+    name: 'Добавить Фонд содействия инновациям в избранное'
+  }).click();
+
+  await page.getByRole('tab', { name: 'Профиль' }).click();
+  await page.getByLabel('Плотность карточек').selectOption('compact');
+  await expect(page.locator('html')).toHaveAttribute('data-density', 'compact');
+
+  const profileCard = page.getByText('Избранные источники', { exact: true })
+    .locator('..').getByRole('listitem');
+  await expect(profileCard).toHaveCSS('padding-top', '12px');
+  await expect(profileCard.locator('..')).toHaveCSS('row-gap', '12px');
+
+  await page.getByRole('tab', { name: 'Главная' }).click();
+  await expect(homeCard).toHaveCSS('padding-top', '12px');
+  await expect(homeCard.locator('..')).toHaveCSS('row-gap', '12px');
+
+  await page.getByRole('tab', { name: 'Каталог' }).click();
+  const catalogCard = page.getByText('Старт-ИИ', { exact: true }).locator('..');
+  await expect(catalogCard).toHaveCSS('padding-top', '12px');
+  await expect(catalogCard.locator('..')).toHaveCSS('row-gap', '12px');
+
+  await page.getByRole('tab', { name: 'Источники' }).click();
+  const sourceCard = page.locator('article[aria-label="Impact Hub Moscow"]');
+  await expect(sourceCard).toHaveCSS('padding-top', '12px');
+  await expect(sourceCard.locator('..')).toHaveCSS('row-gap', '12px');
+});
+
 test('mobile layout has no horizontal scroll', async ({ page }, testInfo) => {
   test.skip(testInfo.project.name !== 'mobile', 'Responsive overflow coverage runs only in the mobile project.');
 

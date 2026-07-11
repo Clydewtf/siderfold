@@ -276,13 +276,14 @@ export function ProgramsTab({
         </div>
       </section>
 
-      <section className="mt-8 grid gap-4 lg:grid-cols-2">
+      <section data-density-grid className="mt-8 grid gap-4 lg:grid-cols-2">
         {visible.map((program) => {
           const source = sourceById.get(program.sourceId);
           return (
             <article
               key={program.id}
               data-motion-card
+              data-density-card
               className="group overflow-hidden rounded-lg border border-ink/10 bg-white/80 p-5 shadow-sm transition hover:-translate-y-1"
             >
               <div className="flex flex-wrap items-center gap-2">

@@ -33,8 +33,12 @@
   background-color: rgb(10 12 15);
 }
 
-:root[data-density='compact'] [data-motion-card] {
-  padding: 1rem;
+:root[data-density='compact'] [data-density-grid] {
+  gap: 0.75rem;
+}
+
+:root[data-density='compact'] [data-density-card] {
+  padding: 0.75rem;
 }
 
 :root[data-reduced-motion='true'] *,

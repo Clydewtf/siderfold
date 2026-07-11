@@ -69,8 +69,8 @@ export function HomeTab({
         <AnalyticsWidgets analytics={analytics} />
       </section>
 
-      <section className="grid grid-flow-dense gap-4 py-20 md:grid-cols-6">
-        <article data-motion-card className="rounded-lg border border-ink/10 bg-white/75 p-6 shadow-sm md:col-span-3 md:row-span-2">
+      <section data-density-grid className="grid grid-flow-dense gap-4 py-20 md:grid-cols-6">
+        <article data-motion-card data-density-card className="rounded-lg border border-ink/10 bg-white/75 p-6 shadow-sm md:col-span-3 md:row-span-2">
           <Database className="h-6 w-6 text-cobalt" aria-hidden="true" />
           <h2 className="mt-8 text-3xl font-semibold">Что внутри</h2>
           <p className="mt-4 text-sm leading-6 text-graphite">
@@ -82,13 +82,13 @@ export function HomeTab({
             ))}
           </div>
         </article>
-        <article data-motion-card className="rounded-lg border border-ink/10 bg-moss p-6 text-white md:col-span-3">
+        <article data-motion-card data-density-card className="rounded-lg border border-ink/10 bg-moss p-6 text-white md:col-span-3">
           <h2 className="text-2xl font-semibold">Финансирование видно сразу</h2>
           <p className="mt-3 text-sm leading-6 text-white/80">
             Доля программ с указанной суммой: {Math.round(analytics.fundedShare * 100)}%.
           </p>
         </article>
-        <article data-motion-card className="rounded-lg border border-ink/10 bg-white/75 p-6 md:col-span-3">
+        <article data-motion-card data-density-card className="rounded-lg border border-ink/10 bg-white/75 p-6 md:col-span-3">
           <h2 className="text-2xl font-semibold">Дедлайны не теряются</h2>
           <p className="mt-3 text-sm leading-6 text-graphite">
             Ближайшие сроки автоматически считаются из тех же данных, что и каталог.
@@ -107,9 +107,9 @@ export function HomeTab({
             </p>
           </div>
         </div>
-        <div className="mt-8 grid gap-4 md:grid-cols-2">
+        <div data-density-grid className="mt-8 grid gap-4 md:grid-cols-2">
           {featured.map((program) => (
-            <article key={program.id} data-motion-card className="group overflow-hidden rounded-lg border border-ink/10 bg-white/80 p-5 shadow-sm transition hover:-translate-y-1">
+            <article key={program.id} data-motion-card data-density-card className="group overflow-hidden rounded-lg border border-ink/10 bg-white/80 p-5 shadow-sm transition hover:-translate-y-1">
               <div className="flex flex-wrap gap-2">
                 <Tag>{program.supportType}</Tag>
                 <Tag>{formatDeadline(program.deadline)}</Tag>

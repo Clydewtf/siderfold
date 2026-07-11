@@ -174,9 +174,9 @@ function EntityList({ title, items }: { title: string; items: readonly string[] 
     <section className="mt-10">
       <h2 className="text-2xl font-semibold">{title}</h2>
       {items.length > 0 ? (
-        <ul className="mt-4 grid gap-3 md:grid-cols-2">
+        <ul data-density-grid className="mt-4 grid gap-3 md:grid-cols-2">
           {items.map((item) => (
-            <li key={item} className="rounded-lg border border-ink/10 bg-white/70 p-4">{item}</li>
+            <li key={item} data-density-card className="rounded-lg border border-ink/10 bg-white/70 p-4">{item}</li>
           ))}
         </ul>
       ) : (

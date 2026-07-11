@@ -4,7 +4,7 @@ import { MetricTile } from './ui';
 
 export function AnalyticsWidgets({ analytics }: { analytics: AnalyticsSummary }) {
   return (
-    <div data-motion-card className="grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
+    <div data-motion-card data-density-grid className="grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
       <MetricTile label="Программ" value={analytics.totalPrograms} hint="в тестовой базе" />
       <MetricTile label="Источников" value={analytics.totalSources} hint="фондов и платформ" />
       <MetricTile label="Актуальных" value={analytics.activePrograms} hint="открыты или постоянный набор" />

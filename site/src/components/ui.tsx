@@ -12,7 +12,7 @@ export function Tag({ children }: { children: ReactNode }) {
 
 export function MetricTile({ label, value, hint }: { label: string; value: ReactNode; hint?: string }) {
   return (
-    <div className="rounded-lg border border-ink/10 bg-white/70 p-4 shadow-sm">
+    <div data-density-card className="rounded-lg border border-ink/10 bg-white/70 p-4 shadow-sm">
       <p className="text-xs font-medium uppercase tracking-[0.12em] text-graphite/65">{label}</p>
       <div className="mt-2 text-2xl font-semibold text-ink">{value}</div>
       {hint ? <p className="mt-1 text-sm text-graphite/70">{hint}</p> : null}

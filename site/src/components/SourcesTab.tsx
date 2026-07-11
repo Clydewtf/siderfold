@@ -86,7 +86,7 @@ export function SourcesTab({
       </div>
 
       <div className="mt-10 grid gap-6 lg:grid-cols-[1fr_420px] lg:items-start">
-        <div className="grid gap-4 md:grid-cols-2">
+        <div data-density-grid className="grid gap-4 md:grid-cols-2">
           {filtered.map((source) => {
             const isFavorite = favoriteSourceIds.includes(source.id);
 
@@ -96,6 +96,7 @@ export function SourcesTab({
                 aria-label={source.name}
                 data-testid={`source-card-${source.id}`}
                 data-motion-card
+                data-density-card
                 className={`group flex h-full flex-col overflow-hidden rounded-lg border p-5 shadow-sm transition ${
                   selected?.id === source.id ? 'border-cobalt bg-cobalt/5 ring-2 ring-cobalt/20' : 'border-ink/10 bg-white/80 hover:border-cobalt/40'
                 }`}

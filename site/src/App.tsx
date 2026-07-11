@@ -19,7 +19,7 @@ function AppContent() {
     ? sources.find((source) => source.id === selectedProgram.sourceId) ?? null
     : null;
 
-  useGsapEntrance(rootRef, state.activeTab);
+  useGsapEntrance(rootRef, state.activeTab, state.display.reduceMotion);
 
   return (
     <AppShell activeTab={state.activeTab} onTabChange={actions.navigate}>

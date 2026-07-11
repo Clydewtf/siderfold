@@ -13,8 +13,8 @@ export function MiniAnalyticsPanel({ analytics }: { analytics: AnalyticsSummary 
           Виджеты считаются из тех же seed-данных, что и карточки каталога. Это проверяет целостность MVP без отдельной BI-системы.
         </p>
       </div>
-      <div className="grid gap-4">
-        <article data-motion-card className="rounded-lg border border-ink/10 bg-white/80 p-5 shadow-sm">
+      <div data-density-grid className="grid gap-4">
+        <article data-motion-card data-density-card className="rounded-lg border border-ink/10 bg-white/80 p-5 shadow-sm">
           <h3 className="text-lg font-semibold">Распределение по источникам</h3>
           <div className="mt-4 space-y-3">
             {analytics.bySource.map((item) => (
@@ -30,7 +30,7 @@ export function MiniAnalyticsPanel({ analytics }: { analytics: AnalyticsSummary 
             ))}
           </div>
         </article>
-        <article data-motion-card className="rounded-lg border border-ink/10 bg-white/80 p-5 shadow-sm">
+        <article data-motion-card data-density-card className="rounded-lg border border-ink/10 bg-white/80 p-5 shadow-sm">
           <h3 className="text-lg font-semibold">Распределение по типам поддержки</h3>
           <div className="mt-4 space-y-3">
             {analytics.bySupportType.map((item) => (
@@ -46,7 +46,7 @@ export function MiniAnalyticsPanel({ analytics }: { analytics: AnalyticsSummary 
             ))}
           </div>
         </article>
-        <article data-motion-card className="rounded-lg border border-ink/10 bg-ink p-5 text-white shadow-sm">
+        <article data-motion-card data-density-card className="rounded-lg border border-ink/10 bg-ink p-5 text-white shadow-sm">
           <h3 className="text-lg font-semibold">Ближайшие дедлайны</h3>
           <div className="mt-4 space-y-3">
             {analytics.nearestDeadlines.map((item) => (

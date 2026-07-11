@@ -5,11 +5,27 @@ import type { RefObject } from 'react';
 
 gsap.registerPlugin(ScrollTrigger, useGSAP);
 
-export function useGsapEntrance(scope: RefObject<HTMLElement | null>, activeKey: string) {
+export function useGsapEntrance(
+  scope: RefObject<HTMLElement | null>,
+  activeKey: string,
+  reduceMotion: boolean
+) {
   useGSAP(
     () => {
       const scopeElement = scope.current;
       if (!scopeElement) {
+        return;
+      }
+
+      if (reduceMotion) {
+        const cards = gsap.utils.toArray<HTMLElement>(
+          scopeElement.querySelectorAll<HTMLElement>('[data-motion-card]')
+        );
+        const media = gsap.utils.toArray<HTMLElement>(
+          scopeElement.querySelectorAll<HTMLElement>('[data-motion-media]')
+        );
+        gsap.set(cards, { autoAlpha: 1, y: 0, scale: 1 });
+        gsap.set(media, { opacity: 1, scale: 1 });
         return;
       }
 
@@ -95,6 +111,6 @@ export function useGsapEntrance(scope: RefObject<HTMLElement | null>, activeKey:
 
       return () => mediaQuery.revert();
     },
-    { scope, dependencies: [activeKey], revertOnUpdate: true }
+    { scope, dependencies: [activeKey, reduceMotion], revertOnUpdate: true }
   );
 }
