@@ -145,6 +145,30 @@ describe('App navigation', () => {
     expect(favorite).toHaveAttribute('aria-pressed', 'true');
   });
 
+  it('restores local profile data after app remount', async () => {
+    const user = userEvent.setup();
+    const first = render(<App />);
+
+    await user.click(screen.getByRole('tab', { name: 'Каталог' }));
+    await user.click(screen.getByRole('button', { name: /Подробнее о программе Старт-ИИ/i }));
+    await user.click(screen.getByRole('button', { name: 'Добавить Старт-ИИ в избранное' }));
+    await user.click(screen.getByRole('button', { name: 'Закрыть детали' }));
+    await user.click(screen.getByRole('tab', { name: 'Источники' }));
+    await user.click(screen.getByRole('button', {
+      name: 'Добавить Фонд содействия инновациям в избранное'
+    }));
+    await user.click(screen.getByRole('tab', { name: 'Профиль' }));
+    await user.selectOptions(screen.getByLabelText('Тема интерфейса'), 'dark');
+    first.unmount();
+
+    render(<App />);
+    await user.click(screen.getByRole('tab', { name: 'Профиль' }));
+    expect(screen.getAllByText('Старт-ИИ').length).toBeGreaterThanOrEqual(2);
+    expect(screen.getByText('Фонд содействия инновациям')).toBeInTheDocument();
+    expect(screen.getByLabelText('Тема интерфейса')).toHaveValue('dark');
+    expect(document.documentElement).toHaveAttribute('data-theme', 'dark');
+  });
+
   it('shows requirements, documents, source, and external link in shared program details', async () => {
     const user = userEvent.setup();
     render(<App />);
