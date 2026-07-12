@@ -38,6 +38,9 @@ function AppContent() {
           <ProgramsTab
             sources={sources}
             programs={programs}
+            favoriteProgramIds={state.favoriteProgramIds}
+            showDataQuality={state.display.showDataQuality}
+            onToggleFavoriteProgram={actions.toggleFavoriteProgram}
             onOpenProgram={(program) => actions.openProgram(program.id)}
           />
         ) : null}

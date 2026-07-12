@@ -1,22 +1,15 @@
-import { ExternalLink, Search } from 'lucide-react';
+import { Search } from 'lucide-react';
 import { useEffect, useMemo, useState } from 'react';
 import { ScrollTrigger } from 'gsap/ScrollTrigger';
 import { filterPrograms, sortPrograms } from '../lib/catalog';
-import { formatDeadline, formatMoneyRub, isValidExternalUrl } from '../lib/format';
-import type {
-  Audience,
-  DeadlineFilter,
-  ProgramFilters,
-  ProgramSort,
-  ProgramStatus,
-  SupportProgram,
-  SupportSource,
-  SupportType,
-  Topic
-} from '../types';
-import { EmptyState, Tag } from './ui';
+import type { CoverageLevel, ProgramFilters as ProgramFiltersState, SupportProgram, SupportSource } from '../types';
+import { ProgramCard } from './ProgramCard';
+import { ProgramFilters, type FilterOptions } from './ProgramFilters';
+import { EmptyState } from './ui';
 
-const defaultFilters: ProgramFilters = {
+const coverageLevels: readonly CoverageLevel[] = ['federal', 'regional', 'municipal', 'private'];
+
+const defaultFilters: ProgramFiltersState = {
   query: '',
   region: 'Все регионы',
   coverageLevel: 'Все уровни',
@@ -34,99 +27,82 @@ const defaultFilters: ProgramFilters = {
   sort: 'deadline'
 };
 
-function getActiveFilterLabels(filters: ProgramFilters) {
-  const labels: string[] = [];
-  if (filters.query.trim()) labels.push(`Поиск: ${filters.query.trim()}`);
-  if (filters.topic !== 'Все тематики') labels.push(`Тематика: ${filters.topic}`);
-  if (filters.supportType !== 'Все типы') labels.push(`Тип: ${filters.supportType}`);
-  if (filters.audience !== 'Все аудитории') labels.push(`Аудитория: ${filters.audience}`);
-  if (filters.status !== 'Все статусы') labels.push(`Статус: ${filters.status}`);
-  if (filters.deadline !== 'all') {
-    const labelsByDeadline: Record<DeadlineFilter, string> = {
-      all: 'Все дедлайны',
-      withDeadline: 'С дедлайном',
-      withoutDeadline: 'Без дедлайна',
-      next30: '30 дней',
-      next90: '90 дней'
-    };
-    labels.push(`Дедлайн: ${labelsByDeadline[filters.deadline]}`);
-  }
-  return labels;
-}
+export type ProgramsTabProps = {
+  sources: readonly SupportSource[];
+  programs: readonly SupportProgram[];
+  favoriteProgramIds: readonly string[];
+  showDataQuality: boolean;
+  onToggleFavoriteProgram: (programId: string) => void;
+  onOpenProgram: (program: SupportProgram) => void;
+};
 
-function hasActiveFilters(filters: ProgramFilters) {
-  return getActiveFilterLabels(filters).length > 0;
+function values<T>(items: readonly T[], compare: (a: T, b: T) => number): T[] {
+  return Array.from(new Set(items)).sort(compare);
 }
 
 export function ProgramsTab({
   sources,
   programs,
+  favoriteProgramIds,
+  showDataQuality,
+  onToggleFavoriteProgram,
   onOpenProgram
-}: {
-  sources: readonly SupportSource[];
-  programs: readonly SupportProgram[];
-  onOpenProgram: (program: SupportProgram) => void;
-}) {
-  const [filters, setFilters] = useState<ProgramFilters>(defaultFilters);
-  const [filtersOpen, setFiltersOpen] = useState(false);
+}: ProgramsTabProps) {
+  const [filters, setFilters] = useState<ProgramFiltersState>(defaultFilters);
   const [isDesktopFiltersOpen, setIsDesktopFiltersOpen] = useState(false);
-
   const sourceById = useMemo(() => new Map(sources.map((source) => [source.id, source])), [sources]);
-  const topics = useMemo(
-    () => Array.from(new Set(programs.flatMap((program) => program.topics))).sort((a, b) => a.localeCompare(b, 'ru')),
-    [programs]
+  const options = useMemo<FilterOptions>(
+    () => ({
+      regions: values(programs.flatMap((program) => program.regions), (a, b) => a.localeCompare(b, 'ru')),
+      coverageLevels,
+      launchYears: values(programs.map((program) => program.launchYear), (a, b) => b - a),
+      statuses: values(programs.map((program) => program.status), (a, b) => a.localeCompare(b, 'ru')),
+      topics: values(programs.flatMap((program) => program.topics), (a, b) => a.localeCompare(b, 'ru')),
+      supportTypes: values(programs.map((program) => program.supportType), (a, b) => a.localeCompare(b, 'ru')),
+      audiences: values(programs.flatMap((program) => program.audience), (a, b) => a.localeCompare(b, 'ru')),
+      sources
+    }),
+    [programs, sources]
   );
-  const supportTypes = useMemo(
-    () => Array.from(new Set(programs.map((program) => program.supportType))).sort((a, b) => a.localeCompare(b, 'ru')),
-    [programs]
-  );
-  const audiences = useMemo(
-    () => Array.from(new Set(programs.flatMap((program) => program.audience))).sort((a, b) => a.localeCompare(b, 'ru')),
-    [programs]
-  );
-  const statuses = useMemo(
-    () => Array.from(new Set(programs.map((program) => program.status))).sort((a, b) => a.localeCompare(b, 'ru')),
-    [programs]
-  );
-
   const visible = useMemo(
     () => sortPrograms(filterPrograms(programs, sources, filters), sources, filters.sort, filters.query),
     [filters, programs, sources]
   );
-  const activeFilterLabels = getActiveFilterLabels(filters);
-  const filtersAreActive = hasActiveFilters(filters);
-  const resetFilters = () => setFilters((current) => ({ ...defaultFilters, sort: current.sort }));
+
+  const updateFilters = (patch: Partial<ProgramFiltersState>) => {
+    setFilters((current) => {
+      const next = { ...current, ...patch };
+      if ('query' in patch) {
+        const hasQuery = patch.query?.trim().length !== 0;
+        if (hasQuery && current.query.trim().length === 0 && current.sort === 'deadline') next.sort = 'relevance';
+        if (!hasQuery && current.sort === 'relevance') next.sort = 'deadline';
+      }
+      return next;
+    });
+  };
+
+  const resetFilters = () => setFilters((current) => ({
+    ...defaultFilters,
+    sort: current.sort === 'relevance' ? 'deadline' : current.sort
+  }));
 
   useEffect(() => {
     const frame = window.requestAnimationFrame(() => ScrollTrigger.refresh());
-
     return () => window.cancelAnimationFrame(frame);
   }, [filters, visible.length]);
 
   useEffect(() => {
     if (typeof window.matchMedia !== 'function') return;
-
     const mediaQuery = window.matchMedia('(min-width: 1024px)');
     const updateDesktopState = () => setIsDesktopFiltersOpen(mediaQuery.matches);
 
     updateDesktopState();
-    if (mediaQuery.addEventListener) {
-      mediaQuery.addEventListener('change', updateDesktopState);
-    } else {
-      mediaQuery.addListener?.(updateDesktopState);
-    }
-
-    return () => {
-      if (mediaQuery.removeEventListener) {
-        mediaQuery.removeEventListener('change', updateDesktopState);
-      } else {
-        mediaQuery.removeListener?.(updateDesktopState);
-      }
-    };
+    mediaQuery.addEventListener?.('change', updateDesktopState) ?? mediaQuery.addListener?.(updateDesktopState);
+    return () => mediaQuery.removeEventListener?.('change', updateDesktopState) ?? mediaQuery.removeListener?.(updateDesktopState);
   }, []);
 
   return (
-    <div className="mx-auto max-w-7xl px-4 py-12 sm:px-6 lg:px-8">
+    <div className="mx-auto max-w-7xl overflow-x-hidden px-4 py-12 sm:px-6 lg:px-8">
       <div className="flex flex-col gap-5 lg:flex-row lg:items-end lg:justify-between">
         <div>
           <h1 className="text-4xl font-semibold">Каталог программ</h1>
@@ -137,228 +113,42 @@ export function ProgramsTab({
         <p className="rounded-full border border-ink/10 bg-white/70 px-4 py-2 text-sm font-semibold text-graphite">
           Найдено: {visible.length}
         </p>
-        <p role="status" aria-live="polite" className="sr-only">
-          Найдено программ: {visible.length}
-        </p>
+        <p role="status" aria-live="polite" className="sr-only">Найдено программ: {visible.length}</p>
       </div>
 
       <section className="mt-8">
         <label className="grid gap-1 text-sm font-medium text-graphite">
           Поиск
           <span className="relative">
-            <Search
-              className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-graphite/55"
-              aria-hidden="true"
-            />
+            <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-graphite/55" aria-hidden="true" />
             <input
               value={filters.query}
-              onChange={(event) => setFilters((current) => ({ ...current, query: event.target.value }))}
+              onChange={(event) => updateFilters({ query: event.target.value })}
               className="w-full rounded-lg border border-ink/10 bg-white py-2 pl-9 pr-20 text-ink"
               placeholder="Название или описание"
             />
-            {filters.query ? (
-              <button
-                type="button"
-                onClick={() => setFilters((current) => ({ ...current, query: '' }))}
-                aria-label="Очистить поиск"
-                className="absolute right-2 top-1/2 -translate-y-1/2 rounded-md px-2 py-1 text-xs font-semibold text-graphite hover:bg-ink/5"
-              >
-                Очистить
-              </button>
-            ) : null}
+            {filters.query ? <button type="button" onClick={() => updateFilters({ query: '' })} aria-label="Очистить поиск" className="absolute right-2 top-1/2 -translate-y-1/2 rounded-md px-2 py-1 text-xs font-semibold text-graphite hover:bg-ink/5">Очистить</button> : null}
           </span>
         </label>
-
-        <details
-          open={isDesktopFiltersOpen || filtersOpen}
-          onToggle={(event) => {
-            if (!isDesktopFiltersOpen) setFiltersOpen(event.currentTarget.open);
-          }}
-          className="mt-3 rounded-lg border border-ink/10 bg-white/70 p-4 shadow-sm"
-        >
-          <summary className="cursor-pointer text-sm font-semibold text-ink lg:hidden">Фильтры</summary>
-          <div className="mt-4 grid gap-3 lg:mt-0 lg:grid-cols-[repeat(5,1fr)]">
-            <label className="grid gap-1 text-sm font-medium text-graphite">
-              Тематика
-              <select
-                value={filters.topic}
-                onChange={(event) => setFilters((current) => ({ ...current, topic: event.target.value as Topic | 'Все тематики' }))}
-                className="rounded-lg border border-ink/10 bg-white px-3 py-2 text-ink"
-              >
-                <option>Все тематики</option>
-                {topics.map((item) => (
-                  <option key={item}>{item}</option>
-                ))}
-              </select>
-            </label>
-            <label className="grid gap-1 text-sm font-medium text-graphite">
-              Тип поддержки
-              <select
-                value={filters.supportType}
-                onChange={(event) =>
-                  setFilters((current) => ({ ...current, supportType: event.target.value as SupportType | 'Все типы' }))
-                }
-                className="rounded-lg border border-ink/10 bg-white px-3 py-2 text-ink"
-              >
-                <option>Все типы</option>
-                {supportTypes.map((item) => (
-                  <option key={item}>{item}</option>
-                ))}
-              </select>
-            </label>
-            <label className="grid gap-1 text-sm font-medium text-graphite">
-              Аудитория
-              <select
-                value={filters.audience}
-                onChange={(event) =>
-                  setFilters((current) => ({ ...current, audience: event.target.value as Audience | 'Все аудитории' }))
-                }
-                className="rounded-lg border border-ink/10 bg-white px-3 py-2 text-ink"
-              >
-                <option>Все аудитории</option>
-                {audiences.map((item) => (
-                  <option key={item}>{item}</option>
-                ))}
-              </select>
-            </label>
-            <label className="grid gap-1 text-sm font-medium text-graphite">
-              Статус
-              <select
-                value={filters.status}
-                onChange={(event) =>
-                  setFilters((current) => ({ ...current, status: event.target.value as ProgramStatus | 'Все статусы' }))
-                }
-                className="rounded-lg border border-ink/10 bg-white px-3 py-2 text-ink"
-              >
-                <option>Все статусы</option>
-                {statuses.map((item) => (
-                  <option key={item}>{item}</option>
-                ))}
-              </select>
-            </label>
-            <label className="grid gap-1 text-sm font-medium text-graphite">
-              Сортировка
-              <select
-                value={filters.sort}
-                onChange={(event) => setFilters((current) => ({ ...current, sort: event.target.value as ProgramSort }))}
-                className="rounded-lg border border-ink/10 bg-white px-3 py-2 text-ink"
-              >
-                <option value="deadline">Ближайший дедлайн</option>
-                <option value="funding">Максимальная сумма</option>
-                <option value="newest">Новизна</option>
-                <option value="source">Источник</option>
-              </select>
-            </label>
-          </div>
-          <section role="group" aria-label="Дедлайн" className="mt-3 flex flex-wrap gap-3">
-            {[
-              ['all', 'Все дедлайны'],
-              ['withDeadline', 'С дедлайном'],
-              ['withoutDeadline', 'Без дедлайна'],
-              ['next30', '30 дней'],
-              ['next90', '90 дней']
-            ].map(([value, label]) => (
-              <button
-                key={value}
-                type="button"
-                aria-pressed={filters.deadline === value}
-                onClick={() => setFilters((current) => ({ ...current, deadline: value as DeadlineFilter }))}
-                className={`rounded-full border px-4 py-2 text-sm font-semibold transition ${
-                  filters.deadline === value ? 'border-ink bg-ink text-white' : 'border-ink/10 bg-white/70 text-graphite hover:bg-white'
-                }`}
-              >
-                {label}
-              </button>
-            ))}
-          </section>
-        </details>
-
-        <div role="group" aria-label="Активные фильтры" className="mt-4 flex flex-wrap items-center gap-2">
-          {activeFilterLabels.map((label) => (
-            <span key={label} className="rounded-full border border-cobalt/20 bg-cobalt/10 px-3 py-1 text-xs font-semibold text-cobalt">
-              {label}
-            </span>
-          ))}
-          {filtersAreActive ? (
-            <button type="button" onClick={resetFilters} className="text-sm font-semibold text-cobalt">
-              Сбросить фильтры
-            </button>
-          ) : null}
-        </div>
+        <ProgramFilters filters={filters} options={options} isDesktopOpen={isDesktopFiltersOpen} onChange={updateFilters} onReset={resetFilters} />
       </section>
 
       <section data-density-grid className="mt-8 grid gap-4 lg:grid-cols-2">
-        {visible.map((program) => {
-          const source = sourceById.get(program.sourceId);
-          return (
-            <article
-              key={program.id}
-              data-motion-card
-              data-density-card
-              className="group overflow-hidden rounded-lg border border-ink/10 bg-white/80 p-5 shadow-sm transition hover:-translate-y-1"
-            >
-              <div className="flex flex-wrap items-center gap-2">
-                <Tag>{program.status}</Tag>
-                <Tag>{formatDeadline(program.deadline)}</Tag>
-                <Tag>{program.supportType}</Tag>
-              </div>
-              <h2 className="mt-5 text-xl font-semibold">{program.title}</h2>
-              <p className="mt-1 text-sm font-medium text-cobalt">{source?.name ?? 'Источник не найден'}</p>
-              <p className="mt-3 text-sm leading-6 text-graphite">{program.description}</p>
-              <div className="mt-4 flex flex-wrap gap-2">
-                {program.topics.map((topic) => (
-                  <Tag key={topic}>{topic}</Tag>
-                ))}
-              </div>
-              <div className="mt-5 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-                <span className="text-sm font-semibold">{formatMoneyRub(program.fundingAmountRub)}</span>
-                <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
-                  <button
-                    type="button"
-                    onClick={() => onOpenProgram(program)}
-                    aria-label={`Подробнее о программе ${program.title}`}
-                    className="inline-flex min-h-11 items-center justify-center rounded-lg bg-ink px-4 py-2 text-sm font-semibold text-white transition hover:bg-ink/85 focus:outline-none focus:ring-2 focus:ring-cobalt focus:ring-offset-2"
-                  >
-                    Подробнее
-                  </button>
-                  {isValidExternalUrl(program.sourceUrl) ? (
-                    <a
-                      href={program.sourceUrl}
-                      target="_blank"
-                      rel="noreferrer"
-                      className="inline-flex min-h-11 items-center justify-center rounded-lg border border-ink/10 px-4 py-2 text-sm font-semibold text-graphite transition hover:bg-white"
-                    >
-                      Первоисточник <ExternalLink className="ml-2 h-4 w-4" aria-hidden="true" />
-                    </a>
-                  ) : null}
-                </div>
-              </div>
-            </article>
-          );
-        })}
+        {visible.map((program) => (
+          <ProgramCard
+            key={program.id}
+            program={program}
+            source={sourceById.get(program.sourceId) ?? null}
+            isFavorite={favoriteProgramIds.includes(program.id)}
+            showDataQuality={showDataQuality}
+            onToggleFavorite={() => onToggleFavoriteProgram(program.id)}
+            onOpen={() => onOpenProgram(program)}
+          />
+        ))}
       </section>
 
-      {visible.length === 0 ? (
-        <div className="mt-8">
-          <EmptyState title="Программы не найдены" description="Измените поиск или фильтры, чтобы вернуть результаты из seed-базы.">
-            {filtersAreActive ? (
-              <button type="button" onClick={resetFilters} className="rounded-lg bg-ink px-4 py-2 text-sm font-semibold text-white">
-                Сбросить фильтры
-              </button>
-            ) : null}
-            {filters.query ? (
-              <button
-                type="button"
-                onClick={() => setFilters((current) => ({ ...current, query: '' }))}
-                className="rounded-lg border border-ink/10 px-4 py-2 text-sm font-semibold text-ink"
-              >
-                Очистить поиск
-              </button>
-            ) : null}
-          </EmptyState>
-        </div>
-      ) : null}
-
+      {programs.length === 0 ? <div className="mt-8"><EmptyState title="Каталог пока пуст" description="Добавьте программы в seed-данные, чтобы начать поиск." /></div> : null}
+      {programs.length > 0 && visible.length === 0 ? <div className="mt-8"><EmptyState title="По вашему запросу ничего не найдено" description="Измените поиск или фильтры, чтобы вернуть результаты из seed-базы. Используйте действие «Сбросить фильтры» выше, чтобы начать заново." /></div> : null}
     </div>
   );
 }

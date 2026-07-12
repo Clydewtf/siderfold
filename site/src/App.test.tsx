@@ -151,7 +151,9 @@ describe('App navigation', () => {
 
     await user.click(screen.getByRole('tab', { name: 'Каталог' }));
     await user.click(screen.getByRole('button', { name: /Подробнее о программе Старт-ИИ/i }));
-    await user.click(screen.getByRole('button', { name: 'Добавить Старт-ИИ в избранное' }));
+    await user.click(within(screen.getByRole('dialog', { name: 'Старт-ИИ' })).getByRole('button', {
+      name: 'Добавить Старт-ИИ в избранное'
+    }));
     await user.click(screen.getByRole('button', { name: 'Закрыть детали' }));
     await user.click(screen.getByRole('tab', { name: 'Источники' }));
     await user.click(screen.getByRole('button', {

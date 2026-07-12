@@ -1,8 +1,23 @@
+import type { ComponentProps } from 'react';
 import { render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { describe, expect, it, vi } from 'vitest';
 import { programs, sources } from '../data/seed';
 import { ProgramsTab } from './ProgramsTab';
+
+function renderProgramsTab(overrides: Partial<ComponentProps<typeof ProgramsTab>> = {}) {
+  const props: ComponentProps<typeof ProgramsTab> = {
+    sources,
+    programs,
+    favoriteProgramIds: [],
+    showDataQuality: true,
+    onToggleFavoriteProgram: vi.fn(),
+    onOpenProgram: vi.fn(),
+    ...overrides
+  };
+
+  return { ...render(<ProgramsTab {...props} />), props };
+}
 
 function getRenderedProgramTitles() {
   return screen.getAllByRole('article').map((article) => within(article).getByRole('heading', { level: 2 }).textContent);
@@ -35,7 +50,7 @@ function mockMatchMedia(matches: boolean) {
 describe('ProgramsTab', () => {
   it('searches, filters, and sorts programs', async () => {
     const user = userEvent.setup();
-    render(<ProgramsTab sources={sources} programs={programs} onOpenProgram={vi.fn()} />);
+    renderProgramsTab();
 
     await user.type(screen.getByLabelText('Поиск'), 'ИИ');
     expect(screen.getByText('Найдено: 5')).toBeInTheDocument();
@@ -53,7 +68,7 @@ describe('ProgramsTab', () => {
 
   it('sorts rendered program cards by funding amount', async () => {
     const user = userEvent.setup();
-    render(<ProgramsTab sources={sources} programs={programs} onOpenProgram={vi.fn()} />);
+    renderProgramsTab();
 
     await user.selectOptions(screen.getByLabelText('Сортировка'), 'funding');
 
@@ -67,15 +82,15 @@ describe('ProgramsTab', () => {
 
   it('shows empty state after filters with no results', async () => {
     const user = userEvent.setup();
-    render(<ProgramsTab sources={sources} programs={programs} onOpenProgram={vi.fn()} />);
+    renderProgramsTab();
 
     await user.type(screen.getByLabelText('Поиск'), 'несуществующая программа');
-    expect(screen.getByText('Программы не найдены')).toBeInTheDocument();
+    expect(screen.getByText('По вашему запросу ничего не найдено')).toBeInTheDocument();
   });
 
   it('shows active filter chips and resets filters', async () => {
     const user = userEvent.setup();
-    render(<ProgramsTab sources={sources} programs={programs} onOpenProgram={vi.fn()} />);
+    renderProgramsTab();
 
     await user.selectOptions(screen.getByLabelText('Сортировка'), 'funding');
     await user.type(screen.getByLabelText('Поиск'), 'ИИ');
@@ -98,7 +113,7 @@ describe('ProgramsTab', () => {
     const restoreMatchMedia = mockMatchMedia(true);
 
     try {
-      render(<ProgramsTab sources={sources} programs={programs} onOpenProgram={vi.fn()} />);
+      renderProgramsTab();
 
       const details = screen.getByText('Фильтры').closest('details');
 
@@ -113,7 +128,7 @@ describe('ProgramsTab', () => {
   it('delegates opening program details to the app shell', async () => {
     const user = userEvent.setup();
     const onOpenProgram = vi.fn();
-    render(<ProgramsTab sources={sources} programs={programs} onOpenProgram={onOpenProgram} />);
+    renderProgramsTab({ onOpenProgram });
 
     await user.click(screen.getByRole('button', { name: /Подробнее о программе Старт-ИИ/i }));
     expect(onOpenProgram).toHaveBeenCalledWith(
@@ -124,7 +139,7 @@ describe('ProgramsTab', () => {
 
   it('exposes deadline filter buttons as a pressed group', async () => {
     const user = userEvent.setup();
-    render(<ProgramsTab sources={sources} programs={programs} onOpenProgram={vi.fn()} />);
+    renderProgramsTab();
 
     const deadlineGroup = screen.getByRole('group', { name: 'Дедлайн' });
     const allDeadlines = within(deadlineGroup).getByRole('button', { name: 'Все дедлайны' });
@@ -136,5 +151,97 @@ describe('ProgramsTab', () => {
     await user.click(next30);
     expect(allDeadlines).toHaveAttribute('aria-pressed', 'false');
     expect(next30).toHaveAttribute('aria-pressed', 'true');
+  });
+
+  it('filters by region, level, launch year, active period, and source', async () => {
+    const user = userEvent.setup();
+    renderProgramsTab();
+
+    await user.selectOptions(screen.getByLabelText('Регион программы'), 'Москва');
+    await user.selectOptions(screen.getByLabelText('Уровень программы'), 'regional');
+    await user.selectOptions(screen.getByLabelText('Год запуска'), '2021');
+    await user.selectOptions(screen.getByLabelText('Период действия'), 'activeNow');
+    await user.selectOptions(screen.getByLabelText('Источник программы'), 'impact-hub');
+
+    expect(getRenderedProgramTitles()).toEqual(['Eco Impact Lab']);
+  });
+
+  it('filters by funding availability and amount interval', async () => {
+    const user = userEvent.setup();
+    renderProgramsTab();
+
+    await user.selectOptions(screen.getByLabelText('Наличие суммы'), 'withFunding');
+    await user.clear(screen.getByLabelText('Сумма от, ₽'));
+    await user.type(screen.getByLabelText('Сумма от, ₽'), '3500000');
+    await user.clear(screen.getByLabelText('Сумма до, ₽'));
+    await user.type(screen.getByLabelText('Сумма до, ₽'), '4500000');
+
+    expect(screen.getByRole('heading', { name: 'Старт-ИИ' })).toBeInTheDocument();
+    expect(screen.queryByRole('heading', { name: 'Eco Impact Lab' })).not.toBeInTheDocument();
+  });
+
+  it('offers relevance only for a non-empty query and restores deadline sorting when cleared', async () => {
+    const user = userEvent.setup();
+    renderProgramsTab();
+
+    expect(screen.queryByRole('option', { name: 'Релевантность' })).not.toBeInTheDocument();
+    await user.type(screen.getByLabelText('Поиск'), 'ИИ');
+    expect(screen.getByRole('option', { name: 'Релевантность' })).toBeInTheDocument();
+    expect(screen.getByLabelText('Сортировка')).toHaveValue('relevance');
+    await user.click(screen.getByRole('button', { name: 'Очистить поиск' }));
+    expect(screen.getByLabelText('Сортировка')).toHaveValue('deadline');
+  });
+
+  it('resets every filter while preserving an explicit non-relevance sort', async () => {
+    const user = userEvent.setup();
+    renderProgramsTab();
+    await user.selectOptions(screen.getByLabelText('Сортировка'), 'funding');
+    await user.selectOptions(screen.getByLabelText('Регион программы'), 'Москва');
+    await user.selectOptions(screen.getByLabelText('Наличие суммы'), 'withFunding');
+    await user.click(screen.getByRole('button', { name: 'Сбросить фильтры' }));
+
+    expect(screen.getByLabelText('Регион программы')).toHaveValue('Все регионы');
+    expect(screen.getByLabelText('Наличие суммы')).toHaveValue('all');
+    expect(screen.getByLabelText('Сортировка')).toHaveValue('funding');
+  });
+
+  it('shows mature program metadata without rendering every field', () => {
+    renderProgramsTab();
+    const card = screen.getByRole('article', { name: 'Старт-ИИ' });
+
+    expect(within(card).getByText('Федеральная')).toBeInTheDocument();
+    expect(within(card).getByText('Россия')).toBeInTheDocument();
+    expect(within(card).getByText('до 4 млн ₽')).toBeInTheDocument();
+    expect(within(card).getByText(/1 июня 2026/)).toBeInTheDocument();
+    expect(within(card).getByText('Обновлено 24 июня 2026')).toBeInTheDocument();
+  });
+
+  it('toggles a program favorite without opening the drawer', async () => {
+    const user = userEvent.setup();
+    const onToggleFavoriteProgram = vi.fn();
+    const onOpenProgram = vi.fn();
+    renderProgramsTab({
+      favoriteProgramIds: ['fasie-start-ai'],
+      onToggleFavoriteProgram,
+      onOpenProgram
+    });
+
+    const favorite = screen.getByRole('button', { name: 'Удалить Старт-ИИ из избранного' });
+    expect(favorite).toHaveAttribute('aria-pressed', 'true');
+    await user.click(favorite);
+    expect(onToggleFavoriteProgram).toHaveBeenCalledWith('fasie-start-ai');
+    expect(onOpenProgram).not.toHaveBeenCalled();
+  });
+
+  it('distinguishes an empty dataset from empty filtered results', async () => {
+    const user = userEvent.setup();
+    const view = renderProgramsTab({ programs: [] });
+    expect(screen.getByText('Каталог пока пуст')).toBeInTheDocument();
+
+    view.unmount();
+    renderProgramsTab();
+    await user.type(screen.getByLabelText('Поиск'), 'несуществующая программа');
+    expect(screen.getByText('По вашему запросу ничего не найдено')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Сбросить фильтры' })).toBeInTheDocument();
   });
 });
