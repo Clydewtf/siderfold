@@ -1,27 +1,34 @@
 import { expect, test } from '@playwright/test';
 
-test('tabs, search, filters, and drawer work on desktop', async ({ page }, testInfo) => {
+test('catalog and source workflow persists favorites and recent views on desktop', async ({ page }, testInfo) => {
   test.skip(testInfo.project.name !== 'desktop', 'Desktop workflow coverage runs only in the desktop project.');
-
   await page.goto('/');
-
-  await expect(page.getByRole('heading', { name: /Единая база программ поддержки/i })).toBeVisible();
-
-  await page.getByRole('tab', { name: 'Источники' }).click();
-  await expect(page.getByRole('heading', { name: 'Источники программ' })).toBeVisible();
-  await page.getByLabel('Тип источника').selectOption('Акселератор');
-  await expect(page.getByRole('article', { name: 'Impact Hub Moscow' })).toBeVisible();
 
   await page.getByRole('tab', { name: 'Каталог' }).click();
   await page.getByLabel('Поиск').fill('ИИ');
-  await expect(page.getByRole('heading', { name: 'Старт-ИИ' })).toBeVisible();
-  await page.getByLabel('Тип поддержки').selectOption('Акселерация');
-  await expect(page.getByRole('heading', { name: 'Индустриальный ИИ акселератор' })).toBeVisible();
-
-  await page.getByRole('button', { name: /Подробнее о программе Индустриальный ИИ акселератор/i }).click();
-  await expect(page.getByRole('dialog', { name: 'Индустриальный ИИ акселератор' })).toBeVisible();
+  await expect(page.getByLabel('Сортировка')).toHaveValue('relevance');
+  await page.getByLabel('Уровень программы').selectOption('federal');
+  await page.getByLabel('Наличие суммы').selectOption('withFunding');
+  await page.getByRole('button', { name: 'Добавить Старт-ИИ в избранное' }).click();
+  await page.getByRole('button', { name: 'Подробнее о программе Старт-ИИ' }).click();
+  await expect(page.getByRole('dialog', { name: 'Старт-ИИ' })).toContainText('Полнота данных');
   await page.getByRole('button', { name: 'Закрыть детали' }).click();
-  await expect(page.getByRole('dialog')).toHaveCount(0);
+
+  await page.getByRole('tab', { name: 'Источники' }).click();
+  await page.getByLabel('Уровень источника').selectOption('regional');
+  await page.getByRole('button', { name: /(?:Выбрать источник|Смотреть программы) Impact Hub Moscow/ }).click();
+  await page.getByRole('button', { name: 'Открыть программу Eco Impact Lab' }).first().click();
+  await expect(page.getByRole('dialog', { name: 'Eco Impact Lab' })).toBeVisible();
+  await page.getByRole('button', { name: 'Закрыть детали' }).click();
+
+  await page.getByRole('tab', { name: 'Профиль' }).click();
+  await expect(page.getByText('Старт-ИИ').first()).toBeVisible();
+  await expect(page.getByText('Eco Impact Lab')).toBeVisible();
+
+  await page.reload();
+  await page.getByRole('tab', { name: 'Профиль' }).click();
+  await expect(page.getByText('Старт-ИИ').first()).toBeVisible();
+  await expect(page.getByText('Eco Impact Lab')).toBeVisible();
 });
 
 test('five-section shell and local theme work on desktop', async ({ page }, testInfo) => {
@@ -86,13 +93,26 @@ test('mobile layout has no horizontal scroll', async ({ page }, testInfo) => {
   const overflowAfterCatalog = await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth);
   expect(overflowAfterCatalog).toBeLessThanOrEqual(1);
 
+  await page.getByText('Фильтры', { exact: true }).click();
+  await page.getByLabel('Регион программы').selectOption('Москва');
+  await expect.poll(async () => page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth))
+    .toBeLessThanOrEqual(1);
+
+  await page.getByRole('button', { name: 'Подробнее о программе Eco Impact Lab' }).click();
+  await expect.poll(async () => page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth))
+    .toBeLessThanOrEqual(1);
+  await page.getByRole('button', { name: 'Закрыть детали' }).click();
+
   await page.getByRole('tab', { name: 'Аналитика' }).click();
   const overflowAfterAnalytics = await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth);
   expect(overflowAfterAnalytics).toBeLessThanOrEqual(1);
 
   await page.getByRole('tab', { name: 'Источники' }).click();
-  const overflowAfterSources = await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth);
-  expect(overflowAfterSources).toBeLessThanOrEqual(1);
+  await page.getByLabel('Тип источника').selectOption('Акселератор');
+  await page.getByRole('button', { name: /(?:Выбрать источник|Смотреть программы) Impact Hub Moscow/ }).click();
+  await expect(page.getByText('Eco Impact Lab').first()).toBeVisible();
+  await expect.poll(async () => page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth))
+    .toBeLessThanOrEqual(1);
 
   await page.getByRole('tab', { name: 'Профиль' }).click();
   const overflowAfterProfile = await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth);
