@@ -58,6 +58,11 @@ describe('ProgramDrawer', () => {
 
     const close = screen.getByRole('button', { name: 'Закрыть детали' });
     expect(close).toHaveFocus();
+    const finalFocusableElement = screen.getByRole('link', { name: 'Документ 1' });
+    await user.keyboard('{Shift>}{Tab}{/Shift}');
+    expect(finalFocusableElement).toHaveFocus();
+    await user.keyboard('{Tab}');
+    expect(close).toHaveFocus();
     await user.click(screen.getByRole('button', { name: 'Добавить Старт-ИИ в избранное' }));
     expect(onToggleFavorite).toHaveBeenCalledOnce();
     await user.keyboard('{Escape}');
