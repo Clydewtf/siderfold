@@ -50,7 +50,9 @@ function AppContent() {
             sources={sources}
             programs={programs}
             favoriteSourceIds={state.favoriteSourceIds}
+            showDataQuality={state.display.showDataQuality}
             onToggleFavoriteSource={actions.toggleFavoriteSource}
+            onOpenProgram={(program) => actions.openProgram(program.id)}
           />
         ) : null}
         {state.activeTab === 'profile' ? <ProfileTab programs={programs} sources={sources} /> : null}
