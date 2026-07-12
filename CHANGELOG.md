@@ -2,6 +2,27 @@
 
 All notable project milestones are documented in this file.
 
+## v0.3.0 - 2026-07-12
+
+Catalog And Sources Upgrade.
+
+### Added
+
+- Extended catalog filters for region, program level, launch year, active period, funding availability and range, deadline, status, topic, audience, support type, and source.
+- Relevance-aware search and sorting across program, source, requirement, region, topic, and audience data.
+- Mature program cards and detail drawer with local favorites and recently viewed workflows.
+- Source filters and analytics-backed source cards with related program navigation.
+
+### Changed
+
+- Catalog and source screens now use the expanded data model and shared analytics calculations.
+- Empty and incomplete-data states distinguish an empty database from filters with no matches.
+
+### Notes
+
+- Favorites and recent views remain local to the current browser and device.
+- Source metrics are calculated from the current seed database; backend synchronization is not connected.
+
 ## v0.2.0 - 2026-07-10
 
 App Shell, Navigation And Local State.
