@@ -104,6 +104,20 @@ describe('SourcesTab', () => {
     expect(screen.getByRole('status')).toHaveTextContent('Выбран источник: Impact Hub Moscow');
   });
 
+  it('announces found source counts as filters change, including zero results', async () => {
+    const user = userEvent.setup();
+    renderSourcesTab();
+
+    const announcement = screen.getByText('Найдено 10 источников');
+    expect(announcement).toHaveAttribute('aria-live', 'polite');
+
+    await user.selectOptions(screen.getByLabelText('Тип источника'), 'Университет');
+    expect(screen.getByText('Найдено 1 источников')).toBeInTheDocument();
+
+    await user.selectOptions(screen.getByLabelText('Уровень источника'), 'regional');
+    expect(screen.getByText('Найдено 0 источников')).toBeInTheDocument();
+  });
+
   it('falls back to a filtered source when filters exclude the selected source', async () => {
     const user = userEvent.setup();
     renderSourcesTab();

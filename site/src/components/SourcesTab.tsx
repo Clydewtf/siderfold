@@ -64,6 +64,9 @@ export function SourcesTab({
       <p role="status" aria-live="polite" className="sr-only">
         {selectedAnnouncement}
       </p>
+      <p aria-live="polite" className="sr-only">
+        Найдено {filtered.length} источников
+      </p>
       <div className="flex flex-col gap-6">
         <div>
           <h1 className="text-4xl font-semibold">Источники программ</h1>
