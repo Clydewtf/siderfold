@@ -1,7 +1,14 @@
 import { ExternalLink, X } from 'lucide-react';
 import { useEffect, useRef, type KeyboardEvent } from 'react';
-import { isValidExternalUrl, formatDeadline, formatMoneyRub } from '../lib/format';
-import type { SupportProgram, SupportSource } from '../types';
+import {
+  formatActivePeriod,
+  formatCoverageLevel,
+  formatDeadline,
+  formatMoneyRub,
+  formatProgramFundingLabel,
+  isValidExternalUrl
+} from '../lib/format';
+import type { DataQualityField, SupportProgram, SupportSource } from '../types';
 import { Tag } from './ui';
 
 const focusableSelector = [
@@ -12,6 +19,24 @@ const focusableSelector = [
   'select:not([disabled])',
   '[tabindex]:not([tabindex="-1"])'
 ].join(',');
+
+const missingFieldLabels: Record<DataQualityField, string> = {
+  funding: 'сумма',
+  deadline: 'дедлайн',
+  regions: 'регионы',
+  source: 'источник',
+  updatedAt: 'дата обновления',
+  sourceUrl: 'первоисточник'
+};
+
+function Detail({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="min-w-0 rounded-lg border border-ink/10 bg-white/70 p-4">
+      <h4 className="text-sm font-semibold text-graphite">{label}</h4>
+      <p className="mt-2 break-words text-sm text-ink">{value}</p>
+    </div>
+  );
+}
 
 export function ProgramDrawer({
   program,
@@ -120,32 +145,80 @@ export function ProgramDrawer({
         <div className="mt-5 flex flex-wrap gap-2">
           <Tag>{program.status}</Tag>
           <Tag>{formatDeadline(program.deadline)}</Tag>
-          <Tag>{formatMoneyRub(program.fundingAmountRub)}</Tag>
+          <Tag>{formatProgramFundingLabel(program)}</Tag>
           <Tag>{program.supportType}</Tag>
+          <Tag>{formatCoverageLevel(program.coverageLevel)}</Tag>
         </div>
 
         <p className="mt-6 text-base leading-7 text-graphite">{program.description}</p>
 
-        <section className="mt-8">
-          <h3 className="text-lg font-semibold">Требования</h3>
-          <ul className="mt-3 space-y-2">
-            {program.requirements.map((requirement) => (
-              <li key={requirement} className="rounded-lg border border-ink/10 bg-white/70 p-3 text-sm text-graphite">
-                {requirement}
-              </li>
-            ))}
-          </ul>
+        <section aria-labelledby="program-overview" className="mt-8 grid gap-4 sm:grid-cols-2">
+          <h3 id="program-overview" className="sr-only">Основные параметры</h3>
+          <Detail label="Регионы" value={program.regions.length > 0 ? program.regions.join(', ') : 'Регион не указан'} />
+          <Detail label="Период действия" value={formatActivePeriod(program)} />
+          <Detail label="Год запуска" value={String(program.launchYear)} />
+          <Detail label="Обновлено" value={formatDeadline(program.updatedAt)} />
+          <Detail label="Аудитория" value={program.audience.length > 0 ? program.audience.join(', ') : 'Аудитория не указана'} />
+          <Detail label="Тематики" value={program.topics.length > 0 ? program.topics.join(', ') : 'Тематики не указаны'} />
         </section>
 
-        <section className="mt-8 grid gap-4 sm:grid-cols-2">
-          <div className="rounded-lg border border-ink/10 bg-white/70 p-4">
-            <h3 className="text-sm font-semibold text-graphite">Аудитория</h3>
-            <p className="mt-2 text-sm text-ink">{program.audience.join(', ')}</p>
+        <section className="mt-8">
+          <h3 className="text-lg font-semibold">Финансирование</h3>
+          <p className="mt-3 text-sm text-graphite">Указанная сумма: {formatProgramFundingLabel(program)}</p>
+          {(program.fundingMinRub !== null || program.fundingMaxRub !== null) && (
+            <div className="mt-3 grid gap-3 sm:grid-cols-2">
+              {program.fundingMinRub !== null && <Detail label="Минимум" value={formatMoneyRub(program.fundingMinRub)} />}
+              {program.fundingMaxRub !== null && <Detail label="Максимум" value={formatMoneyRub(program.fundingMaxRub)} />}
+            </div>
+          )}
+        </section>
+
+        <section className="mt-8">
+          <h3 className="text-lg font-semibold">Требования</h3>
+          {program.requirements.length > 0 ? (
+            <ul className="mt-3 space-y-2">
+              {program.requirements.map((requirement) => (
+                <li key={requirement} className="rounded-lg border border-ink/10 bg-white/70 p-3 text-sm text-graphite">
+                  {requirement}
+                </li>
+              ))}
+            </ul>
+          ) : (
+            <p className="mt-3 text-sm text-graphite">Требования не опубликованы.</p>
+          )}
+        </section>
+
+        <section className="mt-8">
+          <h3 className="text-lg font-semibold">Качество данных</h3>
+          <div className="mt-3 grid gap-3 sm:grid-cols-2">
+            <div className="min-w-0 rounded-lg border border-ink/10 bg-white/70 p-4 text-sm text-ink">
+              Полнота данных: {program.dataQuality.score}%
+            </div>
+            <Detail label="Уровень" value={program.dataQuality.level} />
+            <Detail label="Проверено" value={formatDeadline(program.dataQuality.checkedAt)} />
+            <Detail
+              label="Не хватает"
+              value={program.dataQuality.missingFields.length > 0
+                ? program.dataQuality.missingFields.map((field) => missingFieldLabels[field]).join(', ')
+                : 'Все ключевые поля заполнены'}
+            />
           </div>
-          <div className="rounded-lg border border-ink/10 bg-white/70 p-4">
-            <h3 className="text-sm font-semibold text-graphite">Тематики</h3>
-            <p className="mt-2 text-sm text-ink">{program.topics.join(', ')}</p>
-          </div>
+        </section>
+
+        <section className="mt-8">
+          <h3 className="text-lg font-semibold">Об источнике</h3>
+          {source ? (
+            <div className="mt-3 grid gap-3 sm:grid-cols-2">
+              <Detail label="Источник" value={`Источник: ${source.name}`} />
+              <Detail label="Тип" value={source.type} />
+              <Detail label="Охват" value={`Охват источника: ${formatCoverageLevel(source.coverageLevel)}`} />
+              <Detail label="Регион" value={`Регион источника: ${source.region}`} />
+              <Detail label="Проверено" value={formatDeadline(source.verifiedAt)} />
+              <Detail label="Доверие" value={source.trustNote} />
+            </div>
+          ) : (
+            <p className="mt-3 text-sm text-graphite">Данные источника недоступны в текущей базе.</p>
+          )}
         </section>
 
         <section className="mt-8 space-y-3">

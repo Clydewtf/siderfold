@@ -1,4 +1,4 @@
-import type { SupportProgram } from '../types';
+import type { CoverageLevel, SupportProgram } from '../types';
 
 const dateFormatter = new Intl.DateTimeFormat('ru-RU', {
   day: 'numeric',
@@ -6,9 +6,29 @@ const dateFormatter = new Intl.DateTimeFormat('ru-RU', {
   year: 'numeric'
 });
 
+const coverageLabels: Record<CoverageLevel, string> = {
+  federal: 'Федеральная',
+  regional: 'Региональная',
+  municipal: 'Муниципальная',
+  private: 'Частная'
+};
+
+function formatDate(value: string): string {
+  return dateFormatter.format(new Date(`${value}T00:00:00`)).replace(' г.', '');
+}
+
+export function formatCoverageLevel(level: CoverageLevel): string {
+  return coverageLabels[level];
+}
+
+export function formatActivePeriod(program: Pick<SupportProgram, 'activeFrom' | 'activeTo'>): string {
+  const start = formatDate(program.activeFrom);
+  return program.activeTo ? `${start} — ${formatDate(program.activeTo)}` : `с ${start}, без даты окончания`;
+}
+
 export function formatDeadline(value: string | null): string {
   if (!value) return 'Без дедлайна';
-  return dateFormatter.format(new Date(`${value}T00:00:00`)).replace(' г.', '');
+  return formatDate(value);
 }
 
 export function formatMoneyRub(value: number | null): string {

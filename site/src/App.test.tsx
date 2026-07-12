@@ -145,13 +145,54 @@ describe('App navigation', () => {
     expect(favorite).toHaveAttribute('aria-pressed', 'true');
   });
 
+  it('toggles a favorite directly from the catalog card and exposes it in profile', async () => {
+    const user = userEvent.setup();
+    render(<App />);
+    await user.click(screen.getByRole('tab', { name: 'Каталог' }));
+    await user.click(screen.getByRole('button', { name: 'Добавить Старт-ИИ в избранное' }));
+    expect(screen.getByRole('button', { name: 'Удалить Старт-ИИ из избранного' })).toHaveAttribute('aria-pressed', 'true');
+
+    await user.click(screen.getByRole('tab', { name: 'Профиль' }));
+    expect(screen.getByText('Старт-ИИ')).toBeInTheDocument();
+  });
+
+  it('opens a source-related program and records it as recently viewed', async () => {
+    const user = userEvent.setup();
+    render(<App />);
+    await user.click(screen.getByRole('tab', { name: 'Источники' }));
+    await user.click(screen.getByRole('button', { name: 'Выбрать источник Impact Hub Moscow' }));
+    await user.click(screen.getAllByRole('button', { name: 'Открыть программу Eco Impact Lab' })[0]);
+    expect(screen.getByRole('dialog', { name: 'Eco Impact Lab' })).toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: 'Закрыть детали' }));
+
+    await user.click(screen.getByRole('tab', { name: 'Профиль' }));
+    expect(screen.getByText('Eco Impact Lab')).toBeInTheDocument();
+  });
+
+  it('deduplicates a recently viewed program opened from catalog and source details', async () => {
+    const user = userEvent.setup();
+    render(<App />);
+    await user.click(screen.getByRole('tab', { name: 'Каталог' }));
+    await user.click(screen.getByRole('button', { name: 'Подробнее о программе Eco Impact Lab' }));
+    await user.click(screen.getByRole('button', { name: 'Закрыть детали' }));
+    await user.click(screen.getByRole('tab', { name: 'Источники' }));
+    await user.click(screen.getByRole('button', { name: 'Выбрать источник Impact Hub Moscow' }));
+    await user.click(screen.getAllByRole('button', { name: 'Открыть программу Eco Impact Lab' })[0]);
+    await user.click(screen.getByRole('button', { name: 'Закрыть детали' }));
+    await user.click(screen.getByRole('tab', { name: 'Профиль' }));
+
+    expect(screen.getAllByText('Eco Impact Lab')).toHaveLength(1);
+  });
+
   it('restores local profile data after app remount', async () => {
     const user = userEvent.setup();
     const first = render(<App />);
 
     await user.click(screen.getByRole('tab', { name: 'Каталог' }));
     await user.click(screen.getByRole('button', { name: /Подробнее о программе Старт-ИИ/i }));
-    await user.click(screen.getByRole('button', { name: 'Добавить Старт-ИИ в избранное' }));
+    await user.click(within(screen.getByRole('dialog', { name: 'Старт-ИИ' })).getByRole('button', {
+      name: 'Добавить Старт-ИИ в избранное'
+    }));
     await user.click(screen.getByRole('button', { name: 'Закрыть детали' }));
     await user.click(screen.getByRole('tab', { name: 'Источники' }));
     await user.click(screen.getByRole('button', {
