@@ -38,13 +38,13 @@ describe('ProgramsTab', () => {
     render(<ProgramsTab sources={sources} programs={programs} onOpenProgram={vi.fn()} />);
 
     await user.type(screen.getByLabelText('Поиск'), 'ИИ');
-    expect(screen.getByText('Найдено: 4')).toBeInTheDocument();
+    expect(screen.getByText('Найдено: 5')).toBeInTheDocument();
     expect(getRenderedProgramTitles()).toEqual(expect.arrayContaining(['Индустриальный ИИ акселератор', 'Старт-ИИ']));
     expect(screen.queryByText('УМНИК')).not.toBeInTheDocument();
 
     await user.selectOptions(screen.getByLabelText('Тип поддержки'), 'Акселерация');
-    expect(screen.getByText('Найдено: 1')).toBeInTheDocument();
-    expect(getRenderedProgramTitles()).toEqual(['Индустриальный ИИ акселератор']);
+    expect(screen.getByText('Найдено: 2')).toBeInTheDocument();
+    expect(getRenderedProgramTitles()).toEqual(['Индустриальный ИИ акселератор', 'AI Pilot Challenge']);
     expect(screen.queryByText('Старт-ИИ')).not.toBeInTheDocument();
 
     await user.selectOptions(screen.getByLabelText('Сортировка'), 'funding');

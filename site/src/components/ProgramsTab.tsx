@@ -18,11 +18,19 @@ import { EmptyState, Tag } from './ui';
 
 const defaultFilters: ProgramFilters = {
   query: '',
+  region: 'Все регионы',
+  coverageLevel: 'Все уровни',
+  launchYear: 'Все годы',
+  activePeriod: 'all',
+  funding: 'all',
+  fundingMinRub: null,
+  fundingMaxRub: null,
+  deadline: 'all',
+  status: 'Все статусы',
   topic: 'Все тематики',
   supportType: 'Все типы',
   audience: 'Все аудитории',
-  status: 'Все статусы',
-  deadline: 'all',
+  sourceId: 'Все источники',
   sort: 'deadline'
 };
 
@@ -81,7 +89,10 @@ export function ProgramsTab({
     [programs]
   );
 
-  const visible = useMemo(() => sortPrograms(filterPrograms(programs, filters), sources, filters.sort), [filters, programs, sources]);
+  const visible = useMemo(
+    () => sortPrograms(filterPrograms(programs, sources, filters), sources, filters.sort, filters.query),
+    [filters, programs, sources]
+  );
   const activeFilterLabels = getActiveFilterLabels(filters);
   const filtersAreActive = hasActiveFilters(filters);
   const resetFilters = () => setFilters((current) => ({ ...defaultFilters, sort: current.sort }));

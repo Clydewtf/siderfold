@@ -141,16 +141,35 @@ export type SupportProgram = {
   history: readonly ProgramHistoryPoint[];
 };
 
-export type ProgramSort = 'deadline' | 'funding' | 'newest' | 'source';
+export type ProgramSort = 'deadline' | 'funding' | 'newest' | 'source' | 'relevance';
 
 export type DeadlineFilter = 'all' | 'withDeadline' | 'withoutDeadline' | 'next30' | 'next90';
 
+export type ActivePeriodFilter = 'all' | 'activeNow' | 'upcoming' | 'ended';
+
+export type FundingFilter = 'all' | 'withFunding' | 'withoutFunding';
+
 export type ProgramFilters = {
   query: string;
+  region: string;
+  coverageLevel: CoverageLevel | 'Все уровни';
+  launchYear: number | 'Все годы';
+  activePeriod: ActivePeriodFilter;
+  funding: FundingFilter;
+  fundingMinRub: number | null;
+  fundingMaxRub: number | null;
+  deadline: DeadlineFilter;
+  status: ProgramStatus | 'Все статусы';
   topic: Topic | 'Все тематики';
   supportType: SupportType | 'Все типы';
   audience: Audience | 'Все аудитории';
-  status: ProgramStatus | 'Все статусы';
-  deadline: DeadlineFilter;
+  sourceId: string;
   sort: ProgramSort;
+};
+
+export type SourceFilters = {
+  type: SourceType | 'Все типы';
+  region: string;
+  coverageLevel: CoverageLevel | 'Все уровни';
+  topic: Topic | 'Все тематики';
 };
