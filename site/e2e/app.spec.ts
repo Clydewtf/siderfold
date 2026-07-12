@@ -22,13 +22,19 @@ test('catalog and source workflow persists favorites and recent views on desktop
   await page.getByRole('button', { name: 'Закрыть детали' }).click();
 
   await page.getByRole('tab', { name: 'Профиль' }).click();
-  await expect(page.getByText('Старт-ИИ').first()).toBeVisible();
-  await expect(page.getByText('Eco Impact Lab')).toBeVisible();
+  const favoriteProgramsSection = page
+    .getByRole('heading', { name: 'Избранные программы' })
+    .locator('xpath=ancestor::section[1]');
+  const recentProgramsSection = page
+    .getByRole('heading', { name: 'Недавно просмотренные' })
+    .locator('xpath=ancestor::section[1]');
+  await expect(favoriteProgramsSection.getByText('Старт-ИИ')).toBeVisible();
+  await expect(recentProgramsSection.getByText('Eco Impact Lab')).toBeVisible();
 
   await page.reload();
   await page.getByRole('tab', { name: 'Профиль' }).click();
-  await expect(page.getByText('Старт-ИИ').first()).toBeVisible();
-  await expect(page.getByText('Eco Impact Lab')).toBeVisible();
+  await expect(favoriteProgramsSection.getByText('Старт-ИИ')).toBeVisible();
+  await expect(recentProgramsSection.getByText('Eco Impact Lab')).toBeVisible();
 });
 
 test('five-section shell and local theme work on desktop', async ({ page }, testInfo) => {
