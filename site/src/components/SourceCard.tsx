@@ -84,6 +84,7 @@ export function SourceCard({
         </button>
         <button
           type="button"
+          aria-pressed={selected}
           onClick={onSelect}
           className="inline-flex min-h-11 w-full min-w-0 items-center justify-center rounded-lg bg-ink px-4 py-2 text-center text-sm font-semibold leading-5 text-white transition hover:bg-ink/85 focus:outline-none focus:ring-2 focus:ring-cobalt focus:ring-offset-2"
         >

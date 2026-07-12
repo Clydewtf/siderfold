@@ -95,6 +95,19 @@ describe('SourcesTab', () => {
     expect(screen.getByRole('button', { name: /Смотреть программы Impact Hub Moscow/i })).toBeInTheDocument();
   });
 
+  it('exposes selected-source buttons as pressed and unselected ones as not pressed', async () => {
+    const user = userEvent.setup();
+    renderSourcesTab();
+
+    expect(screen.getByRole('button', { name: /Смотреть программы Фонд Потанина/i })).toHaveAttribute('aria-pressed', 'true');
+    expect(screen.getByRole('button', { name: /Выбрать источник Impact Hub Moscow/i })).toHaveAttribute('aria-pressed', 'false');
+
+    await user.click(screen.getByRole('button', { name: /Выбрать источник Impact Hub Moscow/i }));
+
+    expect(screen.getByRole('button', { name: /Смотреть программы Impact Hub Moscow/i })).toHaveAttribute('aria-pressed', 'true');
+    expect(screen.getByRole('button', { name: /Выбрать источник Фонд Потанина/i })).toHaveAttribute('aria-pressed', 'false');
+  });
+
   it('announces source detail updates', async () => {
     const user = userEvent.setup();
     renderSourcesTab();

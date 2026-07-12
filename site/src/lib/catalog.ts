@@ -50,6 +50,12 @@ function matchesQuery(value: string, query: string): boolean {
   return queryTokens.every((token) => valueTokens.has(token));
 }
 
+function matchesTokenSet(value: string, queryTokens: readonly string[]): boolean {
+  if (queryTokens.length === 0) return true;
+  const valueTokens = new Set(tokenize(value));
+  return queryTokens.every((token) => valueTokens.has(token));
+}
+
 function getSource(program: SupportProgram, sources: readonly SupportSource[]): SupportSource | undefined {
   return sources.find((source) => source.id === program.sourceId);
 }
@@ -80,13 +86,16 @@ function matchesActivePeriod(program: SupportProgram, filter: ActivePeriodFilter
 }
 
 function getFundingBounds(program: SupportProgram): { min: number; max: number } | null {
+  if (program.fundingMinRub !== null || program.fundingMaxRub !== null) {
+    return {
+      min: program.fundingMinRub ?? program.fundingMaxRub ?? 0,
+      max: program.fundingMaxRub ?? program.fundingMinRub ?? 0
+    };
+  }
+
   const exact = program.fundingAmountRub;
   if (exact !== null) return { min: exact, max: exact };
-  if (program.fundingMinRub === null && program.fundingMaxRub === null) return null;
-  return {
-    min: program.fundingMinRub ?? program.fundingMaxRub ?? 0,
-    max: program.fundingMaxRub ?? program.fundingMinRub ?? 0
-  };
+  return null;
 }
 
 function matchesFunding(program: SupportProgram, filters: ProgramFilters): boolean {
@@ -110,22 +119,22 @@ function relevanceScore(program: SupportProgram, source: SupportSource | undefin
   const normalizedQuery = normalize(query);
   if (!normalizedQuery) return 0;
   const sections = getSearchSections(program, source);
-  const words = normalizedQuery.split(/\s+/).filter(Boolean);
+  const words = tokenize(query);
   let score = 0;
 
   if (sections.title === normalizedQuery) score += 100;
-  if (sections.title.includes(normalizedQuery)) score += 50;
-  if (sections.source.includes(normalizedQuery)) score += 24;
-  if (sections.description.includes(normalizedQuery)) score += 16;
-  if (sections.requirements.includes(normalizedQuery)) score += 12;
-  if (sections.metadata.includes(normalizedQuery)) score += 8;
+  if (matchesTokenSet(sections.title, words)) score += 50;
+  if (matchesTokenSet(sections.source, words)) score += 24;
+  if (matchesTokenSet(sections.description, words)) score += 16;
+  if (matchesTokenSet(sections.requirements, words)) score += 12;
+  if (matchesTokenSet(sections.metadata, words)) score += 8;
 
   for (const word of words) {
-    if (sections.title.includes(word)) score += 10;
-    if (sections.source.includes(word)) score += 6;
-    if (sections.description.includes(word)) score += 4;
-    if (sections.requirements.includes(word)) score += 3;
-    if (sections.metadata.includes(word)) score += 2;
+    if (matchesTokenSet(sections.title, [word])) score += 10;
+    if (matchesTokenSet(sections.source, [word])) score += 6;
+    if (matchesTokenSet(sections.description, [word])) score += 4;
+    if (matchesTokenSet(sections.requirements, [word])) score += 3;
+    if (matchesTokenSet(sections.metadata, [word])) score += 2;
   }
 
   return score;

@@ -147,6 +147,21 @@ describe('catalog selectors', () => {
     expect(unfunded.every((item) => item.fundingAmountRub === null && item.fundingMinRub === null && item.fundingMaxRub === null)).toBe(true);
   });
 
+  it('prefers explicit funding bounds over exact funding fallback when both are present', () => {
+    const input = [
+      {
+        ...programs[0],
+        id: 'range-wins-over-exact',
+        fundingAmountRub: 4_000_000,
+        fundingMinRub: 1_000_000,
+        fundingMaxRub: 4_000_000
+      }
+    ] satisfies SupportProgram[];
+
+    expect(filterPrograms(input, sources, withFilters({ fundingMinRub: 1_500_000, fundingMaxRub: 2_000_000 })).map((item) => item.id))
+      .toEqual(['range-wins-over-exact']);
+  });
+
   it('rejects an invalid amount interval instead of silently widening it', () => {
     expect(filterPrograms(programs, sources, withFilters({ fundingMinRub: 5_000_000, fundingMaxRub: 1_000_000 }))).toEqual([]);
   });
@@ -175,6 +190,18 @@ describe('catalog selectors', () => {
     ] satisfies SupportProgram[];
 
     expect(sortPrograms(input, sources, 'relevance', 'ИИ').map((item) => item.id)).toEqual(['newer-a', 'older-b']);
+  });
+
+  it('ranks a whole-token relevance hit ahead of an incidental substring-only title hit', () => {
+    const input = [
+      { ...programs[0], id: 'substring-only-newer', title: 'Организации региона', publishedAt: '2026-02-01' },
+      { ...programs[0], id: 'whole-token-older', title: 'Решения ИИ', publishedAt: '2026-01-01' }
+    ] satisfies SupportProgram[];
+
+    expect(sortPrograms(input, sources, 'relevance', 'ИИ').map((item) => item.id)).toEqual([
+      'whole-token-older',
+      'substring-only-newer'
+    ]);
   });
 
   it('filters sources by type, region, coverage level, and topic', () => {
