@@ -38,6 +38,37 @@ export function EmptyState({
   );
 }
 
+export function PageIntro({
+  eyebrow,
+  title,
+  description,
+  aside
+}: {
+  eyebrow: string;
+  title: string;
+  description: string;
+  aside?: ReactNode;
+}) {
+  return (
+    <header className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_minmax(18rem,0.65fr)] lg:items-start">
+      <div>
+        <p className="eyebrow">{eyebrow}</p>
+        <h1 className="mt-3 text-4xl font-semibold text-ink sm:text-5xl">{title}</h1>
+        <p className="mt-4 max-w-3xl text-base leading-7 text-graphite">{description}</p>
+      </div>
+      {aside ? <div className="min-w-0">{aside}</div> : null}
+    </header>
+  );
+}
+
+export function DemoNotice({ children }: { children: ReactNode }) {
+  return (
+    <aside className="rounded-lg border border-cobalt/20 bg-cobalt/10 p-4 text-sm font-medium leading-6 text-cobalt">
+      {children}
+    </aside>
+  );
+}
+
 type IconButtonProps = Omit<ButtonHTMLAttributes<HTMLButtonElement>, 'children' | 'aria-label'> &
   (
     | {

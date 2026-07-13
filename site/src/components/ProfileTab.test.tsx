@@ -35,10 +35,24 @@ function renderProfile() {
 }
 
 describe('ProfileTab', () => {
-  it('shows favorite and recent entities by name', () => {
+  it('presents a complete local personal workspace', () => {
     renderProfile();
+
+    expect(screen.getByRole('heading', { level: 1, name: 'Профиль' })).toBeInTheDocument();
+    for (const heading of [
+      'Избранные программы',
+      'Недавно просмотренные программы',
+      'Избранные источники',
+      'Отображение',
+      'Предпочтительные регионы',
+      'Предпочтительные тематики',
+      'Аккаунт и backend'
+    ]) {
+      expect(screen.getByRole('heading', { name: heading })).toBeInTheDocument();
+    }
     expect(screen.getAllByText('Старт-ИИ').length).toBeGreaterThan(0);
     expect(screen.getByText('Фонд содействия инновациям')).toBeInTheDocument();
+    expect(screen.getByText(/сохраняются только в этом браузере/i)).toBeInTheDocument();
   });
 
   it('changes theme and display settings through app actions', async () => {

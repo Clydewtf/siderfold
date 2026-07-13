@@ -46,13 +46,13 @@ export function ProfileCollections({
             {favoritePrograms.map((program) => (
               <li key={program.id} data-density-card className="profile-entity-card">
                 <div className="min-w-0">
-                  <p className="eyebrow">{sourceById.get(program.sourceId)?.name ?? 'Источник не найден'}</p>
+                  <p className="eyebrow">Источник: {sourceById.get(program.sourceId)?.name ?? 'не найден'}</p>
                   <h3 className="break-words text-xl font-semibold">{program.title}</h3>
                   <p className="mt-2 line-clamp-2 text-sm leading-6 text-graphite">{program.description}</p>
                 </div>
                 <div className="mt-5 flex flex-wrap gap-2">
                   <button type="button" className="button-primary" onClick={() => onOpenProgram(program)} aria-label={`Открыть программу ${program.title}`}>Открыть</button>
-                  <button type="button" className="button-secondary" onClick={() => onToggleFavoriteProgram(program.id)} aria-label={`Удалить ${program.title} из избранного`}>Убрать</button>
+                  <button type="button" className="button-secondary" onClick={() => onToggleFavoriteProgram(program.id)} aria-label={`Убрать программу ${program.title} из избранного`}>Убрать</button>
                 </div>
               </li>
             ))}
@@ -72,7 +72,7 @@ export function ProfileCollections({
         ) : (
           <ul data-density-grid className="profile-card-grid">
             {recentPrograms.map((program) => <li key={program.id} data-density-card className="profile-entity-card">
-              <p className="eyebrow">{sourceById.get(program.sourceId)?.name ?? 'Источник не найден'}</p>
+              <p className="eyebrow">Источник: {sourceById.get(program.sourceId)?.name ?? 'не найден'}</p>
               <h3 className="mt-2 break-words text-xl font-semibold">{program.title}</h3>
               <button type="button" className="button-secondary mt-4" onClick={() => onOpenProgram(program)} aria-label={`Открыть программу ${program.title}`}>Открыть снова</button>
             </li>)}

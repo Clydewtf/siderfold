@@ -23,9 +23,9 @@ describe('ProfileCollections', () => {
     />);
 
     expect(screen.getByRole('heading', { name: 'Избранные программы' })).toBeInTheDocument();
-    expect(screen.getAllByText(sources.find((source) => source.id === programs[0].sourceId)!.name).length).toBeGreaterThan(0);
+    expect(screen.getAllByText(`Источник: ${sources.find((source) => source.id === programs[0].sourceId)!.name}`).length).toBeGreaterThan(0);
     await user.click(screen.getByRole('button', { name: `Открыть программу ${programs[0].title}` }));
-    await user.click(screen.getByRole('button', { name: `Удалить ${programs[0].title} из избранного` }));
+    await user.click(screen.getByRole('button', { name: `Убрать программу ${programs[0].title} из избранного` }));
     await user.click(screen.getByRole('button', { name: `Удалить ${sources[0].name} из избранного` }));
     expect(onOpenProgram).toHaveBeenCalledWith(programs[0]);
     expect(onToggleFavoriteProgram).toHaveBeenCalledWith(programs[0].id);

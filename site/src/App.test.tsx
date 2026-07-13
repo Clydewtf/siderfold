@@ -156,6 +156,19 @@ describe('App navigation', () => {
     expect(screen.getByText('Старт-ИИ')).toBeInTheDocument();
   });
 
+  it('opens the shared program drawer from the profile', async () => {
+    const user = userEvent.setup();
+    render(<App />);
+
+    await user.click(screen.getByRole('tab', { name: 'Каталог' }));
+    await user.click(screen.getByRole('button', { name: 'Добавить Старт-ИИ в избранное' }));
+    await user.click(screen.getByRole('tab', { name: 'Профиль' }));
+    await user.click(screen.getByRole('button', { name: 'Открыть программу Старт-ИИ' }));
+
+    expect(screen.getByRole('dialog', { name: 'Старт-ИИ' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Удалить Старт-ИИ из избранного' })).toBeInTheDocument();
+  });
+
   it('opens a source-related program and records it as recently viewed', async () => {
     const user = userEvent.setup();
     render(<App />);
@@ -208,7 +221,7 @@ describe('App navigation', () => {
       .getByRole('heading', { name: 'Избранные программы' })
       .closest<HTMLElement>('section');
     const recentProgramsSection = screen
-      .getByRole('heading', { name: 'Недавно просмотренные' })
+      .getByRole('heading', { name: 'Недавно просмотренные программы' })
       .closest<HTMLElement>('section');
     const favoriteSourcesSection = screen
       .getByRole('heading', { name: 'Избранные источники' })
