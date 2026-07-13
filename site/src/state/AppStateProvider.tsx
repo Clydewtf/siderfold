@@ -17,7 +17,7 @@ const backendMessages: Record<BackendFeature, string> = {
   notifications: 'Серверные уведомления появятся после подключения backend.',
   documents: 'Документы будут доступны после подключения аккаунта.',
   applications: 'Заявки будут доступны после подключения аккаунта.',
-  reportExport: 'Экспорт отчета появится после подключения backend.',
+  reportExport: 'Экспорт отчета и CSV появится после подключения backend.',
   profileSync: 'Синхронизация появится после подключения backend.'
 };
 

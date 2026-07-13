@@ -43,6 +43,11 @@ function Harness() {
   );
 }
 
+function ReportExportHarness() {
+  const { state, actions } = useAppState();
+  return <><button onClick={() => actions.requestBackendFeature('reportExport')}>request export</button><output aria-label="export notice">{state.backendNotice?.message ?? ''}</output></>;
+}
+
 describe('AppStateProvider', () => {
   it('does not overwrite future-version state during StrictMode mount replay', () => {
     const futureState = JSON.stringify({ version: 2, state: { theme: 'dark' } });
@@ -115,5 +120,12 @@ describe('AppStateProvider', () => {
     expect(screen.getByLabelText('notice')).toHaveTextContent(
       'Синхронизация появится после подключения backend.'
     );
+  });
+
+  it('announces that report and CSV export require backend', async () => {
+    const user = userEvent.setup();
+    render(<AppStateProvider storage={memory()}><ReportExportHarness /></AppStateProvider>);
+    await user.click(screen.getByRole('button', { name: 'request export' }));
+    expect(screen.getByLabelText('export notice')).toHaveTextContent('Экспорт отчета и CSV появится после подключения backend.');
   });
 });
