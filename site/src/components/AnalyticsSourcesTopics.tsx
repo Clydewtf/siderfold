@@ -56,7 +56,7 @@ export function AnalyticsSourcesTopics({
           <p className="mt-5 text-sm text-graphite">Источники в выбранном срезе отсутствуют</p>
         ) : (
           <>
-            <div data-density-grid className="mt-5 grid grid-cols-1 gap-4 lg:grid-cols-3">
+            <div data-density-grid className="mt-5 grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-3">
               <article data-density-card className={cardClassName}>
                 <h3 className="text-xl font-semibold">По числу программ</h3>
                 <div className="mt-4">
@@ -145,7 +145,7 @@ export function AnalyticsSourcesTopics({
           <p className="mt-5 text-sm text-graphite">Тематики в выбранном срезе отсутствуют</p>
         ) : (
           <>
-            <div data-density-grid className="mt-5 grid grid-cols-1 gap-4 lg:grid-cols-2">
+            <div data-density-grid className="mt-5 grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-2">
               <article data-density-card className={cardClassName}>
                 <h3 className="text-xl font-semibold">Распределение программ</h3>
                 <div className="mt-4">
@@ -169,7 +169,7 @@ export function AnalyticsSourcesTopics({
               </article>
             </div>
 
-            <div data-density-grid className="mt-6 grid grid-cols-1 gap-4 lg:grid-cols-2">
+            <div data-density-grid className="mt-6 grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-2">
               <article data-density-card className={cardClassName}>
                 <h3 className="text-xl font-semibold">Сильные тематики</h3>
                 <ul className="mt-4 grid grid-cols-1 gap-2 text-sm">

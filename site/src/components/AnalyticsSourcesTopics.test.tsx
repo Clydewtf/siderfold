@@ -76,4 +76,89 @@ describe('AnalyticsSourcesTopics', () => {
     expect(screen.getByText('Источники в выбранном срезе отсутствуют')).toBeInTheDocument();
     expect(screen.getByText('Тематики в выбранном срезе отсутствуют')).toBeInTheDocument();
   });
+
+  it('renders every engine-ranked monitoring list and responsive paired grids', () => {
+    const analytics = buildAnalytics(sources, programs);
+    const view = render(
+      <AnalyticsSourcesTopics
+        sources={analytics.sources}
+        topics={analytics.topics}
+        totalPrograms={analytics.filteredPrograms}
+      />
+    );
+    const { container } = view;
+
+    [
+      {
+        label: 'По активным программам',
+        item: analytics.sources.byActiveProgramCount[0],
+        displayValue: String(analytics.sources.byActiveProgramCount[0].activeProgramCount)
+      },
+      {
+        label: 'По объему поддержки',
+        item: analytics.sources.byFunding[0],
+        displayValue: formatMoneyRub(analytics.sources.byFunding[0].totalFundingRub)
+      },
+      {
+        label: 'Объем поддержки по тематикам',
+        item: analytics.topics.topics[0],
+        displayValue: formatMoneyRub(analytics.topics.topics[0].totalFundingRub)
+      }
+    ].forEach(({ label, item, displayValue }) => {
+      const ranking = screen.getByRole('list', { name: label });
+      const entry = within(ranking).getByText(
+        'sourceName' in item ? item.sourceName : item.topic,
+        { exact: true }
+      ).closest('li');
+      expect(entry).not.toBeNull();
+      expect(within(entry!).getByText(displayValue, { exact: true })).toBeInTheDocument();
+    });
+
+    const strongTopic = analytics.topics.strongTopics[0];
+    expect(strongTopic).toBeDefined();
+    const strongCallout = screen.getByRole('heading', { name: 'Сильные тематики' }).closest('article');
+    expect(strongCallout).not.toBeNull();
+    expect(
+      within(strongCallout!).getByText(
+        `${strongTopic!.topic} — ${strongTopic!.programCount} программ, ${formatMoneyRub(strongTopic!.totalFundingRub)}`,
+        { exact: true }
+      )
+    ).toBeInTheDocument();
+
+    expect(analytics.topics.intersections.length).toBeGreaterThan(12);
+    const intersectionsTable = screen.getByRole('region', { name: 'Пересечения тематики и региона' });
+    expect(
+      within(intersectionsTable).getAllByRole('row').slice(1).map((row) => row.textContent)
+    ).toEqual(
+      analytics.topics.intersections.slice(0, 12).map((item) =>
+        `${item.topic}${item.region}${item.programCount}${formatMoneyRub(item.totalFundingRub)}`
+      )
+    );
+
+    const densityGrids = Array.from(container.querySelectorAll('[data-density-grid]'));
+    expect(densityGrids).toHaveLength(3);
+    expect(densityGrids[0]).toHaveClass('grid-cols-1', 'md:grid-cols-2', 'lg:grid-cols-3');
+    densityGrids.slice(1).forEach((grid) =>
+      expect(grid).toHaveClass('grid-cols-1', 'md:grid-cols-2', 'lg:grid-cols-2')
+    );
+
+    const weakAnalytics = buildAnalytics(sources, programs, { sourceId: 'impact-hub', supportType: 'Грант' });
+    const weakTopic = weakAnalytics.topics.weakTopics[0];
+    expect(weakTopic).toBeDefined();
+    view.rerender(
+      <AnalyticsSourcesTopics
+        sources={weakAnalytics.sources}
+        topics={weakAnalytics.topics}
+        totalPrograms={weakAnalytics.filteredPrograms}
+      />
+    );
+    const weakCallout = screen.getByRole('heading', { name: 'Слабое покрытие тематик' }).closest('article');
+    expect(weakCallout).not.toBeNull();
+    expect(
+      within(weakCallout!).getByText(
+        `${weakTopic!.topic} — ${weakTopic!.programCount} программ, ${formatMoneyRub(weakTopic!.totalFundingRub)}`,
+        { exact: true }
+      )
+    ).toBeInTheDocument();
+  });
 });
