@@ -24,6 +24,20 @@ function renderControls(storage: StorageLike) {
 }
 
 describe('ProfileControls', () => {
+  it('keeps preference groups within the profile sidebar at wide breakpoints', () => {
+    renderControls(memory());
+
+    const groups = [
+      screen.getByRole('group', { name: 'Предпочтительные регионы' }),
+      screen.getByRole('group', { name: 'Предпочтительные тематики' })
+    ];
+
+    expect(groups[0].parentElement).toHaveClass('xl:grid-cols-1');
+    groups.forEach((group) => expect(group).toHaveClass('min-w-0'));
+    expect(screen.getByRole('heading', { name: 'Предпочтительные регионы' })).toHaveClass('break-words');
+    expect(screen.getByRole('heading', { name: 'Предпочтительные тематики' })).toHaveClass('break-words');
+  });
+
   it('updates theme, density, data quality, motion, regions, and topics', async () => {
     const user = userEvent.setup();
     renderControls(memory());

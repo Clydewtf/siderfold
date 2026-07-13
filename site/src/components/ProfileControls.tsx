@@ -66,10 +66,10 @@ export function ProfilePreferences({
 
   return (
     <section className="profile-section">
-      <div className="grid gap-6 lg:grid-cols-2">
-        <fieldset>
+      <div className="grid gap-6 lg:grid-cols-2 xl:grid-cols-1">
+        <fieldset className="min-w-0">
           <legend className="sr-only">Предпочтительные регионы</legend>
-          <h2>Предпочтительные регионы</h2>
+          <h2 className="break-words">Предпочтительные регионы</h2>
           <div className="mt-4 flex flex-wrap gap-2">
             {regionOptions.map((region) => (
               <button
@@ -85,9 +85,9 @@ export function ProfilePreferences({
             ))}
           </div>
         </fieldset>
-        <fieldset>
+        <fieldset className="min-w-0">
           <legend className="sr-only">Предпочтительные тематики</legend>
-          <h2>Предпочтительные тематики</h2>
+          <h2 className="break-words">Предпочтительные тематики</h2>
           <div className="mt-4 flex flex-wrap gap-2">
             {topicOptions.map((topic) => (
               <button

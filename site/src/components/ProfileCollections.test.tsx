@@ -5,6 +5,26 @@ import { programs, sources } from '../data/seed';
 import { ProfileCollections } from './ProfileCollections';
 
 describe('ProfileCollections', () => {
+  it('anchors collection actions to the bottom of equal-height cards', () => {
+    render(<ProfileCollections
+      favoritePrograms={[programs[0]]}
+      favoriteSources={[sources[0]]}
+      recentPrograms={[programs[1]]}
+      sourceById={new Map(sources.map((source) => [source.id, source]))}
+      onOpenProgram={vi.fn()}
+      onToggleFavoriteProgram={vi.fn()}
+      onToggleFavoriteSource={vi.fn()}
+      onOpenPrograms={vi.fn()}
+      onOpenSources={vi.fn()}
+    />);
+
+    const openFavorite = screen.getByRole('button', { name: `Открыть программу ${programs[0].title}` });
+    expect(openFavorite.closest('li')).toHaveClass('flex', 'h-full', 'flex-col');
+    expect(openFavorite.parentElement).toHaveClass('mt-auto', 'pt-5');
+    expect(screen.getByRole('button', { name: `Открыть программу ${programs[1].title}` }).parentElement).toHaveClass('mt-auto', 'pt-5');
+    expect(screen.getByRole('button', { name: `Удалить ${sources[0].name} из избранного` }).parentElement).toHaveClass('mt-auto', 'pt-5');
+  });
+
   it('renders useful program and source cards and delegates every local action', async () => {
     const user = userEvent.setup();
     const onOpenProgram = vi.fn();
