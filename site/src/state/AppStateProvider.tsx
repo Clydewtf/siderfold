@@ -5,21 +5,13 @@ import {
 import {
   getBrowserStorage, loadPersistedAppState, savePersistedAppState, type StorageLike
 } from '../lib/storage';
+import { getBackendCapability } from '../lib/backendFeatures';
 import type {
   AppState, BackendFeature, CardDensity, PersistedAppState, ResolvedTheme,
   TabId, ThemePreference, Topic
 } from '../types';
 
 const RECENT_LIMIT = 12;
-const backendMessages: Record<BackendFeature, string> = {
-  signIn: 'Вход будет доступен после подключения аккаунтов.',
-  registration: 'Регистрация будет доступна после подключения аккаунтов.',
-  notifications: 'Серверные уведомления появятся после подключения backend.',
-  documents: 'Документы будут доступны после подключения аккаунта.',
-  applications: 'Заявки будут доступны после подключения аккаунта.',
-  reportExport: 'Экспорт отчета и CSV появится после подключения backend.',
-  profileSync: 'Синхронизация появится после подключения backend.'
-};
 
 type Action =
   | { type: 'navigate'; tab: TabId }
@@ -120,7 +112,10 @@ function reducer(state: AppState, action: Action): AppState {
     case 'requestBackendFeature':
       return {
         ...state,
-        backendNotice: { feature: action.feature, message: backendMessages[action.feature] }
+        backendNotice: {
+          feature: action.feature,
+          message: getBackendCapability(action.feature).notice
+        }
       };
     case 'clearBackendNotice':
       return { ...state, backendNotice: null };

@@ -68,7 +68,7 @@ describe('ProfileTab', () => {
     renderProfile();
     await user.click(screen.getByRole('button', { name: 'Синхронизировать профиль' }));
     expect(screen.getByRole('status')).toHaveTextContent(
-      'Синхронизация появится после подключения backend.'
+      'Синхронизация появится после подключения аккаунта и backend.'
     );
   });
 });
