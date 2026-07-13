@@ -43,7 +43,7 @@ describe('App navigation', () => {
     expect(screen.getByRole('heading', { name: 'Каталог программ' })).toBeInTheDocument();
 
     await user.click(screen.getByRole('button', { name: 'Stargate - на главную' }));
-    expect(screen.getByRole('heading', { name: /Единая база программ поддержки/i })).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: 'Программы поддержки — в одном рабочем пространстве' })).toBeInTheDocument();
 
     expect(screen.getByRole('tab', { name: 'Главная' })).toBeInTheDocument();
     expect(screen.getByRole('tab', { name: 'Каталог' })).toBeInTheDocument();
@@ -51,7 +51,7 @@ describe('App navigation', () => {
     expect(screen.getByRole('tab', { name: 'Источники' })).toBeInTheDocument();
     expect(screen.getByRole('tab', { name: 'Профиль' })).toBeInTheDocument();
     expect(screen.queryByText('Frontend-only MVP на seed-данных')).not.toBeInTheDocument();
-    expect(screen.getByText('MVP seed')).toBeInTheDocument();
+    expect(screen.getByText('Демо-режим')).toBeInTheDocument();
     expect(screen.getByLabelText(`Версия ${APP_VERSION}`)).toHaveTextContent(`v${APP_VERSION}`);
   });
 
