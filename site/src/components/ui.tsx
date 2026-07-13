@@ -50,20 +50,20 @@ export function PageIntro({
   aside?: ReactNode;
 }) {
   return (
-    <header className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_minmax(18rem,0.65fr)] lg:items-start">
+    <header className="page-intro grid gap-6 lg:grid-cols-[minmax(0,1fr)_minmax(18rem,0.65fr)] lg:items-start">
       <div>
         <p className="eyebrow">{eyebrow}</p>
         <h1 className="mt-3 text-4xl font-semibold text-ink sm:text-5xl">{title}</h1>
         <p className="mt-4 max-w-3xl text-base leading-7 text-graphite">{description}</p>
       </div>
-      {aside ? <div className="min-w-0">{aside}</div> : null}
+      {aside ? <div className="min-w-0 lg:max-w-sm">{aside}</div> : null}
     </header>
   );
 }
 
 export function DemoNotice({ children }: { children: ReactNode }) {
   return (
-    <aside className="rounded-lg border border-cobalt/20 bg-cobalt/10 p-4 text-sm font-medium leading-6 text-cobalt">
+    <aside aria-label="Демо-режим" className="demo-notice rounded-lg border border-cobalt/20 bg-cobalt/10 p-4 text-sm font-medium leading-6 text-cobalt">
       {children}
     </aside>
   );

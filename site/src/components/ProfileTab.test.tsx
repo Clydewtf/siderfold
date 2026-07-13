@@ -55,6 +55,15 @@ describe('ProfileTab', () => {
     expect(screen.getByText(/сохраняются только в этом браузере/i)).toBeInTheDocument();
   });
 
+  it('uses the shared intro and demo notice contracts', () => {
+    renderProfile();
+
+    expect(screen.getByRole('banner')).toHaveClass('page-intro');
+    const notice = screen.getByRole('complementary', { name: 'Демо-режим' });
+    expect(notice).toHaveClass('demo-notice');
+    expect(notice.parentElement).toHaveClass('min-w-0', 'lg:max-w-sm');
+  });
+
   it('changes theme and display settings through app actions', async () => {
     const user = userEvent.setup();
     renderProfile();
