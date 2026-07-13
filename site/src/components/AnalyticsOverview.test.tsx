@@ -15,4 +15,13 @@ describe('AnalyticsOverview', () => {
     expect(screen.getByText(analytics.temporal.nearestDeadlines[0].title)).toBeInTheDocument();
     expect(screen.getByRole('list', { name: 'Короткие аналитические выводы' })).toBeInTheDocument();
   });
+
+  it('marks every overview grid with an explicit base column and density hook', () => {
+    const analytics = buildAnalytics(sources, programs);
+    const { container } = render(<AnalyticsOverview analytics={analytics} />);
+    const grids = Array.from(container.querySelectorAll('[data-density-grid]'));
+
+    expect(grids).toHaveLength(3);
+    grids.forEach((grid) => expect(grid).toHaveClass('grid-cols-1'));
+  });
 });

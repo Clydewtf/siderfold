@@ -24,7 +24,7 @@ export function AnalyticsOverview({ analytics }: { analytics: AnalyticsSummary }
     <section aria-labelledby="analytics-overview-title" className="mt-10">
       <h2 id="analytics-overview-title" className="text-3xl font-semibold">Обзор базы</h2>
 
-      <div className="mt-5 grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+      <div data-density-grid className="mt-5 grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
         <AnalyticsMetric label="Всего программ" value={analytics.totalPrograms} />
         <AnalyticsMetric label="Активных программ" value={analytics.activePrograms} />
         <AnalyticsMetric label="Источников" value={analytics.totalSources} />
@@ -33,10 +33,10 @@ export function AnalyticsOverview({ analytics }: { analytics: AnalyticsSummary }
         <AnalyticsMetric label="Медианная сумма" value={formatMoneyRub(analytics.medianFundingRub)} />
       </div>
 
-      <div className="mt-6 grid gap-4 lg:grid-cols-2">
+      <div data-density-grid className="mt-6 grid grid-cols-1 gap-4 lg:grid-cols-2">
         <article data-density-card className={cardClassName}>
           <h3 className="text-xl font-semibold">Федеральные и региональные меры</h3>
-          <div className="mt-4 grid gap-4 sm:grid-cols-2">
+          <div data-density-grid className="mt-4 grid grid-cols-1 gap-4 sm:grid-cols-2">
             <AnalyticsMetric label="Федеральные программы" value={analytics.regional.federalPrograms} />
             <AnalyticsMetric label="Региональные программы" value={analytics.regional.regionalPrograms} />
           </div>
