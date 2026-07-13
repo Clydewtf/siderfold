@@ -223,6 +223,52 @@ describe('temporal analytics', () => {
     ]);
   });
 
+  it('aggregates deadlines by calendar month and identifies deterministic peak windows', () => {
+    const seasonalityPrograms = [
+      syntheticProgram({ id: 'january-a', deadline: '2026-01-05' }),
+      syntheticProgram({ id: 'january-b', deadline: '2026-01-25' }),
+      syntheticProgram({ id: 'march-a', deadline: '2026-03-01' }),
+      syntheticProgram({ id: 'march-b', deadline: '2026-03-15' }),
+      syntheticProgram({ id: 'march-c', deadline: '2026-03-31' }),
+      syntheticProgram({ id: 'april-a', deadline: '2026-04-10' }),
+      syntheticProgram({ id: 'april-b', deadline: '2026-04-20' }),
+      syntheticProgram({ id: 'december', deadline: '2026-12-24' }),
+      syntheticProgram({ id: 'without-deadline', deadline: null })
+    ];
+    const result = buildAnalytics(syntheticSources, seasonalityPrograms);
+
+    expect(result.temporal.byDeadlineMonth).toHaveLength(12);
+    expect(result.temporal.byDeadlineMonth.map(({ month, deadlineCount }) => ({ month, deadlineCount }))).toEqual([
+      { month: 1, deadlineCount: 2 },
+      { month: 2, deadlineCount: 0 },
+      { month: 3, deadlineCount: 3 },
+      { month: 4, deadlineCount: 2 },
+      { month: 5, deadlineCount: 0 },
+      { month: 6, deadlineCount: 0 },
+      { month: 7, deadlineCount: 0 },
+      { month: 8, deadlineCount: 0 },
+      { month: 9, deadlineCount: 0 },
+      { month: 10, deadlineCount: 0 },
+      { month: 11, deadlineCount: 0 },
+      { month: 12, deadlineCount: 1 }
+    ]);
+    expect(result.temporal.peakDeadlineMonths).toEqual([
+      { month: 3, label: 'март', deadlineCount: 3 },
+      { month: 1, label: 'январь', deadlineCount: 2 },
+      { month: 4, label: 'апрель', deadlineCount: 2 }
+    ]);
+  });
+
+  it('rebuilds deadline seasonality after filtering and returns twelve zero months for no matches', () => {
+    const filtered = buildAnalytics(sources, programs, { sourceId: 'impact-hub' });
+    const empty = buildAnalytics(sources, programs, { sourceId: 'missing-source' });
+
+    expect(filtered.temporal.byDeadlineMonth.reduce((sum, item) => sum + item.deadlineCount, 0))
+      .toBe(applyAnalyticsFilters(programs, { sourceId: 'impact-hub' }).filter((program) => program.deadline).length);
+    expect(empty.temporal.byDeadlineMonth.every((item) => item.deadlineCount === 0)).toBe(true);
+    expect(empty.temporal.peakDeadlineMonths).toEqual([]);
+  });
+
   it('returns empty temporal analytics for empty input', () => {
     const analytics = buildAnalytics(syntheticSources, []);
 
@@ -230,7 +276,13 @@ describe('temporal analytics', () => {
       nearestDeadline: null,
       nearestDeadlines: [],
       withoutDeadline: [],
-      byYear: []
+      byYear: [],
+      byDeadlineMonth: Array.from({ length: 12 }, (_, index) => ({
+        month: index + 1,
+        label: expect.any(String),
+        deadlineCount: 0
+      })),
+      peakDeadlineMonths: []
     });
   });
 

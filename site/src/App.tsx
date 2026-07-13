@@ -44,7 +44,14 @@ function AppContent() {
             onOpenProgram={(program) => actions.openProgram(program.id)}
           />
         ) : null}
-        {state.activeTab === 'analytics' ? <AnalyticsTab /> : null}
+        {state.activeTab === 'analytics' ? (
+          <AnalyticsTab
+            sources={sources}
+            programs={programs}
+            exportNotice={state.backendNotice?.feature === 'reportExport' ? state.backendNotice.message : null}
+            onRequestExport={() => actions.requestBackendFeature('reportExport')}
+          />
+        ) : null}
         {state.activeTab === 'sources' ? (
           <SourcesTab
             sources={sources}

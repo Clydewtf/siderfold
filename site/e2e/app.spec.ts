@@ -113,6 +113,17 @@ test('mobile layout has no horizontal scroll', async ({ page }, testInfo) => {
   const overflowAfterAnalytics = await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth);
   expect(overflowAfterAnalytics).toBeLessThanOrEqual(1);
 
+  await page.getByText('Фильтры аналитики').click();
+  await page.getByLabel('Регион аналитики').selectOption('Москва');
+  for (const name of ['Регионы', 'Качество по источникам']) {
+    await page.getByRole('heading', { name, exact: true }).scrollIntoViewIfNeeded();
+    await expect.poll(async () => page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth)).toBeLessThanOrEqual(1);
+  }
+  await page.getByRole('button', { name: 'Экспорт отчета' }).click();
+  await expect(page.getByRole('status').filter({ hasText: 'Экспорт отчета и CSV' })).toBeVisible();
+  await page.getByRole('button', { name: 'Экспорт CSV' }).click();
+  await expect.poll(async () => page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth)).toBeLessThanOrEqual(1);
+
   await page.getByRole('tab', { name: 'Источники' }).click();
   await page.getByLabel('Тип источника').selectOption('Акселератор');
   await page.getByRole('button', { name: /(?:Выбрать источник|Смотреть программы) Impact Hub Moscow/ }).click();
@@ -150,4 +161,24 @@ test('desktop source detail remains available after selecting a source', async (
   await expect(page.getByText('Выбран источник: Impact Hub Moscow')).toBeAttached();
   await expect(page.getByRole('heading', { name: 'Impact Hub Moscow' })).toBeVisible();
   await expect(page.getByRole('link', { name: 'Открыть сайт источника' })).toBeVisible();
+});
+
+test('analytics BI filter rebuilds monitoring and reset restores the database', async ({ page }, testInfo) => {
+  test.skip(testInfo.project.name !== 'desktop', 'Analytics BI workflow runs only on desktop.');
+  await page.goto('/');
+  await page.getByRole('tab', { name: 'Аналитика' }).click();
+
+  const status = page.getByRole('status').filter({ hasText: 'Найдено программ:' });
+  await expect(status).toContainText('Найдено программ: 30');
+  const initialFinance = await page.getByText('Общий объем', { exact: true }).locator('..').textContent();
+
+  await page.getByLabel('Регион аналитики').selectOption('Москва');
+  await expect(status).not.toContainText('Найдено программ: 30');
+  await expect(page.getByText('Регион: Москва')).toBeVisible();
+  const filteredFinance = await page.getByText('Общий объем', { exact: true }).locator('..').textContent();
+  expect(filteredFinance).not.toBe(initialFinance);
+
+  await page.getByRole('button', { name: 'Сбросить BI-фильтры' }).click();
+  await expect(status).toContainText('Найдено программ: 30');
+  await expect(page.getByText('Регион: Москва')).not.toBeVisible();
 });

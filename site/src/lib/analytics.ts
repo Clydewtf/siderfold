@@ -220,11 +220,19 @@ export type DeadlineAnalyticsItem = {
   daysUntilDeadline: number;
 };
 
+export type DeadlineMonthAnalyticsItem = {
+  month: number;
+  label: string;
+  deadlineCount: number;
+};
+
 export type TemporalAnalytics = {
   nearestDeadline: DeadlineAnalyticsItem | null;
   nearestDeadlines: DeadlineAnalyticsItem[];
   withoutDeadline: { programId: string; title: string }[];
   byYear: YearAnalyticsItem[];
+  byDeadlineMonth: DeadlineMonthAnalyticsItem[];
+  peakDeadlineMonths: DeadlineMonthAnalyticsItem[];
 };
 
 export type ForecastAnalytics = {
@@ -687,7 +695,28 @@ function buildSourceAnalytics(
   return { byProgramCount, byActiveProgramCount, byFunding, byDataQuality };
 }
 
+const deadlineMonthFormatter = new Intl.DateTimeFormat('ru-RU', { month: 'long', timeZone: 'UTC' });
+
+function buildDeadlineMonthAnalytics(programs: readonly SupportProgram[]): DeadlineMonthAnalyticsItem[] {
+  return Array.from({ length: 12 }, (_, index) => {
+    const month = index + 1;
+    return {
+      month,
+      label: deadlineMonthFormatter.format(new Date(Date.UTC(2026, index, 1))),
+      deadlineCount: programs.filter((program) => {
+        if (program.deadline === null) return false;
+        return Number(program.deadline.slice(5, 7)) === month;
+      }).length
+    };
+  });
+}
+
 function buildTemporalAnalytics(programs: readonly SupportProgram[]): TemporalAnalytics {
+  const byDeadlineMonth = buildDeadlineMonthAnalytics(programs);
+  const peakDeadlineMonths = [...byDeadlineMonth]
+    .filter((item) => item.deadlineCount > 0)
+    .sort((a, b) => b.deadlineCount - a.deadlineCount || a.month - b.month)
+    .slice(0, 3);
   const nearestDeadlines = programs
     .map((program) => {
       const days = daysUntilDeadline(program.deadline);
@@ -733,7 +762,9 @@ function buildTemporalAnalytics(programs: readonly SupportProgram[]): TemporalAn
       .filter((program) => program.deadline === null)
       .map((program) => ({ programId: program.id, title: program.title }))
       .sort((a, b) => a.title.localeCompare(b.title, 'ru') || a.programId.localeCompare(b.programId)),
-    byYear
+    byYear,
+    byDeadlineMonth,
+    peakDeadlineMonths
   };
 }
 
