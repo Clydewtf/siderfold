@@ -6,8 +6,8 @@ analytics. The current version is frontend-only and uses local seed data.
 
 ## Current Version
 
-`v0.2.0` completes the app-shell and local-state milestone over the analytics
-engine and expanded seed model:
+`v0.4.0` adds the responsive, accessible Analytics UI over the app-shell,
+catalog/source, analytics-engine, and expanded seed-data milestones:
 
 - five keyboard-accessible sections: home, catalog, analytics, sources, and
   profile;
@@ -90,6 +90,6 @@ are intentionally not used yet; important states are fixed with Git tags.
 
 ## Status
 
-This repository currently represents the `v0.2.0` MVP app-shell and local-state
-milestone. The backend, persistent accounts, production data pipeline, and a
-full analytics dashboard are planned future work.
+This repository currently represents the `v0.4.0` MVP with a complete
+analytics dashboard. The backend, persistent accounts, production data pipeline,
+and real report/CSV export are planned future work.
