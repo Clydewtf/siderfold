@@ -81,6 +81,9 @@ describe('AnalyticsGapsForecast', () => {
     await user.click(screen.getByRole('button', { name: 'Экспорт отчета' }));
     await user.click(screen.getByRole('button', { name: 'Экспорт CSV' }));
     expect(onRequestExport).toHaveBeenCalledTimes(2);
+    ['Экспорт отчета', 'Экспорт CSV'].forEach((name) =>
+      expect(screen.getByRole('button', { name })).not.toHaveClass('transition')
+    );
 
     view.rerender(
       <AnalyticsGapsForecast

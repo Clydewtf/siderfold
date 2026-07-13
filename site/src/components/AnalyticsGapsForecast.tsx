@@ -114,14 +114,14 @@ export function AnalyticsGapsForecast({
           <button
             type="button"
             onClick={onRequestExport}
-            className="inline-flex min-h-11 items-center justify-center rounded-lg bg-ink px-4 py-2 text-sm font-semibold text-white transition hover:bg-ink/85 focus:outline-none focus:ring-2 focus:ring-cobalt focus:ring-offset-2"
+            className="inline-flex min-h-11 items-center justify-center rounded-lg bg-ink px-4 py-2 text-sm font-semibold text-white hover:bg-ink/85 focus:outline-none focus:ring-2 focus:ring-cobalt focus:ring-offset-2"
           >
             Экспорт отчета
           </button>
           <button
             type="button"
             onClick={onRequestExport}
-            className="inline-flex min-h-11 items-center justify-center rounded-lg border border-ink/10 bg-white px-4 py-2 text-sm font-semibold text-graphite transition hover:bg-ink/5 focus:outline-none focus:ring-2 focus:ring-cobalt focus:ring-offset-2"
+            className="inline-flex min-h-11 items-center justify-center rounded-lg border border-ink/10 bg-white px-4 py-2 text-sm font-semibold text-graphite hover:bg-ink/5 focus:outline-none focus:ring-2 focus:ring-cobalt focus:ring-offset-2"
           >
             Экспорт CSV
           </button>
