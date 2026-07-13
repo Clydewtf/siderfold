@@ -5,7 +5,7 @@ import { filterPrograms, sortPrograms } from '../lib/catalog';
 import type { CoverageLevel, ProgramFilters as ProgramFiltersState, SupportProgram, SupportSource } from '../types';
 import { ProgramCard } from './ProgramCard';
 import { ProgramFilters, type FilterOptions } from './ProgramFilters';
-import { EmptyState } from './ui';
+import { EmptyState, PageIntro } from './ui';
 
 const coverageLevels: readonly CoverageLevel[] = ['federal', 'regional', 'municipal', 'private'];
 
@@ -102,21 +102,16 @@ export function ProgramsTab({
   }, []);
 
   return (
-    <div className="mx-auto max-w-7xl overflow-x-hidden px-4 py-12 sm:px-6 lg:px-8">
-      <div className="flex flex-col gap-5 lg:flex-row lg:items-end lg:justify-between">
-        <div>
-          <h1 className="text-4xl font-semibold">Каталог программ</h1>
-          <p className="mt-3 max-w-2xl text-sm leading-6 text-graphite">
-            Поиск, фильтры и сортировка работают в браузере по локальным seed-данным.
-          </p>
-        </div>
-        <p className="rounded-full border border-ink/10 bg-white/70 px-4 py-2 text-sm font-semibold text-graphite">
-          Найдено: {visible.length}
-        </p>
-        <p role="status" aria-live="polite" className="sr-only">Найдено программ: {visible.length}</p>
-      </div>
+    <div className="page-container" data-page="programs">
+      <PageIntro
+        eyebrow="Рабочий каталог"
+        title="Каталог программ"
+        description="Ищите программы по условиям, регионам, срокам и финансированию. Избранное и история просмотра сохраняются локально."
+        aside={<p className="count-badge">Найдено: {visible.length}</p>}
+      />
+      <p role="status" aria-live="polite" className="sr-only">Найдено программ: {visible.length}</p>
 
-      <section className="mt-8">
+      <section className="mt-10">
         <label className="grid gap-1 text-sm font-medium text-graphite">
           Поиск
           <span className="relative">
@@ -133,7 +128,7 @@ export function ProgramsTab({
         <ProgramFilters filters={filters} options={options} isDesktopOpen={isDesktopFiltersOpen} onChange={updateFilters} onReset={resetFilters} />
       </section>
 
-      <section data-density-grid className="mt-8 grid gap-4 lg:grid-cols-2">
+      <section data-density-grid className="mt-8 grid min-w-0 gap-4 lg:grid-cols-[repeat(2,minmax(0,1fr))]">
         {visible.map((program) => (
           <ProgramCard
             key={program.id}

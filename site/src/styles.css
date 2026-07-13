@@ -89,6 +89,15 @@ select {
 .skip-link:focus { transform: translateY(0); }
 .home-title { font-size: clamp(2.5rem, 8vw, 5.5rem); font-weight: 650; letter-spacing: -.045em; line-height: .98; margin-top: .75rem; max-width: 14ch; }
 .home-lead { color: rgb(var(--color-graphite)); font-size: 1.125rem; line-height: 1.75; margin-top: 1.5rem; max-width: 42rem; }
+.count-badge { align-items: center; background: rgb(var(--color-surface) / .78); border: 1px solid rgb(var(--color-ink) / .12); border-radius: 999px; color: rgb(var(--color-graphite)); display: inline-flex; font-size: .875rem; font-weight: 700; min-height: 2.75rem; padding: .5rem 1rem; }
+.profile-section { background: rgb(var(--color-surface) / .58); border: 1px solid rgb(var(--color-ink) / .10); border-radius: 1rem; min-width: 0; padding: clamp(1rem, 3vw, 1.5rem); }
+.profile-section__heading { align-items: start; display: flex; gap: 1rem; justify-content: space-between; margin-bottom: 1rem; }
+.profile-section h2 { font-size: clamp(1.35rem, 3vw, 2rem); font-weight: 650; line-height: 1.1; }
+.profile-card-grid { display: grid; gap: 1rem; grid-template-columns: minmax(0, 1fr); }
+.profile-entity-card, .profile-capability-card { background: rgb(var(--color-surface) / .78); border: 1px solid rgb(var(--color-ink) / .10); border-radius: .875rem; min-width: 0; padding: 1rem; }
+.field-label { display: grid; font-size: .875rem; font-weight: 700; gap: .5rem; min-width: 0; }
+.toggle-row { align-items: center; background: rgb(var(--color-surface) / .68); border: 1px solid rgb(var(--color-ink) / .10); border-radius: .75rem; display: flex; font-size: .875rem; font-weight: 700; gap: .75rem; min-height: 2.75rem; padding: .75rem; }
+@media (min-width: 768px) { .profile-card-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
 
 .grain-overlay {
   position: relative;

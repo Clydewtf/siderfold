@@ -33,7 +33,7 @@ export function ProfileTab({
         aside={<DemoNotice>Демо-режим: локальные функции работают без регистрации.</DemoNotice>}
       />
       <div className="mt-10 grid min-w-0 gap-6 xl:grid-cols-[minmax(0,1.35fr)_minmax(18rem,0.65fr)]">
-        <div className="min-w-0 space-y-6">
+        <div className="min-w-0 break-words space-y-6">
           <ProfileCollections
             favoritePrograms={profile.favoritePrograms}
             favoriteSources={profile.favoriteSources}
@@ -46,12 +46,12 @@ export function ProfileTab({
             onOpenSources={() => actions.navigate('sources')}
           />
         </div>
-        <aside className="min-w-0 space-y-6 xl:sticky xl:top-28 xl:self-start">
+        <aside className="min-w-0 break-words space-y-6 xl:sticky xl:top-28 xl:self-start">
           <ProfileSettings />
           <ProfilePreferences regionOptions={profile.regionOptions} topicOptions={profile.topicOptions} />
         </aside>
       </div>
-      <div className="mt-6"><ProfileBackendPanel /></div>
+      <div className="mt-6 min-w-0 break-words"><ProfileBackendPanel /></div>
     </div>
   );
 }

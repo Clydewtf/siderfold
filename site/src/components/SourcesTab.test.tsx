@@ -19,6 +19,16 @@ function renderSourcesTab(overrides: Partial<ComponentProps<typeof SourcesTab>> 
 }
 
 describe('SourcesTab', () => {
+  it('presents the sources hierarchy and live result count', () => {
+    renderSourcesTab();
+
+    expect(screen.getAllByRole('heading', { level: 1, name: 'Источники программ' })).toHaveLength(1);
+    expect(screen.getByText('Проверенные организации')).toBeInTheDocument();
+    expect(screen.getByText('Фонды, ведомства, университеты, акселераторы и платформы со связанными программами и показателями текущей базы.')).toBeInTheDocument();
+    const count = screen.getByText(`Найдено ${sources.length} источников`);
+    expect(count).toHaveAttribute('aria-live', 'polite');
+  });
+
   it('renders source cards with program counters', () => {
     renderSourcesTab();
 

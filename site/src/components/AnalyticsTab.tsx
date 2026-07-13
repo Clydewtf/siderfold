@@ -11,7 +11,7 @@ import { AnalyticsGapsForecast } from './AnalyticsGapsForecast';
 import { AnalyticsOverview } from './AnalyticsOverview';
 import { AnalyticsSourcesTopics } from './AnalyticsSourcesTopics';
 import { AnalyticsTimeQuality } from './AnalyticsTimeQuality';
-import { EmptyState } from './ui';
+import { DemoNotice, EmptyState, PageIntro } from './ui';
 
 export type AnalyticsTabProps = {
   sources: readonly SupportSource[];
@@ -41,12 +41,13 @@ export function AnalyticsTab({ sources, programs, exportNotice, onRequestExport 
   const resetFilters = () => setFilters(defaultAnalyticsFilters);
 
   return (
-    <div className="mx-auto max-w-7xl overflow-x-hidden px-4 py-12 sm:px-6 lg:px-8">
-      <header>
-        <p className="text-sm font-semibold uppercase tracking-[0.12em] text-cobalt">Мониторинг seed-базы</p>
-        <h1 className="mt-3 text-4xl font-semibold">Аналитика мер поддержки</h1>
-        <p className="mt-4 max-w-3xl text-sm leading-6 text-graphite">Презентационный обзор и фильтруемая BI-зона используют те же программы и источники, что каталог Stargate.</p>
-      </header>
+    <div className="page-container" data-page="analytics">
+      <PageIntro
+        eyebrow="Мониторинг мер поддержки"
+        title="Аналитика мер поддержки"
+        description="Презентационный обзор и фильтруемая BI-зона используют те же программы и источники, что каталог Stargate."
+        aside={<DemoNotice>Демо-режим: выводы рассчитаны по текущей seed-базе.</DemoNotice>}
+      />
       {programs.length === 0 ? <EmptyState title="Аналитическая база пока пуста" description="Добавьте программы в seed-данные, чтобы построить мониторинг." /> : <AnalyticsOverview analytics={analytics} />}
       <section aria-labelledby="bi-monitoring-title" className="mt-16">
         <h2 id="bi-monitoring-title" className="text-3xl font-semibold">BI-мониторинг</h2>

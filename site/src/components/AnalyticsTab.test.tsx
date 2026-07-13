@@ -29,6 +29,16 @@ function renderAnalyticsTab(overrides: AnalyticsTabOverrides = {}) {
 }
 
 describe('AnalyticsTab', () => {
+  it('presents the analytics hierarchy, demo context, and live result count', () => {
+    renderAnalyticsTab();
+
+    expect(screen.getAllByRole('heading', { level: 1, name: 'Аналитика мер поддержки' })).toHaveLength(1);
+    expect(screen.getByText('Мониторинг мер поддержки')).toBeInTheDocument();
+    expect(screen.getByText('Презентационный обзор и фильтруемая BI-зона используют те же программы и источники, что каталог Stargate.')).toBeInTheDocument();
+    expect(screen.getByText('Демо-режим: выводы рассчитаны по текущей seed-базе.')).toBeInTheDocument();
+    expect(screen.getByRole('status')).toHaveTextContent(`Найдено программ: ${programs.length}`);
+  });
+
   it('renders the overview and every monitoring domain', () => {
     renderAnalyticsTab();
 

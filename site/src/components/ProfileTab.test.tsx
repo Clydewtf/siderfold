@@ -38,7 +38,10 @@ describe('ProfileTab', () => {
   it('presents a complete local personal workspace', () => {
     renderProfile();
 
-    expect(screen.getByRole('heading', { level: 1, name: 'Профиль' })).toBeInTheDocument();
+    expect(screen.getAllByRole('heading', { level: 1, name: 'Профиль' })).toHaveLength(1);
+    expect(screen.getByText('Личный кабинет агрегатора')).toBeInTheDocument();
+    expect(screen.getByText('Избранное, история просмотра, предпочтения и настройки сохраняются только в этом браузере. Аккаунт и серверная синхронизация пока не подключены.')).toBeInTheDocument();
+    expect(screen.getByRole('complementary', { name: 'Демо-режим' })).toHaveTextContent('Демо-режим: локальные функции работают без регистрации.');
     for (const heading of [
       'Избранные программы',
       'Недавно просмотренные программы',
