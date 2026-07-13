@@ -16,12 +16,18 @@ describe('AnalyticsOverview', () => {
     expect(screen.getByRole('list', { name: 'Короткие аналитические выводы' })).toBeInTheDocument();
   });
 
-  it('marks every overview grid with an explicit base column and density hook', () => {
+  it('marks every overview-owned grid with an explicit base column and preserves exactly three density hooks', () => {
     const analytics = buildAnalytics(sources, programs);
     const { container } = render(<AnalyticsOverview analytics={analytics} />);
-    const grids = Array.from(container.querySelectorAll('[data-density-grid]'));
+    const densityGrids = Array.from(container.querySelectorAll('[data-density-grid]'));
+    const overviewGrids = [
+      ...container.querySelectorAll('section > div.grid'),
+      ...container.querySelectorAll('section article > div.grid'),
+      ...container.querySelectorAll('section article > ul.grid')
+    ];
 
-    expect(grids).toHaveLength(3);
-    grids.forEach((grid) => expect(grid).toHaveClass('grid-cols-1'));
+    expect(densityGrids).toHaveLength(3);
+    expect(overviewGrids).toHaveLength(5);
+    overviewGrids.forEach((grid) => expect(grid).toHaveClass('grid-cols-1'));
   });
 });

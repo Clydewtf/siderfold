@@ -59,7 +59,7 @@ export function AnalyticsOverview({ analytics }: { analytics: AnalyticsSummary }
         <article data-density-card className={cardClassName}>
           <h3 className="text-xl font-semibold">Ближайшие дедлайны</h3>
           {analytics.temporal.nearestDeadlines.length > 0 ? (
-            <ul className="mt-4 grid gap-3">
+            <ul className="mt-4 grid grid-cols-1 gap-3">
               {analytics.temporal.nearestDeadlines.map((deadline) => (
                 <li key={deadline.programId} className="min-w-0">
                   <p className="break-words text-sm font-semibold">{deadline.title}</p>
@@ -74,7 +74,7 @@ export function AnalyticsOverview({ analytics }: { analytics: AnalyticsSummary }
 
         <article data-density-card className={cardClassName}>
           <h3 className="text-xl font-semibold">Короткие аналитические выводы</h3>
-          <ul aria-label="Короткие аналитические выводы" className="mt-4 grid gap-3 list-disc pl-5 text-sm leading-6">
+          <ul aria-label="Короткие аналитические выводы" className="mt-4 grid grid-cols-1 gap-3 list-disc pl-5 text-sm leading-6">
             {insights.map((insight) => <li key={insight}>{insight}</li>)}
           </ul>
         </article>
