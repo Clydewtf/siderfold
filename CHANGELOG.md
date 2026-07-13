@@ -2,6 +2,27 @@
 
 All notable project milestones are documented in this file.
 
+## v0.4.0 - 2026-07-13
+
+Analytics UI.
+
+### Added
+
+- Dedicated analytics section with presentation overview and filterable BI monitoring.
+- Financial, regional, source, topic, temporal, data-quality and support-gap views over the shared analytics engine.
+- Transparent demo forecast over historical seed data and backend-only report/CSV export actions.
+- Component and end-to-end coverage for analytics filters, empty states, accessibility and responsive behavior.
+
+### Changed
+
+- Analytics now exposes deadline seasonality and peak activity windows as a minimal pure-engine aggregate.
+- Project version is now `0.4.0` for the new user-facing analytics module.
+
+### Notes
+
+- All conclusions and forecasts are calculated from the current seed database and do not describe the complete support market.
+- Report and CSV export remain unavailable until backend integration.
+
 ## v0.3.0 - 2026-07-12
 
 Catalog And Sources Upgrade.
