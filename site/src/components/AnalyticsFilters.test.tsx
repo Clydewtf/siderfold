@@ -19,6 +19,25 @@ const options: AnalyticsFilterOptions = {
 };
 
 describe('AnalyticsFiltersPanel', () => {
+  it('shows the selected source name in the active filter chip', () => {
+    const source = sources.find((item) => item.id === 'impact-hub');
+
+    expect(source).toBeDefined();
+    if (!source) throw new Error('Expected the Impact Hub source fixture.');
+
+    render(
+      <AnalyticsFiltersPanel
+        filters={{ ...defaultAnalyticsFilters, sourceId: source.id }}
+        options={options}
+        onChange={() => undefined}
+        onReset={() => undefined}
+      />
+    );
+
+    expect(screen.getByText(`Источник: ${source.name}`)).toBeInTheDocument();
+    expect(screen.queryByText(`Источник: ${source.id}`)).not.toBeInTheDocument();
+  });
+
   it('renders the controlled BI filter disclosure with exact labels', () => {
     render(
       <AnalyticsFiltersPanel

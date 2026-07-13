@@ -3,6 +3,7 @@ import userEvent from '@testing-library/user-event';
 import { describe, expect, it, vi } from 'vitest';
 import { programs, sources } from '../data/seed';
 import { buildAnalytics } from '../lib/analytics';
+import { buildAnalyticsInsights } from '../lib/analyticsPresentation';
 import { formatMoneyRub } from '../lib/format';
 import type { SupportProgram, SupportSource } from '../types';
 import { AnalyticsTab } from './AnalyticsTab';
@@ -60,16 +61,21 @@ describe('AnalyticsTab', () => {
     expect(screen.getByText(`Найдено программ: ${programs.length}`, { selector: 'p:not(.sr-only)' })).toBeInTheDocument();
   });
 
-  it('uses the selected slice for regional, source, and finance details', async () => {
+  it('uses the selected slice for overview metrics, insights, and monitoring details', async () => {
     const user = userEvent.setup();
     renderAnalyticsTab();
     await user.click(screen.getByText('Фильтры аналитики'));
     await user.selectOptions(screen.getByLabelText('Регион аналитики'), 'Москва');
     const filtered = buildAnalytics(sources, programs, { region: 'Москва' });
+    const filteredInsights = buildAnalyticsInsights(filtered);
+    expect(filtered.totalPrograms).not.toBe(programs.length);
+    expect(filteredInsights).not.toEqual(buildAnalyticsInsights(buildAnalytics(sources, programs)));
 
     const overviewMetric = screen.getByText('Всего программ', { exact: true }).closest('article');
     expect(overviewMetric).not.toBeNull();
-    expect(within(overviewMetric!).getByText(String(programs.length), { exact: true })).toBeInTheDocument();
+    expect(within(overviewMetric!).getByText(String(filtered.totalPrograms), { exact: true })).toBeInTheDocument();
+    const insights = screen.getByRole('list', { name: 'Короткие аналитические выводы' });
+    expect(within(insights).getByText(filteredInsights[0], { exact: true })).toBeInTheDocument();
     const regionTable = screen.getByRole('region', { name: 'Региональная аналитика' });
     expect(
       within(regionTable).getByRole('rowheader', { name: filtered.regional.regions[0].region })

@@ -26,7 +26,6 @@ function unique<T extends string>(values: readonly T[]): T[] {
 
 export function AnalyticsTab({ sources, programs, exportNotice, onRequestExport }: AnalyticsTabProps) {
   const [filters, setFilters] = useState<AnalyticsFilters>(defaultAnalyticsFilters);
-  const overview = useMemo(() => buildAnalytics(sources, programs), [sources, programs]);
   const analytics = useMemo(() => buildAnalytics(sources, programs, filters), [sources, programs, filters]);
   const options = useMemo<AnalyticsFilterOptions>(() => ({
     regions: unique(programs.flatMap((program) => program.regions)),
@@ -48,7 +47,7 @@ export function AnalyticsTab({ sources, programs, exportNotice, onRequestExport 
         <h1 className="mt-3 text-4xl font-semibold">Аналитика мер поддержки</h1>
         <p className="mt-4 max-w-3xl text-sm leading-6 text-graphite">Презентационный обзор и фильтруемая BI-зона используют те же программы и источники, что каталог Stargate.</p>
       </header>
-      {programs.length === 0 ? <EmptyState title="Аналитическая база пока пуста" description="Добавьте программы в seed-данные, чтобы построить мониторинг." /> : <AnalyticsOverview analytics={overview} />}
+      {programs.length === 0 ? <EmptyState title="Аналитическая база пока пуста" description="Добавьте программы в seed-данные, чтобы построить мониторинг." /> : <AnalyticsOverview analytics={analytics} />}
       <section aria-labelledby="bi-monitoring-title" className="mt-16">
         <h2 id="bi-monitoring-title" className="text-3xl font-semibold">BI-мониторинг</h2>
         <p className="mt-2 text-sm text-graphite">Все блоки ниже перестраиваются по выбранному срезу.</p>

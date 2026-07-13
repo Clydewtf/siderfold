@@ -34,12 +34,15 @@ const deadlineOptions = [
   ['next90', 'В следующие 90 дней']
 ] as const;
 
-function activeFilterLabels(filters: AnalyticsFilters): string[] {
+function activeFilterLabels(filters: AnalyticsFilters, sources: readonly SupportSource[]): string[] {
   const labels: string[] = [];
   if (filters.region !== defaultAnalyticsFilters.region) labels.push(`Регион: ${filters.region}`);
   if (filters.year !== defaultAnalyticsFilters.year) labels.push(`Год: ${filters.year}`);
   if (filters.coverageLevel !== defaultAnalyticsFilters.coverageLevel) labels.push(`Уровень: ${formatCoverageLevel(filters.coverageLevel as CoverageLevel)}`);
-  if (filters.sourceId !== defaultAnalyticsFilters.sourceId) labels.push(`Источник: ${filters.sourceId}`);
+  if (filters.sourceId !== defaultAnalyticsFilters.sourceId) {
+    const sourceName = sources.find((source) => source.id === filters.sourceId)?.name ?? filters.sourceId;
+    labels.push(`Источник: ${sourceName}`);
+  }
   if (filters.supportType !== defaultAnalyticsFilters.supportType) labels.push(`Тип поддержки: ${filters.supportType}`);
   if (filters.topic !== defaultAnalyticsFilters.topic) labels.push(`Тематика: ${filters.topic}`);
   if (filters.audience !== defaultAnalyticsFilters.audience) labels.push(`Аудитория: ${filters.audience}`);
@@ -57,7 +60,7 @@ export function AnalyticsFiltersPanel({ filters, options, onChange, onReset }: A
   const [isOpen, setIsOpen] = useState(() => (
     typeof window !== 'undefined' && window.matchMedia('(min-width: 1024px)').matches
   ));
-  const chips = activeFilterLabels(filters);
+  const chips = activeFilterLabels(filters, options.sources);
 
   useEffect(() => {
     const mediaQuery = window.matchMedia('(min-width: 1024px)');
