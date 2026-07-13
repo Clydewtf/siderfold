@@ -223,6 +223,36 @@ describe('temporal analytics', () => {
     ]);
   });
 
+  it('aggregates deadlines by calendar month and identifies deterministic peak windows', () => {
+    const result = buildAnalytics(sources, programs);
+    const totalDeadlines = result.temporal.byDeadlineMonth.reduce(
+      (total, item) => total + item.deadlineCount,
+      0
+    );
+
+    expect(result.temporal.byDeadlineMonth).toHaveLength(12);
+    expect(result.temporal.byDeadlineMonth.map((item) => item.month)).toEqual([
+      1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12
+    ]);
+    expect(totalDeadlines).toBe(programs.filter((program) => program.deadline !== null).length);
+    expect(result.temporal.peakDeadlineMonths).toEqual(
+      [...result.temporal.byDeadlineMonth]
+        .filter((item) => item.deadlineCount > 0)
+        .sort((a, b) => b.deadlineCount - a.deadlineCount || a.month - b.month)
+        .slice(0, 3)
+    );
+  });
+
+  it('rebuilds deadline seasonality after filtering and returns twelve zero months for no matches', () => {
+    const filtered = buildAnalytics(sources, programs, { sourceId: 'impact-hub' });
+    const empty = buildAnalytics(sources, programs, { sourceId: 'missing-source' });
+
+    expect(filtered.temporal.byDeadlineMonth.reduce((sum, item) => sum + item.deadlineCount, 0))
+      .toBe(applyAnalyticsFilters(programs, { sourceId: 'impact-hub' }).filter((program) => program.deadline).length);
+    expect(empty.temporal.byDeadlineMonth.every((item) => item.deadlineCount === 0)).toBe(true);
+    expect(empty.temporal.peakDeadlineMonths).toEqual([]);
+  });
+
   it('returns empty temporal analytics for empty input', () => {
     const analytics = buildAnalytics(syntheticSources, []);
 
@@ -230,7 +260,13 @@ describe('temporal analytics', () => {
       nearestDeadline: null,
       nearestDeadlines: [],
       withoutDeadline: [],
-      byYear: []
+      byYear: [],
+      byDeadlineMonth: Array.from({ length: 12 }, (_, index) => ({
+        month: index + 1,
+        label: expect.any(String),
+        deadlineCount: 0
+      })),
+      peakDeadlineMonths: []
     });
   });
 
