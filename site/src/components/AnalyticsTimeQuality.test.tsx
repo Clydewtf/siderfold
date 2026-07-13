@@ -50,6 +50,10 @@ describe('AnalyticsTimeQuality', () => {
       expect(screen.getByText(label, { exact: true })).toBeInTheDocument()
     );
 
+    const densityGrids = Array.from(view.container.querySelectorAll('[data-density-grid]'));
+    expect(densityGrids).toHaveLength(3);
+    densityGrids.forEach((grid) => expect(grid).toHaveClass('grid-cols-1', 'md:grid-cols-2', 'lg:grid-cols-2'));
+
     const sourceWithoutPrograms = { ...sources[0], id: 'unobserved-source', name: 'Источник без наблюдений' };
     const nullableQuality = buildAnalytics([...sources, sourceWithoutPrograms], programs);
     view.rerender(

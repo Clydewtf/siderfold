@@ -56,7 +56,7 @@ export function AnalyticsTimeQuality({
       <section aria-labelledby="analytics-time-title" className="mt-10">
         <h2 id="analytics-time-title" className="text-3xl font-semibold">Время и дедлайны</h2>
 
-        <div data-density-grid className="mt-5 grid grid-cols-1 gap-4 lg:grid-cols-2">
+        <div data-density-grid className="mt-5 grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-2">
           <article data-density-card className={cardClassName}>
             <h3 className="text-xl font-semibold">Ближайшие дедлайны</h3>
             {temporal.nearestDeadlines.length > 0 ? (
@@ -90,7 +90,7 @@ export function AnalyticsTimeQuality({
           </article>
         </div>
 
-        <div data-density-grid className="mt-6 grid grid-cols-1 gap-4 lg:grid-cols-2">
+        <div data-density-grid className="mt-6 grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-2">
           <article data-density-card className={cardClassName}>
             <h3 className="text-xl font-semibold">Сезонность дедлайнов</h3>
             <div className="mt-4">
@@ -158,7 +158,7 @@ export function AnalyticsTimeQuality({
           <p className="mt-5 text-sm text-graphite">Нет записей для оценки качества</p>
         ) : (
           <>
-            <div data-density-grid className="mt-5 grid grid-cols-1 gap-4 lg:grid-cols-2">
+            <div data-density-grid className="mt-5 grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-2">
               <div>
                 <h3 className="text-xl font-semibold">Полнота базы</h3>
                 <div className="mt-4">
