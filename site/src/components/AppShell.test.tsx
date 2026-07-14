@@ -33,6 +33,10 @@ describe('AppShell', () => {
     expect(catalog).toHaveFocus();
     expect(onTabChange).toHaveBeenLastCalledWith('programs');
 
+    await user.keyboard('{ArrowLeft}');
+    expect(home).toHaveFocus();
+    expect(onTabChange).toHaveBeenLastCalledWith('home');
+
     await user.keyboard('{End}');
     expect(profile).toHaveFocus();
     expect(onTabChange).toHaveBeenLastCalledWith('profile');
@@ -50,5 +54,6 @@ describe('AppShell', () => {
     expect(styles).toContain('button, input, select, summary { touch-action: manipulation; }');
     expect(styles).toContain("input[type='checkbox'] { accent-color: rgb(var(--color-cobalt)); min-height: 1.25rem; min-width: 1.25rem; }");
     expect(styles).toContain("button:disabled, [aria-disabled='true'] { cursor: not-allowed; opacity: .58; }");
+    expect(styles).not.toContain('overflow-x: hidden');
   });
 });
