@@ -50,6 +50,15 @@
   transition-duration: 0.01ms !important;
 }
 
+:root[data-reduced-motion='true'] .app-header,
+:root[data-reduced-motion='true'] .app-header * {
+  animation: none !important;
+  opacity: 1 !important;
+  transform: none !important;
+  transition: none !important;
+  visibility: visible !important;
+}
+
 * {
   box-sizing: border-box;
 }

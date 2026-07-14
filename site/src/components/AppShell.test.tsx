@@ -56,4 +56,17 @@ describe('AppShell', () => {
     expect(styles).toContain("button:disabled, [aria-disabled='true'] { cursor: not-allowed; opacity: .58; }");
     expect(styles).not.toContain('overflow-x: hidden');
   });
+
+  it('keeps the shell header fully visible when local reduced motion is enabled', () => {
+    const styles = readFileSync('src/styles.css', 'utf8');
+
+    expect(styles).toContain(`:root[data-reduced-motion='true'] .app-header,
+:root[data-reduced-motion='true'] .app-header * {
+  animation: none !important;
+  opacity: 1 !important;
+  transform: none !important;
+  transition: none !important;
+  visibility: visible !important;
+}`);
+  });
 });
