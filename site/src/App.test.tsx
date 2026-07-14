@@ -26,6 +26,17 @@ describe('App navigation', () => {
     ]);
   });
 
+  it('does not emit a scroll API error when mounting the app', () => {
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+
+    try {
+      render(<App />);
+      expect(consoleError).not.toHaveBeenCalled();
+    } finally {
+      consoleError.mockRestore();
+    }
+  });
+
   it('switches every new shell section without reload', async () => {
     const user = userEvent.setup();
     render(<App />);

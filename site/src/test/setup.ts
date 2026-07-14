@@ -1,5 +1,7 @@
 import '@testing-library/jest-dom/vitest';
-import { afterEach } from 'vitest';
+import { afterEach, vi } from 'vitest';
+
+vi.stubGlobal('scrollTo', vi.fn());
 
 if (typeof window.matchMedia !== 'function') {
   Object.defineProperty(window, 'matchMedia', {
