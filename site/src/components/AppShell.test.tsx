@@ -19,7 +19,7 @@ describe('AppShell', () => {
     expect(screen.getAllByRole('main')).toHaveLength(1);
     expect(screen.getByRole('main')).toHaveAttribute('id', 'main-content');
     expect(screen.getByText('Демо-режим')).toBeInTheDocument();
-    expect(screen.getByText('v0.4.0')).toBeInTheDocument();
+    expect(screen.getByLabelText('Версия 0.5.0')).toHaveTextContent('v0.5.0');
     expect(screen.getAllByRole('tab')).toHaveLength(5);
 
     const home = screen.getByRole('tab', { name: 'Главная' });
