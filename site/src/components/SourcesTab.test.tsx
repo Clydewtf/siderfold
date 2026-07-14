@@ -160,7 +160,10 @@ describe('SourcesTab', () => {
     const user = userEvent.setup();
     const onToggleFavoriteSource = vi.fn();
     renderSourcesTab({ favoriteSourceIds: ['fond-potanin'], onToggleFavoriteSource });
-    expect(screen.getByRole('button', { name: 'Удалить Фонд Потанина из избранного' })).toHaveAttribute('aria-pressed', 'true');
+    const favorite = screen.getByRole('button', { name: 'Удалить Фонд Потанина из избранного' });
+    expect(favorite).toHaveAttribute('aria-pressed', 'true');
+    expect(favorite).toHaveClass('h-11', 'w-11');
+    expect(favorite.querySelector('svg')).toBeInTheDocument();
     await user.click(screen.getByRole('button', { name: 'Добавить Impact Hub Moscow в избранное' }));
     expect(onToggleFavoriteSource).toHaveBeenCalledWith('impact-hub');
   });

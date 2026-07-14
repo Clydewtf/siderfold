@@ -165,8 +165,9 @@ describe('App navigation', () => {
     await user.click(screen.getByRole('tab', { name: 'Профиль' }));
     await user.click(screen.getByRole('button', { name: 'Открыть программу Старт-ИИ' }));
 
-    expect(screen.getByRole('dialog', { name: 'Старт-ИИ' })).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'Удалить Старт-ИИ из избранного' })).toBeInTheDocument();
+    const dialog = screen.getByRole('dialog', { name: 'Старт-ИИ' });
+    expect(dialog).toBeInTheDocument();
+    expect(within(dialog).getByRole('button', { name: 'Удалить Старт-ИИ из избранного' })).toBeInTheDocument();
   });
 
   it('opens a source-related program and records it as recently viewed', async () => {

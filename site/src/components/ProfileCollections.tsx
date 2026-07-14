@@ -1,5 +1,6 @@
 import type { ProfileViewModel } from '../lib/profile';
 import type { SupportProgram, SupportSource } from '../types';
+import { FavoriteToggle } from './FavoriteToggle';
 import { EmptyState } from './ui';
 
 export type ProfileCollectionsProps = Pick<
@@ -45,14 +46,16 @@ export function ProfileCollections({
           <ul data-density-grid className="profile-card-grid">
             {favoritePrograms.map((program) => (
               <li key={program.id} data-density-card className="profile-entity-card flex h-full flex-col">
-                <div className="min-w-0">
-                  <p className="eyebrow">Источник: {sourceById.get(program.sourceId)?.name ?? 'не найден'}</p>
-                  <h3 className="break-words text-xl font-semibold">{program.title}</h3>
-                  <p className="mt-2 line-clamp-2 text-sm leading-6 text-graphite">{program.description}</p>
+                <div className="flex items-start justify-between gap-3">
+                  <div className="min-w-0">
+                    <p className="eyebrow">Источник: {sourceById.get(program.sourceId)?.name ?? 'не найден'}</p>
+                    <h3 className="break-words text-xl font-semibold">{program.title}</h3>
+                  </div>
+                  <FavoriteToggle itemName={program.title} isFavorite onToggle={() => onToggleFavoriteProgram(program.id)} />
                 </div>
-                <div className="mt-auto flex flex-wrap gap-2 pt-5">
+                <p className="mt-2 line-clamp-2 text-sm leading-6 text-graphite">{program.description}</p>
+                <div className="mt-auto pt-5">
                   <button type="button" className="button-primary" onClick={() => onOpenProgram(program)} aria-label={`Открыть программу ${program.title}`}>Открыть</button>
-                  <button type="button" className="button-secondary" onClick={() => onToggleFavoriteProgram(program.id)} aria-label={`Убрать программу ${program.title} из избранного`}>Убрать</button>
                 </div>
               </li>
             ))}
@@ -94,12 +97,14 @@ export function ProfileCollections({
         ) : (
           <ul data-density-grid className="profile-card-grid">
             {favoriteSources.map((source) => <li key={source.id} data-density-card className="profile-entity-card flex h-full flex-col">
-              <p className="eyebrow">{source.type} · {source.region}</p>
-              <h3 className="mt-2 break-words text-xl font-semibold">{source.name}</h3>
-              <p className="mt-2 text-sm leading-6 text-graphite">{source.trustNote}</p>
-              <div className="mt-auto pt-5">
-                <button type="button" className="button-secondary" onClick={() => onToggleFavoriteSource(source.id)} aria-label={`Удалить ${source.name} из избранного`}>Убрать</button>
+              <div className="flex items-start justify-between gap-3">
+                <div className="min-w-0">
+                  <p className="eyebrow">{source.type} · {source.region}</p>
+                  <h3 className="mt-2 break-words text-xl font-semibold">{source.name}</h3>
+                </div>
+                <FavoriteToggle itemName={source.name} isFavorite onToggle={() => onToggleFavoriteSource(source.id)} />
               </div>
+              <p className="mt-2 text-sm leading-6 text-graphite">{source.trustNote}</p>
             </li>)}
           </ul>
         )}

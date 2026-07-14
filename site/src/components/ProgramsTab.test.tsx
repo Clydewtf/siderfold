@@ -237,6 +237,8 @@ describe('ProgramsTab', () => {
 
     const favorite = screen.getByRole('button', { name: 'Удалить Старт-ИИ из избранного' });
     expect(favorite).toHaveAttribute('aria-pressed', 'true');
+    expect(favorite).toHaveClass('h-11', 'w-11');
+    expect(favorite.querySelector('svg')).toBeInTheDocument();
     await user.click(favorite);
     expect(onToggleFavoriteProgram).toHaveBeenCalledWith('fasie-start-ai');
     expect(onOpenProgram).not.toHaveBeenCalled();

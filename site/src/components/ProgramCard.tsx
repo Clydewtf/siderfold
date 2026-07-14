@@ -1,6 +1,7 @@
 import { ExternalLink } from 'lucide-react';
 import { formatActivePeriod, formatCoverageLevel, formatDeadline, formatProgramFundingLabel, isValidExternalUrl } from '../lib/format';
 import type { SupportProgram, SupportSource } from '../types';
+import { FavoriteToggle } from './FavoriteToggle';
 import { Tag } from './ui';
 
 export type ProgramCardProps = {
@@ -26,8 +27,13 @@ export function ProgramCard({ program, source, isFavorite, showDataQuality, onTo
         <Tag>{program.supportType}</Tag>
         <Tag>{formatCoverageLevel(program.coverageLevel)}</Tag>
       </div>
-      <h2 className="mt-5 text-xl font-semibold">{program.title}</h2>
-      <p className="mt-1 text-sm font-medium text-cobalt">{source?.name ?? 'Источник не найден'}</p>
+      <div className="mt-5 flex items-start justify-between gap-3">
+        <div className="min-w-0">
+          <h2 className="break-words text-xl font-semibold">{program.title}</h2>
+          <p className="mt-1 text-sm font-medium text-cobalt">{source?.name ?? 'Источник не найден'}</p>
+        </div>
+        <FavoriteToggle itemName={program.title} isFavorite={isFavorite} onToggle={onToggleFavorite} />
+      </div>
       <p className="mt-3 line-clamp-3 text-sm leading-6 text-graphite">{program.description}</p>
       <div className="mt-4 flex flex-wrap gap-2">
         {shownTopics.map((topic) => <Tag key={topic}>{topic}</Tag>)}
@@ -41,9 +47,6 @@ export function ProgramCard({ program, source, isFavorite, showDataQuality, onTo
       </dl>
       {showDataQuality ? <p className="mt-4 text-xs text-graphite/75">Полнота данных: {program.dataQuality.score}%. Не заполнено полей: {program.dataQuality.missingFields.length}.</p> : null}
       <div className="mt-5 flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-center">
-        <button type="button" aria-pressed={isFavorite} aria-label={isFavorite ? `Удалить ${program.title} из избранного` : `Добавить ${program.title} в избранное`} onClick={onToggleFavorite} className="inline-flex min-h-11 items-center justify-center rounded-lg border border-ink/10 px-4 py-2 text-sm font-semibold text-graphite transition hover:bg-white">
-          {isFavorite ? 'В избранном' : 'В избранное'}
-        </button>
         <button type="button" onClick={onOpen} aria-label={`Подробнее о программе ${program.title}`} className="inline-flex min-h-11 items-center justify-center rounded-lg bg-ink px-4 py-2 text-sm font-semibold text-white transition hover:bg-ink/85 focus:outline-none focus:ring-2 focus:ring-cobalt focus:ring-offset-2">
           Подробнее
         </button>

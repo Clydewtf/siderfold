@@ -9,6 +9,7 @@ import {
   isValidExternalUrl
 } from '../lib/format';
 import type { DataQualityField, SupportProgram, SupportSource } from '../types';
+import { FavoriteToggle } from './FavoriteToggle';
 import { Tag } from './ui';
 
 const focusableSelector = [
@@ -105,7 +106,14 @@ export function ProgramDrawer({
   }
 
   return (
-    <div className="fixed inset-0 z-50 flex justify-end bg-ink/45 p-3 backdrop-blur-sm" role="presentation">
+    <div
+      data-testid="program-drawer-overlay"
+      className="program-drawer-overlay fixed inset-0 z-50 flex justify-end p-3 backdrop-blur-sm"
+      role="presentation"
+      onClick={(event) => {
+        if (event.target === event.currentTarget) onClose();
+      }}
+    >
       <section
         ref={dialogRef}
         role="dialog"
@@ -115,30 +123,22 @@ export function ProgramDrawer({
         onKeyDown={handleKeyDown}
         className="h-full w-full max-w-2xl overflow-y-auto rounded-lg bg-paper p-6 shadow-panel"
       >
-        <div className="flex items-start justify-between gap-4">
-          <div>
+        <div data-testid="program-drawer-header" className="grid grid-cols-[minmax(0,1fr)_auto] items-start gap-4">
+          <div className="min-w-0">
             <p className="text-sm font-semibold text-cobalt">{source?.name ?? 'Источник не найден'}</p>
-            <h2 className="mt-2 text-3xl font-semibold text-ink">{program.title}</h2>
+            <h2 className="mt-2 break-words text-3xl font-semibold text-ink">{program.title}</h2>
           </div>
-          <div className="flex items-center gap-2">
+          <div className="flex shrink-0 items-center gap-2">
             <button
               ref={closeButtonRef}
               type="button"
               onClick={onClose}
               aria-label="Закрыть детали"
-              className="rounded-full border border-ink/10 bg-white p-2 text-ink"
+              className="order-2 inline-flex h-11 w-11 items-center justify-center rounded-full bg-ink text-white"
             >
               <X className="h-5 w-5" aria-hidden="true" />
             </button>
-            <button
-              type="button"
-              aria-pressed={isFavorite}
-              aria-label={isFavorite ? `Удалить ${program.title} из избранного` : `Добавить ${program.title} в избранное`}
-              onClick={onToggleFavorite}
-              className="rounded-full border border-ink/10 bg-white px-3 py-2 text-sm font-semibold text-ink"
-            >
-              {isFavorite ? 'В избранном' : 'В избранное'}
-            </button>
+            <FavoriteToggle itemName={program.title} isFavorite={isFavorite} onToggle={onToggleFavorite} className="order-1" />
           </div>
         </div>
 

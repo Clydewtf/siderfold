@@ -2,6 +2,7 @@ import { ExternalLink } from 'lucide-react';
 import type { SourceAnalyticsItem } from '../lib/analytics';
 import { formatCoverageLevel, formatMoneyRub, isValidExternalUrl } from '../lib/format';
 import type { SupportSource } from '../types';
+import { FavoriteToggle } from './FavoriteToggle';
 import { Tag } from './ui';
 
 export type SourceCardProps = {
@@ -44,7 +45,10 @@ export function SourceCard({
           <p>{metrics.activeProgramCount} активные</p>
         </div>
       </div>
-      <p className="mt-5 text-xl font-semibold text-ink">{source.name}</p>
+      <div className="mt-5 flex items-start justify-between gap-3">
+        <p className="min-w-0 break-words text-xl font-semibold text-ink">{source.name}</p>
+        <FavoriteToggle itemName={source.name} isFavorite={isFavorite} onToggle={onToggleFavorite} />
+      </div>
       <p className="mt-3 text-sm leading-6 text-graphite">{source.description}</p>
       <div className="mt-4 flex flex-wrap gap-2">
         <Tag>{source.type}</Tag>
@@ -73,15 +77,6 @@ export function SourceCard({
       ) : null}
       {selected ? <p className="mt-3 w-fit rounded-full bg-cobalt/10 px-3 py-1 text-xs font-semibold text-cobalt">Выбран</p> : null}
       <div data-testid={`source-card-actions-${source.id}`} className="mt-auto flex flex-col gap-3 pt-5">
-        <button
-          type="button"
-          aria-pressed={isFavorite}
-          aria-label={isFavorite ? `Удалить ${source.name} из избранного` : `Добавить ${source.name} в избранное`}
-          onClick={onToggleFavorite}
-          className="rounded-full border border-ink/10 bg-white/70 px-3 py-2 text-xs font-semibold text-ink"
-        >
-          {isFavorite ? 'В избранном' : 'В избранное'}
-        </button>
         <button
           type="button"
           aria-pressed={selected}

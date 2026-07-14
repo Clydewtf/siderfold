@@ -1,3 +1,4 @@
+import { readFileSync } from 'node:fs';
 import { render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { describe, expect, it, vi } from 'vitest';
@@ -70,5 +71,23 @@ describe('ProgramDrawer', () => {
     view.unmount();
     expect(opener).toHaveFocus();
     opener.remove();
+  });
+
+  it('keeps fixed drawer actions for a long title and closes from its backdrop', async () => {
+    const user = userEvent.setup();
+    const onClose = vi.fn();
+    renderDrawer({ program: { ...program, title: 'Очень длинное название программы, которое переносится на несколько строк' }, onClose });
+
+    expect(screen.getByTestId('program-drawer-header')).toHaveClass('grid');
+    expect(screen.getByTestId('program-drawer-overlay')).toHaveClass('program-drawer-overlay');
+    expect(screen.getByRole('button', { name: 'Закрыть детали' })).toHaveClass('h-11', 'w-11');
+    await user.click(screen.getByTestId('program-drawer-overlay'));
+    expect(onClose).toHaveBeenCalledOnce();
+  });
+
+  it('uses a translucent dedicated overlay class in dark theme', () => {
+    expect(readFileSync('src/styles.css', 'utf8')).toContain(
+      ":root[data-theme='dark'] .program-drawer-overlay { background-color: rgb(3 5 8 / .58); }"
+    );
   });
 });
