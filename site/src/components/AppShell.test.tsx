@@ -57,6 +57,23 @@ describe('AppShell', () => {
     expect(styles).not.toContain('overflow-x: hidden');
   });
 
+  it('uses an inverted high-contrast treatment for the selected tab in dark theme', () => {
+    const styles = readFileSync('src/styles.css', 'utf8');
+
+    expect(styles).toContain(`:root[data-theme='dark'] [role='tab'][aria-selected='true'] {
+  background-color: rgb(var(--color-ink));
+  color: rgb(var(--color-paper));
+}`);
+  });
+
+  it('limits the dark ink fill to actual ink surfaces and primary-button hover states', () => {
+    const styles = readFileSync('src/styles.css', 'utf8');
+
+    expect(styles).toContain(`:root[data-theme='dark'] [class~='bg-ink'],
+:root[data-theme='dark'] [class~='hover:bg-ink/85']:hover {`);
+    expect(styles).not.toContain(":root[data-theme='dark'] [class*='bg-ink'] {");
+  });
+
   it('keeps the shell header fully visible when local reduced motion is enabled', () => {
     const styles = readFileSync('src/styles.css', 'utf8');
 

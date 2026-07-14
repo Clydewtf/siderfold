@@ -29,8 +29,14 @@
   background-color: rgb(var(--color-surface) / 0.82);
 }
 
-:root[data-theme='dark'] [class*='bg-ink'] {
+:root[data-theme='dark'] [class~='bg-ink'],
+:root[data-theme='dark'] [class~='hover:bg-ink/85']:hover {
   background-color: rgb(10 12 15);
+}
+
+:root[data-theme='dark'] [role='tab'][aria-selected='true'] {
+  background-color: rgb(var(--color-ink));
+  color: rgb(var(--color-paper));
 }
 
 .program-drawer-overlay { background-color: rgb(16 16 15 / .45); }
