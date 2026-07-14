@@ -35,6 +35,32 @@ describe('App navigation', () => {
     expect(screen.getByRole('heading', { name: 'Профиль' })).toBeInTheDocument();
   });
 
+  it('starts a new tab at the top and restores each visited tab position', async () => {
+    const user = userEvent.setup();
+    const scrollTo = vi.fn();
+    const originalScrollTo = window.scrollTo;
+    const originalScrollY = Object.getOwnPropertyDescriptor(window, 'scrollY');
+    window.scrollTo = scrollTo;
+    Object.defineProperty(window, 'scrollY', { configurable: true, value: 0 });
+
+    try {
+      render(<App />);
+      await user.click(screen.getByRole('tab', { name: 'Источники' }));
+      expect(scrollTo).toHaveBeenLastCalledWith({ top: 0, behavior: 'auto' });
+
+      Object.defineProperty(window, 'scrollY', { configurable: true, value: 480 });
+      await user.click(screen.getByRole('tab', { name: 'Аналитика' }));
+      expect(scrollTo).toHaveBeenLastCalledWith({ top: 0, behavior: 'auto' });
+
+      Object.defineProperty(window, 'scrollY', { configurable: true, value: 210 });
+      await user.click(screen.getByRole('tab', { name: 'Источники' }));
+      expect(scrollTo).toHaveBeenLastCalledWith({ top: 480, behavior: 'auto' });
+    } finally {
+      window.scrollTo = originalScrollTo;
+      if (originalScrollY) Object.defineProperty(window, 'scrollY', originalScrollY);
+    }
+  });
+
   it('renders clickable Stargate brand and primary navigation labels', async () => {
     const user = userEvent.setup();
     render(<App />);

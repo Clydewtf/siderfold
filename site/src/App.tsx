@@ -1,4 +1,4 @@
-import { useRef } from 'react';
+import { useLayoutEffect, useRef } from 'react';
 import { programs, sources } from './data/seed';
 import { AppShell } from './components/AppShell';
 import { AnalyticsTab } from './components/AnalyticsTab';
@@ -9,10 +9,20 @@ import { ProgramsTab } from './components/ProgramsTab';
 import { SourcesTab } from './components/SourcesTab';
 import { useGsapEntrance } from './motion/useGsapEntrance';
 import { AppStateProvider, useAppState } from './state/AppStateProvider';
+import type { TabId } from './types';
 
 function AppContent() {
   const rootRef = useRef<HTMLElement>(null);
   const { state, actions } = useAppState();
+  const scrollPositionsRef = useRef<Partial<Record<TabId, number>>>({});
+  const previousTabRef = useRef(state.activeTab);
+
+  useLayoutEffect(() => {
+    scrollPositionsRef.current[previousTabRef.current] = window.scrollY;
+    window.scrollTo({ top: scrollPositionsRef.current[state.activeTab] ?? 0, behavior: 'auto' });
+    previousTabRef.current = state.activeTab;
+  }, [state.activeTab]);
+
   const selectedProgram =
     programs.find((program) => program.id === state.selectedProgramId) ?? null;
   const selectedSource = selectedProgram
