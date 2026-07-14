@@ -1,3 +1,4 @@
+import { readFileSync } from 'node:fs';
 import { render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { describe, expect, it, vi } from 'vitest';
@@ -25,6 +26,8 @@ describe('AppShell', () => {
     const catalog = screen.getByRole('tab', { name: 'Каталог' });
     const profile = screen.getByRole('tab', { name: 'Профиль' });
 
+    expect(home).toHaveAttribute('tabindex', '0');
+
     home.focus();
     await user.keyboard('{ArrowRight}');
     expect(catalog).toHaveFocus();
@@ -37,5 +40,15 @@ describe('AppShell', () => {
     await user.keyboard('{Home}');
     expect(home).toHaveFocus();
     expect(onTabChange).toHaveBeenLastCalledWith('home');
+  });
+
+  it('defines visible keyboard focus and safe native control defaults globally', () => {
+    const styles = readFileSync('src/styles.css', 'utf8');
+
+    expect(styles).toContain(':where(a, button, input, select, summary, [tabindex]):focus-visible');
+    expect(styles).toContain('outline: 3px solid rgb(var(--color-cobalt));');
+    expect(styles).toContain('button, input, select, summary { touch-action: manipulation; }');
+    expect(styles).toContain("input[type='checkbox'] { accent-color: rgb(var(--color-cobalt)); min-height: 1.25rem; min-width: 1.25rem; }");
+    expect(styles).toContain("button:disabled, [aria-disabled='true'] { cursor: not-allowed; opacity: .58; }");
   });
 });

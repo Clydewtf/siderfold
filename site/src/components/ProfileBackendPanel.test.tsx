@@ -20,6 +20,7 @@ describe('ProfileBackendPanel', () => {
     expect(screen.getAllByText('Демо-режим')).toHaveLength(7);
     expect(screen.getByRole('button', { name: 'Открыть данные профиля' })).toBeInTheDocument();
     await user.click(screen.getByRole('button', { name: 'Открыть заявки' }));
+    expect(screen.getByRole('status')).toHaveAttribute('aria-live', 'polite');
     expect(screen.getByRole('status')).toHaveTextContent(
       'Заявки будут доступны после подключения аккаунта и backend.'
     );
