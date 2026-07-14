@@ -2,6 +2,28 @@
 
 All notable project milestones are documented in this file.
 
+## v0.5.0 - 2026-07-13
+
+Profile, Polish And End-To-End QA.
+
+### Added
+
+- Complete local profile workspace with favorite programs, favorite sources, recent programs, preferred regions and topics, theme, density, data-quality visibility, and reduced-motion settings.
+- Honest demo states for sign-in, registration, user data, notifications, documents, applications, profile synchronization, and report export.
+- Mobile, tablet, and desktop browser coverage for the main product journey, keyboard access, persistence, and horizontal-overflow safety.
+
+### Changed
+
+- Home, catalog, analytics, sources, profile, and the app shell now share a more cohesive nearly final visual hierarchy and responsive system.
+- Profile collections are actionable and reuse the shared program drawer and app state instead of duplicating product logic.
+- Project version is now `0.5.0` for the nearly final frontend-only milestone.
+
+### Notes
+
+- Account, backend, notifications, documents, applications, synchronization, and real exports are not connected; unavailable actions are explicitly marked as demo states.
+- Favorites, recents, preferences, and display settings remain local to the current browser and device.
+- Analytics and forecasts continue to describe the current seed database, not the complete support market.
+
 ## v0.4.0 - 2026-07-13
 
 Analytics UI.

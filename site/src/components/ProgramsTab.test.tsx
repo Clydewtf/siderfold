@@ -48,6 +48,15 @@ function mockMatchMedia(matches: boolean) {
 }
 
 describe('ProgramsTab', () => {
+  it('presents the catalog hierarchy and live result count', () => {
+    renderProgramsTab();
+
+    expect(screen.getAllByRole('heading', { level: 1, name: 'Каталог программ' })).toHaveLength(1);
+    expect(screen.getByText('Рабочий каталог')).toBeInTheDocument();
+    expect(screen.getByText('Ищите программы по условиям, регионам, срокам и финансированию. Избранное и история просмотра сохраняются локально.')).toBeInTheDocument();
+    expect(screen.getByRole('status')).toHaveTextContent(`Найдено программ: ${programs.length}`);
+  });
+
   it('searches, filters, and sorts programs', async () => {
     const user = userEvent.setup();
     renderProgramsTab();

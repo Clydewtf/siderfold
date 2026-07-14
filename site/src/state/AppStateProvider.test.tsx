@@ -39,6 +39,7 @@ function Harness() {
       <button onClick={() => actions.setDensity('compact')}>compact</button>
       <button onClick={() => actions.setReduceMotion(true)}>less motion</button>
       <button onClick={() => actions.requestBackendFeature('profileSync')}>sync</button>
+      <button onClick={() => actions.requestBackendFeature('accountData')}>account data</button>
     </>
   );
 }
@@ -118,8 +119,27 @@ describe('AppStateProvider', () => {
     render(<AppStateProvider storage={memory()}><Harness /></AppStateProvider>);
     await user.click(screen.getByText('sync'));
     expect(screen.getByLabelText('notice')).toHaveTextContent(
-      'Синхронизация появится после подключения backend.'
+      'Синхронизация появится после подключения аккаунта и backend.'
     );
+  });
+
+  it('keeps backend notices transient while persisted user data remains intact', async () => {
+    const user = userEvent.setup();
+    const storage = memory();
+    render(<AppStateProvider storage={storage}><Harness /></AppStateProvider>);
+    await user.click(screen.getByText('favorite'));
+    await waitFor(() => expect(storage.getItem(APP_STATE_STORAGE_KEY)).toContain('"p1"'));
+    const beforeNotice = storage.getItem(APP_STATE_STORAGE_KEY);
+
+    await user.click(screen.getByText('account data'));
+    expect(screen.getByLabelText('notice')).toHaveTextContent(
+      'Пользовательские данные будут доступны после подключения аккаунта.'
+    );
+    expect(storage.getItem(APP_STATE_STORAGE_KEY)).toBe(beforeNotice);
+
+    await user.click(screen.getByText('profile'));
+    expect(screen.getByLabelText('notice')).toBeEmptyDOMElement();
+    expect(screen.getByLabelText('favorites')).toHaveTextContent('p1');
   });
 
   it('announces that report and CSV export require backend', async () => {

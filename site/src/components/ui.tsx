@@ -38,6 +38,35 @@ export function EmptyState({
   );
 }
 
+export function PageIntro({
+  eyebrow,
+  title,
+  description,
+  aside
+}: {
+  eyebrow: string;
+  title: string;
+  description: string;
+  aside?: ReactNode;
+}) {
+  return (
+    <header className="page-intro">
+      <div className="min-w-0">
+        <p className="eyebrow">{eyebrow}</p>
+        <h1 className="page-title">{title}</h1>
+        <p className="page-description">{description}</p>
+      </div>
+      {aside ? <div className="min-w-0 lg:max-w-sm">{aside}</div> : null}
+    </header>
+  );
+}
+
+export function DemoNotice({ children }: { children: ReactNode }) {
+  return <aside aria-label="Демо-режим" className="demo-notice">{children}</aside>;
+}
+
+export const secondaryButtonClassName = 'button-secondary';
+
 type IconButtonProps = Omit<ButtonHTMLAttributes<HTMLButtonElement>, 'children' | 'aria-label'> &
   (
     | {
@@ -57,7 +86,7 @@ export function IconButton({
 }: IconButtonProps) {
   return (
     <button
-      className={`inline-flex min-h-11 items-center justify-center rounded-lg border border-ink/10 bg-ink px-4 py-2 text-sm font-semibold text-white transition hover:bg-graphite focus:outline-none focus:ring-2 focus:ring-cobalt focus:ring-offset-2 ${className}`}
+      className={`button-primary transition hover:bg-graphite focus:outline-none focus:ring-2 focus:ring-cobalt focus:ring-offset-2 ${className}`}
       {...props}
     >
       {children}

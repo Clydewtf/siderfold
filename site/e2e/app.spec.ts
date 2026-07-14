@@ -1,4 +1,10 @@
-import { expect, test } from '@playwright/test';
+import { expect, test, type Page } from '@playwright/test';
+
+async function expectNoDocumentOverflow(page: Page) {
+  await expect.poll(async () => page.evaluate(() => {
+    return document.documentElement.scrollWidth - document.documentElement.clientWidth;
+  })).toBeLessThanOrEqual(1);
+}
 
 test('catalog and source workflow persists favorites and recent views on desktop', async ({ page }, testInfo) => {
   test.skip(testInfo.project.name !== 'desktop', 'Desktop workflow coverage runs only in the desktop project.');
@@ -9,6 +15,7 @@ test('catalog and source workflow persists favorites and recent views on desktop
   await expect(page.getByLabel('Сортировка')).toHaveValue('relevance');
   await page.getByLabel('Уровень программы').selectOption('federal');
   await page.getByLabel('Наличие суммы').selectOption('withFunding');
+  await page.locator('article[aria-label="Старт-ИИ"]').scrollIntoViewIfNeeded();
   await page.getByRole('button', { name: 'Добавить Старт-ИИ в избранное' }).click();
   await page.getByRole('button', { name: 'Подробнее о программе Старт-ИИ' }).click();
   await expect(page.getByRole('dialog', { name: 'Старт-ИИ' })).toContainText('Полнота данных');
@@ -67,8 +74,10 @@ test('compact density visibly tightens cards across principal views', async ({ p
   await page.getByLabel('Плотность карточек').selectOption('compact');
   await expect(page.locator('html')).toHaveAttribute('data-density', 'compact');
 
-  const profileCard = page.getByText('Избранные источники', { exact: true })
-    .locator('..').getByRole('listitem');
+  const favoriteSourcesSection = page
+    .getByRole('heading', { name: 'Избранные источники' })
+    .locator('xpath=ancestor::section[1]');
+  const profileCard = favoriteSourcesSection.getByRole('listitem');
   await expect(profileCard).toHaveCSS('padding-top', '12px');
   await expect(profileCard.locator('..')).toHaveCSS('row-gap', '12px');
 
@@ -181,4 +190,83 @@ test('analytics BI filter rebuilds monitoring and reset restores the database', 
   await page.getByRole('button', { name: 'Сбросить BI-фильтры' }).click();
   await expect(status).toContainText('Найдено программ: 30');
   await expect(page.getByText('Регион: Москва')).not.toBeVisible();
+});
+
+test('every primary screen and program drawer stays inside the viewport', async ({ page }) => {
+  await page.goto('/');
+  for (const tab of ['Главная', 'Каталог', 'Аналитика', 'Источники', 'Профиль']) {
+    await page.getByRole('tab', { name: tab }).click();
+    await expectNoDocumentOverflow(page);
+  }
+
+  await page.getByRole('tab', { name: 'Каталог' }).click();
+  await page.locator('article[aria-label="Старт-ИИ"]').scrollIntoViewIfNeeded();
+  await page.getByRole('button', { name: 'Подробнее о программе Старт-ИИ' }).click();
+  await expect(page.getByRole('dialog', { name: 'Старт-ИИ' })).toBeVisible();
+  await expectNoDocumentOverflow(page);
+  await page.getByRole('button', { name: 'Закрыть детали' }).click();
+
+  await page.getByRole('tab', { name: 'Профиль' }).click();
+  await page.getByRole('button', { name: 'Предпочитать регион Москва' }).scrollIntoViewIfNeeded();
+  await expectNoDocumentOverflow(page);
+});
+
+test('primary Stargate journey connects catalog profile theme analytics and sources', async ({ page }, testInfo) => {
+  test.skip(testInfo.project.name !== 'desktop', 'The complete product journey runs once on desktop.');
+  await page.goto('/');
+  await expect(page.getByRole('heading', { level: 1 })).toContainText('Программы поддержки');
+
+  await page.getByRole('tab', { name: 'Каталог' }).click();
+  await page.getByLabel('Поиск').fill('Старт-ИИ');
+  await page.locator('article[aria-label="Старт-ИИ"]').scrollIntoViewIfNeeded();
+  await expect(page.getByRole('heading', { name: 'Старт-ИИ' })).toBeVisible();
+  await page.getByRole('button', { name: 'Добавить Старт-ИИ в избранное' }).click();
+  await page.getByRole('button', { name: 'Подробнее о программе Старт-ИИ' }).click();
+  await expect(page.getByRole('dialog', { name: 'Старт-ИИ' })).toContainText('Фонд содействия инновациям');
+  await page.getByRole('button', { name: 'Закрыть детали' }).click();
+
+  await page.getByRole('tab', { name: 'Профиль' }).click();
+  const favorites = page.getByRole('heading', { name: 'Избранные программы' }).locator('xpath=ancestor::section[1]');
+  await expect(favorites.getByText('Старт-ИИ')).toBeVisible();
+  await page.getByLabel('Тема интерфейса').selectOption('dark');
+  await expect(page.locator('html')).toHaveAttribute('data-theme', 'dark');
+
+  await page.reload();
+  await page.getByRole('tab', { name: 'Профиль' }).click();
+  await expect(favorites.getByText('Старт-ИИ')).toBeVisible();
+  await expect(page.getByLabel('Тема интерфейса')).toHaveValue('dark');
+  await expect(page.locator('html')).toHaveAttribute('data-theme', 'dark');
+
+  await page.getByRole('tab', { name: 'Аналитика' }).click();
+  const resultStatus = page.getByRole('status').filter({ hasText: 'Найдено программ:' });
+  await expect(resultStatus).toContainText('Найдено программ: 30');
+  await page.getByLabel('Регион аналитики').selectOption('Москва');
+  await expect(resultStatus).not.toContainText('Найдено программ: 30');
+  await expect(page.getByText('Регион: Москва')).toBeVisible();
+
+  await page.getByRole('tab', { name: 'Источники' }).click();
+  await expect(page.getByRole('heading', { level: 1, name: 'Источники программ' })).toBeVisible();
+  await expectNoDocumentOverflow(page);
+});
+
+test('keyboard users can skip to content navigate tabs close the drawer and hear demo status', async ({ page }, testInfo) => {
+  test.skip(testInfo.project.name !== 'desktop', 'Keyboard smoke runs once on desktop.');
+  await page.goto('/');
+  await page.keyboard.press('Tab');
+  await expect(page.getByRole('link', { name: 'Перейти к содержимому' })).toBeFocused();
+  await page.keyboard.press('Enter');
+  await expect(page.getByRole('main')).toBeFocused();
+
+  await page.getByRole('tab', { name: 'Главная' }).focus();
+  await page.keyboard.press('ArrowRight');
+  await expect(page.getByRole('tab', { name: 'Каталог' })).toHaveAttribute('aria-selected', 'true');
+  await page.locator('article[aria-label="Старт-ИИ"]').scrollIntoViewIfNeeded();
+  await page.getByRole('button', { name: 'Подробнее о программе Старт-ИИ' }).click();
+  await expect(page.getByRole('button', { name: 'Закрыть детали' })).toBeFocused();
+  await page.keyboard.press('Escape');
+  await expect(page.getByRole('dialog', { name: 'Старт-ИИ' })).toHaveCount(0);
+
+  await page.getByRole('tab', { name: 'Профиль' }).click();
+  await page.getByRole('button', { name: 'Открыть данные профиля' }).click();
+  await expect(page.getByRole('status')).toContainText('после подключения аккаунта');
 });

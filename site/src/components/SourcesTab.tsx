@@ -6,7 +6,7 @@ import type { SourceFilters as SourceFiltersType, SupportProgram, SupportSource 
 import { SourceCard } from './SourceCard';
 import { SourceDetails } from './SourceDetails';
 import { SourceFilters } from './SourceFilters';
-import { EmptyState } from './ui';
+import { EmptyState, PageIntro } from './ui';
 
 const defaultSourceFilters: SourceFiltersType = {
   type: 'Все типы',
@@ -60,25 +60,25 @@ export function SourcesTab({
   }, [filters, filtered.length]);
 
   return (
-    <div className="mx-auto max-w-7xl px-4 py-12 sm:px-6 lg:px-8">
+    <div className="page-container" data-page="sources">
       <p role="status" aria-live="polite" className="sr-only">
         {selectedAnnouncement}
       </p>
       <p aria-live="polite" className="sr-only">
         Найдено {filtered.length} источников
       </p>
-      <div className="flex flex-col gap-6">
-        <div>
-          <h1 className="text-4xl font-semibold">Источники программ</h1>
-          <p className="mt-3 max-w-2xl text-sm leading-6 text-graphite">
-            Фонды, платформы, университеты и акселераторы, из которых формируется тестовая база возможностей.
-          </p>
-        </div>
+      <PageIntro
+        eyebrow="Проверенные организации"
+        title="Источники программ"
+        description="Фонды, ведомства, университеты, акселераторы и платформы со связанными программами и показателями текущей базы."
+        aside={<p className="count-badge">Найдено: {filtered.length}</p>}
+      />
+      <div className="mt-10 min-w-0">
         <SourceFilters filters={filters} sources={sources} onChange={updateFilters} onReset={resetFilters} />
       </div>
 
-      <div className="mt-10 grid gap-6 lg:grid-cols-[1fr_420px] lg:items-start">
-        <div data-density-grid className="grid gap-4 md:grid-cols-2">
+      <div className="mt-10 grid min-w-0 gap-6 lg:grid-cols-[minmax(0,1fr)_420px] lg:items-start">
+        <div data-density-grid className="grid min-w-0 gap-4 md:grid-cols-[repeat(2,minmax(0,1fr))]">
           {filtered.map((source) => {
             const metric: SourceAnalyticsItem = metricsBySourceId.get(source.id) ?? {
               sourceId: source.id,

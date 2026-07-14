@@ -60,6 +60,7 @@ export type PersistedAppState = {
 export type BackendFeature =
   | 'signIn'
   | 'registration'
+  | 'accountData'
   | 'notifications'
   | 'documents'
   | 'applications'

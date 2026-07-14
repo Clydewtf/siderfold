@@ -4,7 +4,7 @@ import { buildAnalytics } from '../lib/analytics';
 import { formatDeadline, formatMoneyRub } from '../lib/format';
 import { AnalyticsWidgets } from './AnalyticsWidgets';
 import { MiniAnalyticsPanel } from './MiniAnalyticsPanel';
-import { IconButton, Tag } from './ui';
+import { IconButton, secondaryButtonClassName, Tag } from './ui';
 
 export function HomeTab({
   sources,
@@ -25,44 +25,50 @@ export function HomeTab({
   const featured = programs.filter((program) => program.featured).slice(0, 4);
 
   return (
-    <div className="mx-auto max-w-7xl px-4 py-12 sm:px-6 lg:px-8">
+    <div className="page-container">
       <section className="grid items-center gap-8 py-8 sm:py-10 lg:min-h-[62vh] lg:grid-cols-[1.12fr_0.88fr] lg:gap-10 lg:py-20">
         <div className="max-w-6xl">
-          <h1 className="max-w-6xl text-[clamp(2.35rem,9vw,5.5rem)] font-semibold leading-[0.98] text-ink">
-            Единая база программ поддержки для быстрых решений
+          <p className="eyebrow">Единая база поддержки стартапов</p>
+          <h1 className="home-title">
+            Программы поддержки — в одном рабочем пространстве
           </h1>
-          <p className="mt-6 max-w-2xl text-lg leading-8 text-graphite">
-            MVP показывает источники, конкурсы, дедлайны, суммы и первичные ссылки в одном рабочем интерфейсе.
+          <p className="home-lead">
+            Каталог, источники и аналитика используют одну базу, чтобы искать возможности и видеть рынок поддержки системно.
           </p>
           <div className="mt-8 flex flex-col gap-3 sm:flex-row">
             <IconButton onClick={onOpenPrograms}>
               Открыть каталог <ArrowRight className="ml-2 h-4 w-4" aria-hidden="true" />
             </IconButton>
-            <button type="button" onClick={onOpenAnalytics} className="inline-flex min-h-11 items-center justify-center rounded-lg border border-ink/15 bg-white px-4 py-2 text-sm font-semibold text-ink">
+            <button type="button" onClick={onOpenAnalytics} className={`${secondaryButtonClassName} transition hover:bg-surface/75 focus:outline-none focus:ring-2 focus:ring-cobalt focus:ring-offset-2`}>
               Открыть аналитику
             </button>
             <button
               type="button"
               onClick={onOpenSources}
-              className="inline-flex min-h-11 items-center justify-center rounded-lg border border-ink/15 bg-white px-4 py-2 text-sm font-semibold text-ink transition hover:bg-white/75 focus:outline-none focus:ring-2 focus:ring-cobalt focus:ring-offset-2"
+              className={`${secondaryButtonClassName} transition hover:bg-surface/75 focus:outline-none focus:ring-2 focus:ring-cobalt focus:ring-offset-2`}
             >
               Смотреть источники
             </button>
           </div>
         </div>
-        <div data-motion-media className="grain-overlay overflow-hidden rounded-lg border border-ink/10 bg-ink p-5 text-white shadow-panel">
-          <div className="h-72 rounded-md bg-[url('https://picsum.photos/seed/support-data-catalog/1200/900')] bg-cover bg-center opacity-85 mix-blend-luminosity" />
-          <div className="mt-5 grid grid-cols-2 gap-3 text-sm">
+        <aside aria-label="Состояние базы" data-motion-media className="demo-status grain-overlay overflow-hidden shadow-panel">
+          <p className="eyebrow">Состояние базы</p>
+          <div className="mt-8 grid gap-3 sm:grid-cols-3">
             <div>
-              <p className="text-white/60">Seed-данные</p>
-              <p className="text-2xl font-semibold">{analytics.totalPrograms}</p>
+              <p className="text-sm text-graphite">Программ</p>
+              <p className="mt-2 text-3xl font-semibold text-ink">{analytics.totalPrograms}</p>
             </div>
             <div>
-              <p className="text-white/60">Источники</p>
-              <p className="text-2xl font-semibold">{analytics.totalSources}</p>
+              <p className="text-sm text-graphite">Источников</p>
+              <p className="mt-2 text-3xl font-semibold text-ink">{analytics.totalSources}</p>
+            </div>
+            <div>
+              <p className="text-sm text-graphite">Активны</p>
+              <p className="mt-2 text-3xl font-semibold text-ink">{analytics.activePrograms}</p>
             </div>
           </div>
-        </div>
+          <p className="mt-8 border-t border-cobalt/20 pt-4 text-sm font-semibold text-graphite">Демо-режим · frontend-only</p>
+        </aside>
       </section>
 
       <section className="py-12">

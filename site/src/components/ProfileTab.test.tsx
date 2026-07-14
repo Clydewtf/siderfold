@@ -35,10 +35,36 @@ function renderProfile() {
 }
 
 describe('ProfileTab', () => {
-  it('shows favorite and recent entities by name', () => {
+  it('presents a complete local personal workspace', () => {
     renderProfile();
+
+    expect(screen.getAllByRole('heading', { level: 1, name: 'Профиль' })).toHaveLength(1);
+    expect(screen.getByText('Личный кабинет агрегатора')).toBeInTheDocument();
+    expect(screen.getByText('Избранное, история просмотра, предпочтения и настройки сохраняются только в этом браузере. Аккаунт и серверная синхронизация пока не подключены.')).toBeInTheDocument();
+    expect(screen.getByRole('complementary', { name: 'Демо-режим' })).toHaveTextContent('Демо-режим: локальные функции работают без регистрации.');
+    for (const heading of [
+      'Избранные программы',
+      'Недавно просмотренные программы',
+      'Избранные источники',
+      'Отображение',
+      'Предпочтительные регионы',
+      'Предпочтительные тематики',
+      'Аккаунт и backend'
+    ]) {
+      expect(screen.getByRole('heading', { name: heading })).toBeInTheDocument();
+    }
     expect(screen.getAllByText('Старт-ИИ').length).toBeGreaterThan(0);
     expect(screen.getByText('Фонд содействия инновациям')).toBeInTheDocument();
+    expect(screen.getByText(/сохраняются только в этом браузере/i)).toBeInTheDocument();
+  });
+
+  it('uses the shared intro and demo notice contracts', () => {
+    renderProfile();
+
+    expect(screen.getByRole('banner')).toHaveClass('page-intro');
+    const notice = screen.getByRole('complementary', { name: 'Демо-режим' });
+    expect(notice).toHaveClass('demo-notice');
+    expect(notice.parentElement).toHaveClass('min-w-0', 'lg:max-w-sm');
   });
 
   it('changes theme and display settings through app actions', async () => {
@@ -68,7 +94,7 @@ describe('ProfileTab', () => {
     renderProfile();
     await user.click(screen.getByRole('button', { name: 'Синхронизировать профиль' }));
     expect(screen.getByRole('status')).toHaveTextContent(
-      'Синхронизация появится после подключения backend.'
+      'Синхронизация появится после подключения аккаунта и backend.'
     );
   });
 });
