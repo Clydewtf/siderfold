@@ -6,18 +6,24 @@ analytics. The current version is frontend-only and uses local seed data.
 
 ## Current Version
 
-`v0.4.0` adds the responsive, accessible Analytics UI over the app-shell,
-catalog/source, analytics-engine, and expanded seed-data milestones:
+`v0.5.0` completes the local profile, visual polish, and end-to-end QA
+milestone on top of the app-shell, catalog/source, analytics-engine, and
+expanded seed-data foundations:
 
 - five keyboard-accessible sections: home, catalog, analytics, sources, and
   profile;
 - versioned local browser state for theme, favorites, recent programs, regions,
   topics, card density, data-quality visibility, and reduced motion;
 - shared program details with consistent favorites and recent-view behavior;
-- local profile controls and clear demo states for backend-dependent features;
+- a complete local profile workspace with actionable program/source
+  collections, preferences, display controls, and clear demo states for
+  backend-dependent features;
 - a filterable analytics API for financial, regional, source, topic, temporal,
   data-quality, support-gap, and transparent demo forecast calculations;
-- responsive desktop and mobile coverage without a backend.
+- responsive, accessible desktop, tablet, and mobile coverage without a
+  backend;
+- Playwright coverage for the primary product journey, persistence, keyboard
+  navigation, drawer behavior, and document-overflow safety.
 
 The analytics and profile screens remain intentionally lightweight. Forecast
 values are transparent demo calculations over seed history, not a real
@@ -90,6 +96,7 @@ are intentionally not used yet; important states are fixed with Git tags.
 
 ## Status
 
-This repository currently represents the `v0.4.0` MVP with a complete
-analytics dashboard. The backend, persistent accounts, production data pipeline,
-and real report/CSV export are planned future work.
+This repository currently represents the nearly final `v0.5.0` frontend-only
+MVP with a complete analytics dashboard and local profile workspace. The
+backend, persistent accounts, production data pipeline, and real report/CSV
+export are planned future work.
