@@ -1,4 +1,10 @@
-import { expect, test } from '@playwright/test';
+import { expect, test, type Page } from '@playwright/test';
+
+async function expectNoDocumentOverflow(page: Page) {
+  await expect.poll(async () => page.evaluate(() => {
+    return document.documentElement.scrollWidth - document.documentElement.clientWidth;
+  })).toBeLessThanOrEqual(1);
+}
 
 test('catalog and source workflow persists favorites and recent views on desktop', async ({ page }, testInfo) => {
   test.skip(testInfo.project.name !== 'desktop', 'Desktop workflow coverage runs only in the desktop project.');
@@ -181,4 +187,23 @@ test('analytics BI filter rebuilds monitoring and reset restores the database', 
   await page.getByRole('button', { name: 'Сбросить BI-фильтры' }).click();
   await expect(status).toContainText('Найдено программ: 30');
   await expect(page.getByText('Регион: Москва')).not.toBeVisible();
+});
+
+test('every primary screen and program drawer stays inside the viewport', async ({ page }) => {
+  await page.goto('/');
+  for (const tab of ['Главная', 'Каталог', 'Аналитика', 'Источники', 'Профиль']) {
+    await page.getByRole('tab', { name: tab }).click();
+    await expectNoDocumentOverflow(page);
+  }
+
+  await page.getByRole('tab', { name: 'Каталог' }).click();
+  await page.locator('article[aria-label="Старт-ИИ"]').scrollIntoViewIfNeeded();
+  await page.getByRole('button', { name: 'Подробнее о программе Старт-ИИ' }).click();
+  await expect(page.getByRole('dialog', { name: 'Старт-ИИ' })).toBeVisible();
+  await expectNoDocumentOverflow(page);
+  await page.getByRole('button', { name: 'Закрыть детали' }).click();
+
+  await page.getByRole('tab', { name: 'Профиль' }).click();
+  await page.getByRole('button', { name: 'Предпочитать регион Москва' }).scrollIntoViewIfNeeded();
+  await expectNoDocumentOverflow(page);
 });

@@ -66,9 +66,16 @@
 html,
 body,
 #root {
+  max-width: 100%;
   min-height: 100%;
+  min-width: 0;
   margin: 0;
 }
+
+body { overflow-x: visible; }
+img, video, canvas { height: auto; max-width: 100%; }
+svg { max-width: 100%; }
+:where(main, section, article, aside, header, nav, div) { min-width: 0; }
 
 button,
 input,
