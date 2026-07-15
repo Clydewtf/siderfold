@@ -20,6 +20,10 @@ function memory(initial: Record<string, string> = {}): StorageLike {
 }
 
 describe('local state storage', () => {
+  it('uses the Siderfold local storage namespace', () => {
+    expect(APP_STATE_STORAGE_KEY).toBe('siderfold:user-state');
+  });
+
   it('returns fresh defaults for absent storage and broken JSON', () => {
     expect(loadPersistedAppState(null)).toEqual(DEFAULT_PERSISTED_APP_STATE);
     const storage = memory({ [APP_STATE_STORAGE_KEY]: '{broken' });

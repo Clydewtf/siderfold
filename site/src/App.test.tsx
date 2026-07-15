@@ -72,14 +72,14 @@ describe('App navigation', () => {
     }
   });
 
-  it('renders clickable Stargate brand and primary navigation labels', async () => {
+  it('renders clickable Siderfold brand and primary navigation labels', async () => {
     const user = userEvent.setup();
     render(<App />);
 
     await user.click(screen.getByRole('tab', { name: 'Каталог' }));
     expect(screen.getByRole('heading', { name: 'Каталог программ' })).toBeInTheDocument();
 
-    await user.click(screen.getByRole('button', { name: 'Stargate - на главную' }));
+    await user.click(screen.getByRole('button', { name: 'Siderfold - на главную' }));
     expect(screen.getByRole('heading', { name: 'Программы поддержки — в одном рабочем пространстве' })).toBeInTheDocument();
 
     expect(screen.getByRole('tab', { name: 'Главная' })).toBeInTheDocument();

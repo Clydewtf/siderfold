@@ -18,7 +18,7 @@ function renderHome() {
 }
 
 describe('HomeTab', () => {
-  it('positions Stargate as a mature demo platform without remote hero media', () => {
+  it('positions Siderfold as a mature demo platform without remote hero media', () => {
     const { container } = renderHome();
     expect(screen.getByText('Единая база поддержки стартапов')).toBeInTheDocument();
     expect(screen.getByRole('heading', { level: 1 })).toHaveTextContent(

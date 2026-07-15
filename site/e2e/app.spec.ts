@@ -211,7 +211,7 @@ test('every primary screen and program drawer stays inside the viewport', async 
   await expectNoDocumentOverflow(page);
 });
 
-test('primary Stargate journey connects catalog profile theme analytics and sources', async ({ page }, testInfo) => {
+test('primary Siderfold journey connects catalog profile theme analytics and sources', async ({ page }, testInfo) => {
   test.skip(testInfo.project.name !== 'desktop', 'The complete product journey runs once on desktop.');
   await page.goto('/');
   await expect(page.getByRole('heading', { level: 1 })).toContainText('Программы поддержки');

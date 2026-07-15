@@ -1,6 +1,6 @@
-# Stargate
+# Siderfold
 
-Stargate is an MVP website for collecting and exploring support programs:
+Siderfold is an MVP website for collecting and exploring support programs:
 grants, accelerators, scholarships, funding sources, deadlines, and related
 analytics. The current version is frontend-only and uses local seed data.
 

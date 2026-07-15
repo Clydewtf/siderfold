@@ -103,7 +103,7 @@ Analytics Engine.
 
 ## v0.1.1 - 2026-07-09
 
-Data foundation for the Stargate product-platform upgrade.
+Data foundation for the Siderfold product-platform upgrade.
 
 ### Added
 
@@ -123,7 +123,7 @@ Initial MVP snapshot.
 
 ### Added
 
-- Frontend-only Stargate website built with React, TypeScript, Vite, and Tailwind CSS.
+- Frontend-only Siderfold website built with React, TypeScript, Vite, and Tailwind CSS.
 - Home, catalog, and sources sections.
 - Seed database of support programs and funding/support sources.
 - Catalog search, filtering, program cards, and program detail drawer.

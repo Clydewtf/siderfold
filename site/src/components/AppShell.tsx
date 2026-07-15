@@ -68,11 +68,11 @@ export function AppShell({
             type="button"
             onClick={() => onTabChange('home')}
             className="inline-flex min-h-11 items-center gap-3 text-left focus:outline-none focus:ring-2 focus:ring-cobalt focus:ring-offset-2"
-            aria-label="Stargate - на главную"
+            aria-label="Siderfold - на главную"
           >
             <span className="flex h-10 w-10 items-center justify-center rounded-lg bg-ink text-sm font-semibold text-white">S</span>
             <span className="grid">
-              <span className="text-lg font-semibold text-ink">Stargate</span>
+              <span className="text-lg font-semibold text-ink">Siderfold</span>
               <span className="flex w-fit items-center gap-1.5 rounded-full border border-ink/10 bg-white/70 px-2 py-0.5 text-[11px] font-semibold uppercase tracking-normal text-graphite">
                 <span>Демо-режим</span>
                 <span aria-label={`Версия ${APP_VERSION}`} className="text-ink/70">

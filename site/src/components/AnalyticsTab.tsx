@@ -45,7 +45,7 @@ export function AnalyticsTab({ sources, programs, exportNotice, onRequestExport 
       <PageIntro
         eyebrow="Мониторинг мер поддержки"
         title="Аналитика мер поддержки"
-        description="Презентационный обзор и фильтруемая BI-зона используют те же программы и источники, что каталог Stargate."
+        description="Презентационный обзор и фильтруемая BI-зона используют те же программы и источники, что каталог Siderfold."
         aside={<DemoNotice>Демо-режим: выводы рассчитаны по текущей seed-базе.</DemoNotice>}
       />
       {programs.length === 0 ? <EmptyState title="Аналитическая база пока пуста" description="Добавьте программы в seed-данные, чтобы построить мониторинг." /> : <AnalyticsOverview analytics={analytics} />}

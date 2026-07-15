@@ -1,6 +1,6 @@
 import type { PersistedAppState, ThemePreference, Topic } from '../types';
 
-export const APP_STATE_STORAGE_KEY = 'stargate:user-state';
+export const APP_STATE_STORAGE_KEY = 'siderfold:user-state';
 export const APP_STATE_STORAGE_VERSION = 1;
 const RECENT_PROGRAM_LIMIT = 12;
 const topics: readonly Topic[] = [
