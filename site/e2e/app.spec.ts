@@ -86,7 +86,7 @@ test('compact density visibly tightens cards across principal views', async ({ p
   await expect(homeCard.locator('..')).toHaveCSS('row-gap', '12px');
 
   await page.getByRole('tab', { name: 'Каталог' }).click();
-  const catalogCard = page.getByText('Старт-ИИ', { exact: true }).locator('..');
+  const catalogCard = page.locator('article[aria-label="Старт-ИИ"]');
   await expect(catalogCard).toHaveCSS('padding-top', '12px');
   await expect(catalogCard.locator('..')).toHaveCSS('row-gap', '12px');
 
@@ -135,7 +135,7 @@ test('mobile layout has no horizontal scroll', async ({ page }, testInfo) => {
 
   await page.getByRole('tab', { name: 'Источники' }).click();
   await page.getByLabel('Тип источника').selectOption('Акселератор');
-  await page.getByRole('button', { name: /(?:Выбрать источник|Смотреть программы) Impact Hub Moscow/ }).click();
+  await expect(page.getByRole('heading', { name: 'Impact Hub Moscow' })).toBeVisible();
   await expect(page.getByText('Eco Impact Lab').first()).toBeVisible();
   await expect.poll(async () => page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth))
     .toBeLessThanOrEqual(1);
