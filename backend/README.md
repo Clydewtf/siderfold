@@ -134,6 +134,41 @@ python -m app.import_bridge.cli /path/to/competitions.json --format potanin-json
 Для контрактов JSON и CSV без `--dry-run` транзакция фиксируется; использовать
 этот режим следует только после review отчёта.
 
+## Внутренний read API B5
+
+Read API имеет версию `/api/v1` и доступен только для чтения:
+
+| Метод и путь | Назначение |
+| --- | --- |
+| `GET /api/v1/programs` | Список опубликованных программ |
+| `GET /api/v1/programs/{program_id}` | Карточка опубликованной программы |
+| `GET /api/v1/sources` | Источники, связанные с опубликованными программами |
+| `GET /api/v1/filters` | Доступные источники, темы, география, виды финансирования и границы сроков |
+
+Список программ принимает `page` (с 1), `page_size` (1–100, по умолчанию 20),
+`sort` (`published_at`, `deadline`, `title`), `order` (`asc`, `desc`), `q`,
+повторяемые `source_id`, `theme`, `geography`, `funding_kind`, а также
+`deadline_from` и `deadline_to`. Значения внутри одного фильтра объединяются
+через OR, разные фильтры — через AND. Сортировка всегда дополнительно
+стабилизируется по `id`; пустая страница возвращает `200` с пустым `items`.
+Список источников использует такую же пагинацию и поддерживает сортировку по
+`name` или `program_count` и поиск по имени.
+
+Все четыре endpoint-а работают только с `Program.publication_status = published`.
+`draft` и `archived` не попадают в списки, источники или фильтры; запрос карточки
+для такой программы возвращает тот же `404 program_not_found`, что и неизвестный
+ID. Ответы формируются отдельными Pydantic-схемами, а не ORM-моделями.
+
+Публичные ответы содержат только канонические поля программы, источника,
+deadline, funding, тем и географии. В них намеренно отсутствуют `RawCapture`,
+`StagedRecord`, `DataQualityIssue`, тексты предупреждений, `ReviewDecision`,
+`candidate_payload`, fingerprint, данные адаптера и внутренние provenance ID.
+
+Успешный список имеет форму `items`, `page`, `page_size`, `total`. Ошибки имеют
+форму `{ "error": { "code", "message", "details" } }`: `422 invalid_request`,
+`404 program_not_found`, `503 database_unavailable` и `500 internal_error`. Полная схема доступна в
+генерируемом OpenAPI (`/docs` и `/openapi.json`).
+
 ## Запуск API
 
 Команды выполняются из этой папки. Виртуальное окружение можно держать вне
