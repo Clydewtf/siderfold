@@ -1,0 +1,48 @@
+{
+  "contract_version": "siderfold.import/v1",
+  "source": {
+    "name": "Фонд A",
+    "canonical_url": "https://foundation.example.test"
+  },
+  "capture": {
+    "source_url": "https://foundation.example.test/competitions",
+    "received_at": "2026-06-14T03:16:18+00:00",
+    "external_content_uri": "fixture://potanin-import-v1.json",
+    "content_format": "application/json",
+    "response_metadata": {
+      "http_status": 200
+    }
+  },
+  "adapter": {
+    "name": "potanin-local-bridge",
+    "version": "1.0.0"
+  },
+  "records": [
+    {
+      "record_key": "foundation-a:competition:alpha",
+      "title": "Конкурс A",
+      "record_url": "https://foundation.example.test/competitions/alpha",
+      "deadline_on": "2026-11-30",
+      "funding": {
+        "value_kind": "maximum",
+        "currency_code": "RUB",
+        "max_amount": "500000"
+      },
+      "payload": {
+        "organizer": "Фонд A",
+        "application_url": "https://applications.example.test/alpha"
+      },
+      "warnings": [
+        "Application start date is not stated."
+      ]
+    },
+    {
+      "record_key": "foundation-a:competition:beta",
+      "title": "Конкурс B",
+      "record_url": "https://foundation.example.test/competitions/beta",
+      "payload": {
+        "organizer": "Фонд A"
+      }
+    }
+  ]
+}

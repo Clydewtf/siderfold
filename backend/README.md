@@ -6,7 +6,7 @@ seed-данными и к API не подключён.
 Стек: Python 3.11+, FastAPI, Uvicorn, PostgreSQL 16, SQLAlchemy, Alembic и
 Pydantic Settings.
 
-## Схема B2–B3
+## Схема B2–B4
 
 Каноническая программа всегда имеет primary source. В `ProgramSource` хранится
 ссылка на конкретную страницу источника и время её проверки. Темы и география
@@ -39,6 +39,100 @@ Staging начинается в `received`, проходит extraction и со�
 существующий `IngestionRun` по детерминированному fingerprint. Автоматической
 публикации нет: для `Program` нужны завершённый запуск, опубликованная
 staging-запись и решение `publish`.
+
+## Импорт B4
+
+Bridge принимает локальный пакет `siderfold.import/v1` в JSON или CSV и
+записывает его в уже существующий контур `RawCapture` → `StagedRecord`.
+Новая миграция для B4 не нужна: используются таблицы и ограничения B3.
+
+В JSON пакет состоит из метаданных источника, capture, адаптера и массива
+записей:
+
+```json
+{
+  "contract_version": "siderfold.import/v1",
+  "source": {"name": "Название", "canonical_url": "https://source.example"},
+  "capture": {
+    "source_url": "https://source.example/export",
+    "received_at": "2026-08-30T12:00:00+00:00",
+    "external_content_uri": "file:///absolute/path/package.json",
+    "content_format": "application/json"
+  },
+  "adapter": {"name": "local-export", "version": "1.0.0"},
+  "records": [
+    {
+      "record_key": "source:program:example",
+      "title": "Название программы",
+      "record_url": "https://source.example/program/example",
+      "deadline_on": "2026-12-31",
+      "funding": {
+        "value_kind": "maximum",
+        "currency_code": "RUB",
+        "max_amount": "1000000"
+      },
+      "payload": {},
+      "warnings": []
+    }
+  ]
+}
+```
+
+`funding` необязателен. Если он указан, его значения обязаны соответствовать
+`value_kind`: `exact`, `minimum`, `maximum`, `range`, `unknown` или
+`not_stated`. Тем самым отсутствующая или неопределённая сумма не превращается
+в ноль.
+
+CSV содержит одну запись на строку. Метаданные пакета повторяются в каждой
+строке и должны быть одинаковы. Порядок колонок не важен, но набор фиксирован:
+
+```text
+contract_version,source_name,source_canonical_url,capture_source_url,received_at,
+external_content_uri,content_format,adapter_name,adapter_version,record_key,title,
+record_url,deadline_on,funding_value_kind,currency_code,exact_amount,min_amount,
+max_amount,payload_json,warnings_json
+```
+
+Поля `payload_json` и `warnings_json` содержат соответственно JSON-объект и
+JSON-массив строк. Неверный пакет целиком возвращает `package_errors` и не
+пишется в БД. Неверная отдельная строка создаёт staging-запись в состоянии
+`error` с `DataQualityIssue`; корректные строки того же пакета доходят до
+`review`.
+
+Идемпотентность определяется fingerprint нормализованного пакета вместе с
+source и версией адаптера. Идентичная повторная доставка возвращает прежний
+`IngestionRun` и статусы `skipped`, не создавая второй raw capture или staging
+записи. Изменённая запись с тем же `record_key` создаёт следующую staging-версию
+и получает статус `updated`; предыдущее происхождение сохраняется.
+
+Bridge не создаёт `Program` и `ReviewDecision`. Даже полностью корректный
+импорт остаётся набором кандидатов до отдельного review.
+
+Команда печатает JSON-отчёт версии `siderfold.import-report/v1`. В нём есть
+`dry_run`, идентификаторы source/run/raw capture, счётчики `new_count`,
+`updated_count`, `skipped_count`, `error_count`, массив `rows` и
+`package_errors`. У строки указаны номер, `record_key`, статус, идентификатор
+staging-записи, при обновлении предыдущая staging-запись и ошибки валидации.
+
+После настройки `DATABASE_URL` и `alembic upgrade head` импорт можно выполнить
+так:
+
+```bash
+python -m app.import_bridge.cli tests/fixtures/imports/potanin_import_v1.json --format json --dry-run
+python -m app.import_bridge.cli tests/fixtures/imports/potanin_import_v1.csv --format csv --dry-run
+```
+
+Для локального JSON-вывода Потанина предусмотрен узкий адаптер только для
+dry-run. Он читает файл на месте, не копирует его, не сохраняет крупное
+содержимое в PostgreSQL и исключает поля контактов и полного текста из staging
+payload:
+
+```bash
+python -m app.import_bridge.cli /path/to/competitions.json --format potanin-json --dry-run
+```
+
+Для контрактов JSON и CSV без `--dry-run` транзакция фиксируется; использовать
+этот режим следует только после review отчёта.
 
 ## Запуск API
 
