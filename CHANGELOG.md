@@ -2,6 +2,37 @@
 
 All notable project milestones are documented in this file.
 
+## v0.6.0 - 2026-08-30
+
+Backend Foundation, Provenance And Read API.
+
+### Added
+
+- Python 3.11+ FastAPI backend with environment-based configuration, health/readiness checks, PostgreSQL Compose setup, SQLAlchemy, and Alembic migrations.
+- Canonical normalized data model for programs, sources, deadlines, geography, themes, publication status, and exact, ranged, or unknown funding values.
+- Ingestion provenance model with runs, immutable raw captures, staging records, data-quality issues, review decisions, and guarded ingestion states.
+- Versioned JSON/CSV import bridge with validation, idempotent re-imports, raw-to-staging-to-review flow, and a local Potanin dry-run path.
+- Versioned read-only API for published programs, sources, filters, and program details with pagination, sorting, stable errors, OpenAPI schemas, and contract tests.
+
+### Notes
+
+- The frontend remains on seed data and is not connected to the backend yet.
+- Authentication, moderation endpoints, queues, cloud infrastructure, and automatic publication are not included in this milestone.
+- Large raw files remain outside PostgreSQL; the database stores their metadata, hash, and external reference.
+
+## v0.5.1 - 2026-08-29
+
+MVP End-To-End Stability.
+
+### Fixed
+
+- Compact-density program cards now assert the intended card container and preserve the expected spacing and density.
+- The mobile source flow now follows the actual interface behavior when opening a source.
+
+### Notes
+
+- This is an E2E-stability patch for the frontend MVP; no new backend functionality is included.
+
 ## v0.5.0 - 2026-07-13
 
 Profile, Polish And End-To-End QA.
