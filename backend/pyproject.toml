@@ -25,6 +25,9 @@ test = [
 [tool.pytest.ini_options]
 addopts = "-q"
 testpaths = ["tests"]
+markers = [
+  "postgres: requires TEST_DATABASE_URL for an isolated PostgreSQL database"
+]
 
 [tool.setuptools.packages.find]
 include = ["app*"]

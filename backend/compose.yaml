@@ -3,6 +3,7 @@ name: siderfold
 services:
   db:
     image: postgres:16-alpine
+    restart: "no"
     environment:
       POSTGRES_DB: ${POSTGRES_DB:-siderfold}
       POSTGRES_USER: ${POSTGRES_USER:-siderfold}

@@ -1,1 +1,1 @@
-"""Domain boundary reserved for the B2 canonical schema."""
+"""Canonical domain models and their database-backed invariants."""
