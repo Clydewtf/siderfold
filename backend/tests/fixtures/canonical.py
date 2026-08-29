@@ -4,7 +4,7 @@ from datetime import date, datetime, timezone
 from decimal import Decimal
 from uuid import UUID, uuid4
 
-from sqlalchemy import insert
+from sqlalchemy import insert, update
 from sqlalchemy.engine import Connection
 
 from app.domain.models import (
@@ -20,6 +20,7 @@ from app.domain.models import (
     Source,
     Theme,
 )
+from tests.fixtures.provenance import create_published_provenance
 
 
 OBSERVED_AT = datetime(2026, 8, 30, 9, 0, tzinfo=timezone.utc)
@@ -92,8 +93,8 @@ def insert_program_with_source(
         insert(Program).values(
             id=identifier,
             title=title,
-            publication_status=publication_status,
-            published_at=published_at,
+            publication_status=PublicationStatus.DRAFT,
+            published_at=None,
             primary_source_id=source_id,
         )
     )
@@ -105,6 +106,17 @@ def insert_program_with_source(
             observed_at=OBSERVED_AT,
         )
     )
+    if publication_status != PublicationStatus.DRAFT:
+        provenance = create_published_provenance(connection, source_id=source_id)
+        connection.execute(
+            update(Program)
+            .where(Program.id == identifier)
+            .values(
+                publication_status=publication_status,
+                published_at=published_at,
+                publication_review_decision_id=provenance.review_decision_id,
+            )
+        )
     return identifier
 
 
