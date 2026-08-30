@@ -129,6 +129,9 @@ def _statistics(
     extracted: int,
     requests: int,
     response_bytes: int,
+    artifact_discovered: int,
+    artifact_fetched: int,
+    artifact_deferred: int,
     validation: ValidationResult,
     issues: Sequence[AdapterIssue],
 ) -> RunStatistics:
@@ -156,6 +159,9 @@ def _statistics(
         duplicates=duplicates,
         requests=requests,
         response_bytes=response_bytes,
+        artifact_discovered=artifact_discovered,
+        artifact_fetched=artifact_fetched,
+        artifact_deferred=artifact_deferred,
     )
 
 
@@ -170,6 +176,7 @@ def _ratio(numerator: int, denominator: int) -> QualityRatio:
 def _quality_metrics(
     *,
     discovery_resources: Sequence[DiscoveredResource],
+    record_resources: Sequence[DiscoveredResource],
     discovery_coverage_scope: str,
     discovery_limitations: Sequence[str],
     validation: ValidationResult,
@@ -178,7 +185,8 @@ def _quality_metrics(
 ) -> AdapterQualityMetrics:
     """Measure parsing coverage without implying that an external catalog is complete."""
 
-    discovered_count = len(discovery_resources)
+    quality_resources = tuple(record_resources) or tuple(discovery_resources)
+    discovered_count = len(quality_resources)
     valid_count = sum(
         1
         for row in validation.rows
@@ -195,7 +203,7 @@ def _quality_metrics(
     )
     source_lastmods = sorted(
         value
-        for resource in discovery_resources
+        for resource in quality_resources
         if isinstance(
             value := resource.metadata.get("sitemap_last_modified_at"), str
         )
@@ -269,6 +277,7 @@ def _build_import_package(
                 "fetch_count": len(fetched),
                 "fetches": [
                     {
+                        "resource_key": item.resource.external_key,
                         "source_url": item.final_url,
                         "external_content_uri": item.external_content_uri,
                         "response_metadata": dict(item.response_metadata),
@@ -295,6 +304,8 @@ def _build_import_package(
                     content_format=item.content_format,
                     response_metadata={
                         "adapter_contract_version": ADAPTER_CONTRACT_VERSION,
+                        "resource_key": item.resource.external_key,
+                        "resource_metadata": dict(item.resource.metadata),
                         **dict(item.response_metadata),
                     },
                 ),
@@ -331,8 +342,12 @@ def execute_adapter(
     response_bytes = 0
     discovery_resources: tuple[DiscoveredResource, ...] = ()
     discovery_captures: tuple[FetchResult, ...] = ()
+    discovery_record_resources: tuple[DiscoveredResource, ...] = ()
     discovery_coverage_scope = "resources returned by discovery"
     discovery_limitations: tuple[str, ...] = ()
+    artifact_discovered = 0
+    artifact_fetched = 0
+    artifact_deferred = 0
 
     try:
         discovery = adapter.discover(context)
@@ -349,9 +364,13 @@ def execute_adapter(
     else:
         discovery_resources = discovery.resources
         discovery_captures = discovery.captures
+        discovery_record_resources = discovery.record_resources
         discovery_issues = discovery.issues
         discovery_coverage_scope = discovery.coverage_scope
         discovery_limitations = discovery.quality_limitations
+        artifact_discovered = discovery.artifact_discovered
+        artifact_fetched = discovery.artifact_fetched
+        artifact_deferred = discovery.artifact_deferred
         pipeline_issues.extend(discovery_issues)
         request_count = discovery.request_count
         response_bytes = discovery.response_bytes
@@ -387,6 +406,23 @@ def execute_adapter(
             )
         )
 
+    def extract_fetched(fetched: FetchResult) -> None:
+        try:
+            extracted = adapter.extract(fetched, context)
+        except Exception as error:
+            pipeline_issues.append(
+                AdapterIssue(
+                    stage=AdapterStage.EXTRACT,
+                    severity="error",
+                    code="extract_error",
+                    message=str(error),
+                    resource_key=fetched.resource.external_key,
+                )
+            )
+            return
+        pipeline_issues.extend(extracted.issues)
+        extracted_records.extend(extracted.records)
+
     for capture in discovery_captures:
         try:
             context.require_allowed_url(capture.resource.url)
@@ -419,8 +455,10 @@ def execute_adapter(
             )
             continue
         fetched_results.append(capture)
+        if capture.resource.metadata.get("extract_record", False):
+            extract_fetched(capture)
 
-    if not discovery_resources and not any(
+    if not (discovery_resources or discovery_record_resources) and not any(
         issue.severity == "error" for issue in pipeline_issues
     ):
         pipeline_issues.append(
@@ -497,21 +535,25 @@ def execute_adapter(
 
         fetched_results.append(fetched)
         response_bytes += len(fetched.content)
+        if fetched.resource.metadata.get("extract_record", True):
+            extract_fetched(fetched)
+
+    enrich = getattr(adapter, "enrich", None)
+    if callable(enrich) and extracted_records:
         try:
-            extracted = adapter.extract(fetched, context)
+            enriched = enrich(tuple(extracted_records), tuple(fetched_results), context)
         except Exception as error:
             pipeline_issues.append(
                 AdapterIssue(
                     stage=AdapterStage.EXTRACT,
                     severity="error",
-                    code="extract_error",
+                    code="enrich_error",
                     message=str(error),
-                    resource_key=resource.external_key,
                 )
             )
-            continue
-        pipeline_issues.extend(extracted.issues)
-        extracted_records.extend(extracted.records)
+        else:
+            pipeline_issues.extend(enriched.issues)
+            extracted_records = list(enriched.records)
 
     if len(extracted_records) > definition.limits.max_records:
         pipeline_issues.append(
@@ -578,11 +620,20 @@ def execute_adapter(
     row_issues = _row_issues(validation.rows)
     report_issues = (*pipeline_issues, *row_issues)
     statistics = _statistics(
-        discovered=len(discovery_resources),
+        discovered=len(discovery_record_resources or discovery_resources),
         fetched=len(fetched_results),
         extracted=len(extracted_records),
         requests=request_count,
         response_bytes=response_bytes,
+        artifact_discovered=artifact_discovered,
+        artifact_fetched=(
+            artifact_fetched
+            or sum(
+                item.resource.metadata.get("resource_role") == "artifact"
+                for item in fetched_results
+            )
+        ),
+        artifact_deferred=artifact_deferred,
         validation=validation,
         issues=report_issues,
     )
@@ -598,6 +649,7 @@ def execute_adapter(
         issues=report_issues,
         quality=_quality_metrics(
             discovery_resources=discovery_resources,
+            record_resources=discovery_record_resources,
             discovery_coverage_scope=discovery_coverage_scope,
             discovery_limitations=discovery_limitations,
             validation=validation,

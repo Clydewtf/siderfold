@@ -42,6 +42,9 @@ def test_fixture_adapter_dry_run_is_deterministic_and_builds_import_package() ->
         "errors": 0,
         "duplicates": 0,
         "requests": 1,
+        "artifact_discovered": 0,
+        "artifact_fetched": 0,
+        "artifact_deferred": 0,
     }
     assert execution.package.metadata.adapter.name == "fixture-catalog"
     assert len(execution.package.rows) == 2

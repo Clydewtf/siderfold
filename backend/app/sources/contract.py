@@ -109,9 +109,13 @@ class DiscoveryResult(BaseModel):
 
     resources: tuple[DiscoveredResource, ...] = ()
     captures: tuple[FetchResult, ...] = ()
+    record_resources: tuple[DiscoveredResource, ...] = ()
     issues: tuple[AdapterIssue, ...] = ()
     request_count: int = Field(default=0, ge=0)
     response_bytes: int = Field(default=0, ge=0)
+    artifact_discovered: int = Field(default=0, ge=0)
+    artifact_fetched: int = Field(default=0, ge=0)
+    artifact_deferred: int = Field(default=0, ge=0)
     coverage_scope: str = Field(
         default="resources returned by discovery",
         min_length=1,
@@ -151,6 +155,9 @@ class RunStatistics(BaseModel):
     duplicates: int = Field(default=0, ge=0)
     requests: int = Field(default=0, ge=0)
     response_bytes: int = Field(default=0, ge=0)
+    artifact_discovered: int = Field(default=0, ge=0)
+    artifact_fetched: int = Field(default=0, ge=0)
+    artifact_deferred: int = Field(default=0, ge=0)
 
 
 class QualityRatio(BaseModel):
@@ -257,6 +264,18 @@ class SourceAdapter(Protocol):
         ...
 
     def report(self, summary: AdapterRunSummary) -> AdapterReport:
+        ...
+
+
+class RecordEnricher(Protocol):
+    """Optional extension for adapters that associate auxiliary captures with records."""
+
+    def enrich(
+        self,
+        records: Sequence[ExtractedRecord],
+        fetched: Sequence[FetchResult],
+        context: AdapterContext,
+    ) -> ExtractResult:
         ...
 
 

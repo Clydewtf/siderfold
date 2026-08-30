@@ -295,28 +295,80 @@ def _funding_payload(funding: FundingInput) -> dict[str, str | None]:
 class FundingObservation:
     funding: FundingInput
     evidence: tuple[str, ...] = ()
-    breakdown: tuple[dict[str, str | None], ...] = ()
+    breakdown: tuple[dict[str, object], ...] = ()
     warning: str | None = None
     error: str | None = None
 
 
-def extract_total_grant_fund(texts: Iterable[str]) -> FundingObservation:
-    matches: list[tuple[Decimal, str]] = []
-    for text in texts:
-        normalized = normalize_whitespace(text)
-        if not re.search(r"(?:общий\s+)?грантовый\s+фонд", normalized, re.IGNORECASE):
-            continue
-        for amount in parse_rub_amounts(normalized):
-            matches.append((amount, normalized))
+def _funding_text(value: str | tuple[str, str]) -> tuple[str, str]:
+    if isinstance(value, tuple):
+        heading, text = value
+        return normalize_whitespace(heading), normalize_whitespace(text)
+    return "", normalize_whitespace(value)
 
-    values = {amount for amount, _evidence in matches}
+
+def _breakdown_entry(
+    funding: FundingInput,
+    *,
+    evidence: str,
+    label: str | None = None,
+) -> dict[str, object]:
+    entry: dict[str, object] = {
+        "value": _funding_payload(funding),
+        "evidence": evidence,
+    }
+    if label:
+        entry["label"] = label
+    return entry
+
+
+def extract_total_grant_fund(
+    texts: Iterable[str | tuple[str, str]],
+) -> FundingObservation:
+    matches: list[tuple[Decimal, str, bool, str | None]] = []
+    for raw_value in texts:
+        heading, text = _funding_text(raw_value)
+        heading_mentions_fund = "грантовый фонд" in normalize_heading(heading)
+        for sentence in _funding_sentences(text):
+            sentence_mentions_fund = bool(
+                re.search(r"(?:общий\s+)?грантовый\s+фонд", sentence, re.IGNORECASE)
+            )
+            if not heading_mentions_fund and not sentence_mentions_fund:
+                continue
+            for amount in parse_rub_amounts(sentence):
+                matches.append((amount, sentence, sentence_mentions_fund, heading or None))
+
+    values = {amount for amount, _evidence, _explicit, _label in matches}
     if not values:
         return FundingObservation(FundingInput(value_kind=FundingValueKind.NOT_STATED))
     if len(values) > 1:
+        explicitly_named_values = {
+            amount for amount, _evidence, explicit, _label in matches if explicit
+        }
+        breakdown = tuple(
+            _breakdown_entry(
+                FundingInput(
+                    value_kind=FundingValueKind.EXACT,
+                    currency_code="RUB",
+                    exact_amount=amount,
+                ),
+                evidence=evidence,
+                label=label,
+            )
+            for amount, evidence, _explicit, label in matches
+        )
+        if len(explicitly_named_values) > 1:
+            return FundingObservation(
+                FundingInput(value_kind=FundingValueKind.UNKNOWN),
+                evidence=tuple(evidence for _amount, evidence, _explicit, _label in matches),
+                breakdown=breakdown,
+                error="total_grant_fund_conflict",
+            )
         return FundingObservation(
             FundingInput(value_kind=FundingValueKind.UNKNOWN),
-            evidence=tuple(evidence for _amount, evidence in matches),
-            error="total_grant_fund_conflict",
+            evidence=tuple(evidence for _amount, evidence, _explicit, _label in matches),
+            breakdown=breakdown,
+            warning="total_grant_fund_breakdown_required",
         )
     amount = values.pop()
     return FundingObservation(
@@ -325,7 +377,7 @@ def extract_total_grant_fund(texts: Iterable[str]) -> FundingObservation:
             currency_code="RUB",
             exact_amount=amount,
         ),
-        evidence=tuple(evidence for _amount, evidence in matches),
+        evidence=tuple(evidence for _amount, evidence, _explicit, _label in matches),
     )
 
 
@@ -347,12 +399,18 @@ def _has_funding_context(value: str) -> bool:
     )
 
 
-def _funding_from_sentence(value: str) -> FundingInput | None:
+def _funding_from_sentence(
+    value: str,
+    *,
+    inherited_funding_context: bool = False,
+) -> FundingInput | None:
     """Recognize a bounded per-program amount, never a bare unrelated number."""
 
     lower = value.lower()
     amounts = parse_rub_amounts(value)
-    if not amounts or not _has_funding_context(lower):
+    if not amounts or not (
+        _has_funding_context(lower) or inherited_funding_context
+    ):
         return None
     shared_range = _SHARED_CURRENCY_RANGE_RE.search(value)
     if shared_range is not None:
@@ -401,37 +459,66 @@ def _funding_from_sentence(value: str) -> FundingInput | None:
     return None
 
 
-def extract_per_program_funding(texts: Iterable[str]) -> FundingObservation:
-    observations: list[tuple[FundingInput, str]] = []
-    for text in texts:
+def _funding_label(value: str, fallback: str | None) -> str | None:
+    nomination = re.search(
+        r"\b(?P<word>номинаци\w*)\s+"
+        r"(?P<names>«[^»]+»(?:\s*(?:,|и)\s*«[^»]+»)*)",
+        value,
+        re.IGNORECASE,
+    )
+    if nomination is not None:
+        label = normalize_whitespace(
+            f"Номинации: {nomination.group('names')}"
+        )
+        if label:
+            return label[:200]
+    prefix, separator, _rest = value.partition(":")
+    if separator and 1 <= len(prefix.strip()) <= 200:
+        return normalize_whitespace(prefix)
+    return fallback
+
+
+def extract_per_program_funding(
+    texts: Iterable[str | tuple[str, str]],
+) -> FundingObservation:
+    observations: list[tuple[FundingInput, str, str | None]] = []
+    for raw_value in texts:
+        heading, text = _funding_text(raw_value)
         normalized = normalize_whitespace(text)
         if not normalized:
             continue
+        inherited_funding_context = _has_funding_context(normalized)
         for sentence in _funding_sentences(normalized):
             if re.search(r"(?:общий\s+)?грантовый\s+фонд", sentence, re.IGNORECASE):
                 continue
-            funding = _funding_from_sentence(sentence)
+            funding = _funding_from_sentence(
+                sentence,
+                inherited_funding_context=inherited_funding_context,
+            )
             if funding is not None:
-                observations.append((funding, sentence))
+                observations.append((funding, sentence, _funding_label(sentence, heading or None)))
 
     if not observations:
         return FundingObservation(FundingInput(value_kind=FundingValueKind.NOT_STATED))
 
     unique = {
         tuple(sorted(funding.model_dump(mode="json", exclude_none=True).items()))
-        for funding, _evidence in observations
+        for funding, _evidence, _label in observations
     }
     if len(unique) > 1:
         return FundingObservation(
             FundingInput(value_kind=FundingValueKind.UNKNOWN),
-            evidence=tuple(evidence for _funding, evidence in observations),
-            breakdown=tuple(_funding_payload(funding) for funding, _evidence in observations),
+            evidence=tuple(evidence for _funding, evidence, _label in observations),
+            breakdown=tuple(
+                _breakdown_entry(funding, evidence=evidence, label=label)
+                for funding, evidence, label in observations
+            ),
             warning="per_program_funding_ambiguous",
         )
-    funding, _evidence = observations[0]
+    funding, _evidence, _label = observations[0]
     return FundingObservation(
         funding,
-        evidence=tuple(evidence for _funding, evidence in observations),
+        evidence=tuple(evidence for _funding, evidence, _label in observations),
     )
 
 

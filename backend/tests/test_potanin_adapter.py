@@ -2,10 +2,12 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
+from io import BytesIO
 from pathlib import Path
 from urllib.parse import urlparse
 
 import pytest
+from pypdf import PdfWriter
 from sqlalchemy import func, select
 from sqlalchemy.engine import Engine
 
@@ -39,6 +41,10 @@ BACKEND_ROOT = Path(__file__).resolve().parents[1]
 FIXTURES_ROOT = BACKEND_ROOT / "tests" / "fixtures" / "adapters" / "potanin"
 OPEN_URL = "https://fondpotanin.ru/competitions/quality-reference-open/"
 HISTORIC_URL = "https://fondpotanin.ru/competitions/quality-reference-historic/"
+RULES_URL = "https://fondpotanin.ru/upload/documents/rules.pdf"
+ARCHIVE_RULES_URL = "https://fondpotanin.ru/upload/documents/archive-rules.pdf"
+RESULTS_URL = "https://fondpotanin.ru/press/news/quality-reference-results/"
+WINNERS_URL = "https://fondpotanin.ru/upload/documents/quality-reference-winners-2026.pdf"
 FIXTURE_CAPTURED_AT = datetime(2026, 8, 30, 12, 0, tzinfo=timezone.utc)
 
 
@@ -46,9 +52,18 @@ def _fixture_bytes(name: str) -> bytes:
     return (FIXTURES_ROOT / name).read_bytes()
 
 
+def _pdf_bytes() -> bytes:
+    stream = BytesIO()
+    writer = PdfWriter()
+    writer.add_blank_page(width=72, height=72)
+    writer.write(stream)
+    return stream.getvalue()
+
+
 @dataclass
 class FixtureResponseFetcher:
     responses: dict[str, bytes]
+    content_formats: dict[str, str] = field(default_factory=dict)
     final_urls: dict[str, str] = field(default_factory=dict)
     calls: list[str] = field(default_factory=list)
 
@@ -67,7 +82,10 @@ class FixtureResponseFetcher:
             requested_url=url,
             final_url=self.final_urls.get(url, url),
             content=content,
-            content_format="application/xml" if url == POTANIN_SITEMAP_URL else "text/html",
+            content_format=self.content_formats.get(
+                url,
+                "application/xml" if url == POTANIN_SITEMAP_URL else "text/html",
+            ),
             received_at=FIXTURE_CAPTURED_AT,
             response_metadata={"access_method": "fixture-http"},
         )
@@ -93,11 +111,21 @@ def _adapter_with_catalog(
     historic_page_name: str = "historic.html",
     final_urls: dict[str, str] | None = None,
 ) -> tuple[PotaninCompetitionsAdapter, FixtureResponseFetcher]:
+    pdf = _pdf_bytes()
     fetcher = FixtureResponseFetcher(
         responses={
             POTANIN_SITEMAP_URL: _fixture_bytes(sitemap_name),
             OPEN_URL: _fixture_bytes(open_page_name),
             HISTORIC_URL: _fixture_bytes(historic_page_name),
+            RULES_URL: pdf,
+            ARCHIVE_RULES_URL: pdf,
+            RESULTS_URL: _fixture_bytes("results.html"),
+            WINNERS_URL: pdf,
+        },
+        content_formats={
+            RULES_URL: "application/pdf",
+            ARCHIVE_RULES_URL: "application/pdf",
+            WINNERS_URL: "application/pdf",
         },
         final_urls=final_urls or {},
     )
@@ -187,6 +215,43 @@ def test_page_normalizes_range_and_ambiguous_per_program_funding_without_guessin
     assert len(ambiguous_page.record_payload["payload"]["funding"]["per_program"]["breakdown"]) == 2
 
 
+def test_page_inventory_keeps_unknown_sections_and_year_only_winner_links() -> None:
+    parsed = parse_competition_page(
+        _fixture_bytes("adaptive-content.html"),
+        source_url="https://fondpotanin.ru/competitions/quality-reference-adaptive/",
+        sitemap_last_modified_at=None,
+    )
+
+    assert parsed.issues == ()
+    payload = parsed.record_payload["payload"]
+    assert parsed.record_payload["funding"] == {"value_kind": "unknown"}
+    breakdown = payload["funding"]["per_program"]["breakdown"]
+    assert {entry["label"] for entry in breakdown} == {
+        "Номинации: «Старт»",
+        "Номинации: «Развитие»",
+    }
+    total_fund = payload["funding"]["total_grant_fund"]
+    assert total_fund["value"] == {"value_kind": "unknown"}
+    assert {
+        entry["value"]["exact_amount"] for entry in total_fund["breakdown"]
+    } == {"175000000", "50000000"}
+    assert payload["links"]["result_urls"] == [
+        "https://fondpotanin.ru/press/news/mixed-winners-2026/",
+        "https://fondpotanin.ru/press/news/mixed-winners-2025/",
+    ]
+    assert payload["content_inventory"]["unclassified_block_count"] == 1
+    assert any(
+        warning.startswith("unclassified_content_block: Новый формат участия")
+        for warning in parsed.record_payload["warnings"]
+    )
+    artifacts = {artifact["url"]: artifact for artifact in payload["artifacts"]}
+    assert artifacts["https://fondpotanin.ru/upload/documents/mixed-format.pdf"]["collection"] == "fetch"
+    assert artifacts["https://fondpotanin.ru/press/news/mixed-winners-2026/"]["kind"] == "result"
+    unrelated_news = artifacts["https://fondpotanin.ru/press/news/unrelated-news/"]
+    assert unrelated_news["collection"] == "reference_only"
+    assert unrelated_news["collection_reason"] == "not_result_material"
+
+
 def test_per_program_funding_preserves_each_supported_value_kind() -> None:
     exact = extract_per_program_funding(
         ["Размер гранта составляет 250 000 рублей."]
@@ -203,6 +268,13 @@ def test_per_program_funding_preserves_each_supported_value_kind() -> None:
             "Максимальный размер поддержки для авторов — 500 тыс. рублей.",
         ]
     )
+    inherited_context = extract_per_program_funding(
+        [
+            "Поддержка предоставляется в виде грантов: в размере до 5 млн рублей "
+            "в номинации «Старт»; в размере до 10 млн рублей в номинациях "
+            "«Развитие» и «Партнерство»."
+        ]
+    )
     not_stated = extract_per_program_funding(["Условия финансирования опубликованы отдельно."])
 
     assert exact.funding.value_kind == "exact"
@@ -210,6 +282,12 @@ def test_per_program_funding_preserves_each_supported_value_kind() -> None:
     assert maximum.funding.value_kind == "maximum"
     assert unknown.funding.value_kind == "unknown"
     assert unknown.warning == "per_program_funding_ambiguous"
+    assert inherited_context.funding.value_kind == "unknown"
+    assert {entry["value"]["max_amount"] for entry in inherited_context.breakdown} == {
+        "5000000",
+        "10000000",
+    }
+    assert all("номинаци" in entry["label"].lower() for entry in inherited_context.breakdown)
     assert not_stated.funding.value_kind == "not_stated"
 
 
@@ -300,13 +378,16 @@ def test_fixture_dry_run_has_complete_capture_trace_and_quality_metrics() -> Non
     assert execution.report.status == "completed"
     assert execution.report.statistics.model_dump(exclude={"response_bytes"}) == {
         "discovered": 2,
-        "fetched": 3,
+        "fetched": 5,
         "extracted": 2,
         "valid": 2,
         "warnings": 0,
         "errors": 0,
         "duplicates": 0,
-        "requests": 3,
+        "requests": 7,
+        "artifact_discovered": 4,
+        "artifact_fetched": 4,
+        "artifact_deferred": 0,
     }
     assert execution.report.quality is not None
     assert execution.report.quality.completeness.model_dump() == {
@@ -323,14 +404,49 @@ def test_fixture_dry_run_has_complete_capture_trace_and_quality_metrics() -> Non
         "newest_source_last_modified_at": "2026-08-28T12:59:02+03:00",
         "captured_at": FIXTURE_CAPTURED_AT,
     }
-    assert len(execution.package.captures) == 3
+    assert len(execution.package.captures) == 5
     assert execution.package.captures[0].rows == ()
     assert [capture.capture.source_url for capture in execution.package.captures] == [
         POTANIN_SITEMAP_URL,
         OPEN_URL,
         HISTORIC_URL,
+        RULES_URL,
+        RESULTS_URL,
     ]
-    assert fetcher.calls == [POTANIN_SITEMAP_URL, OPEN_URL, HISTORIC_URL]
+    assert fetcher.calls == [
+        POTANIN_SITEMAP_URL,
+        OPEN_URL,
+        HISTORIC_URL,
+        RULES_URL,
+        RESULTS_URL,
+        ARCHIVE_RULES_URL,
+        WINNERS_URL,
+    ]
+
+
+def test_linked_artifacts_are_captured_and_attached_to_their_candidate() -> None:
+    adapter, fetcher = _adapter_with_catalog()
+
+    execution = execute_adapter(
+        _definition(),
+        adapter,
+        dry_run=True,
+        project_root=BACKEND_ROOT,
+        started_at=FIXTURE_CAPTURED_AT,
+    )
+
+    assert execution.package is not None
+    open_row = execution.package.rows[0].record
+    assert open_row is not None
+    artifacts = open_row.payload["artifacts"]
+    by_url = {artifact["url"]: artifact for artifact in artifacts}
+    assert by_url[RULES_URL]["collection_status"] == "captured"
+    assert by_url[RULES_URL]["inspection"]["kind"] == "pdf"
+    assert by_url[RESULTS_URL]["inspection"]["kind"] == "html"
+    assert "Музей «Новый взгляд»" in by_url[RESULTS_URL]["inspection"]["list_entries"]
+    assert by_url[WINNERS_URL]["relationship"] == "nested_linked_artifact"
+    assert by_url["https://zayavka.fondpotanin.ru/ru/"]["collection_status"] == "reference_only"
+    assert "https://zayavka.fondpotanin.ru/ru/" not in fetcher.calls
 
 
 def test_non_dry_run_archives_each_raw_response_outside_the_repository(
@@ -351,9 +467,13 @@ def test_non_dry_run_archives_each_raw_response_outside_the_repository(
     capture_uris = [
         capture.capture.external_content_uri for capture in execution.package.captures
     ]
-    assert len(capture_uris) == 3
+    assert len(capture_uris) == 5
     assert all(uri.startswith(tmp_path.resolve().as_uri()) for uri in capture_uris)
-    assert {Path(urlparse(uri).path).suffix for uri in capture_uris} == {".xml", ".html"}
+    assert {Path(urlparse(uri).path).suffix for uri in capture_uris} == {
+        ".xml",
+        ".html",
+        ".pdf",
+    }
     assert all(Path(urlparse(uri).path).is_file() for uri in capture_uris)
 
 
@@ -396,7 +516,7 @@ def test_conflicting_source_data_is_staged_as_quality_issue_without_publication(
 
     assert report.error_count == 1
     with migrated_engine.connect() as connection:
-        assert connection.scalar(select(func.count()).select_from(RawCapture)) == 3
+        assert connection.scalar(select(func.count()).select_from(RawCapture)) == 4
         assert connection.scalar(select(func.count()).select_from(Program)) == 0
         assert set(connection.scalars(select(StagedRecord.state))) == {
             StagedRecordState.ERROR,

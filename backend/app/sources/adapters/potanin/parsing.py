@@ -9,6 +9,7 @@ from urllib.parse import urldefrag, urljoin, urlsplit
 from lxml import etree, html as lxml_html
 
 from app.sources.adapters.potanin.normalization import (
+    POTANIN_HOST,
     extract_application_dates,
     extract_per_program_funding,
     extract_total_grant_fund,
@@ -19,6 +20,7 @@ from app.sources.adapters.potanin.normalization import (
     normalize_outbound_url,
     normalize_themes,
     normalize_whitespace,
+    parse_rub_amounts,
     parse_sitemap_lastmod,
 )
 
@@ -208,17 +210,131 @@ def _text_without_heading(container: Any, heading: Any) -> str:
     return normalize_whitespace(" ".join(parts))
 
 
-def _extract_sections(scope: Any) -> dict[str, str]:
-    sections: dict[str, str] = {}
-    for heading in scope.xpath(".//h2 | .//h3"):
+_MAX_BLOCK_TEXT_CHARS = 10_000
+
+
+def _section_category(title: str) -> str:
+    heading = normalize_heading(title)
+    categories = (
+        ("results", ("победител", "итог", "результат", "лауреат")),
+        (
+            "schedule",
+            ("когда", "срок", "порядок", "этап", "календар", "график", "прием", "приём"),
+        ),
+        ("goals", ("цел", "задач", "о конкурс")),
+        ("opportunities", ("возможност",)),
+        ("criteria", ("критери", "оценк", "допуск")),
+        ("application", ("заявк", "как участвовать", "подать")),
+        ("eligibility", ("кто может", "требован", "участник", "условия участия")),
+        ("funding", ("грантовый фонд", "финансирован", "поддержк", "размер гранта")),
+        ("documents", ("документ", "положени", "правил", "регламент")),
+        ("taxonomy", ("направлен", "тем", "географ", "регион", "территор", "номинац")),
+        ("contacts", ("контакт", "организатор")),
+        ("supplementary", ("новост", "событи", "истор")),
+    )
+    for category, terms in categories:
+        if any(term in heading for term in terms):
+            return category
+    return "unclassified"
+
+
+def _bounded_text(value: str) -> tuple[str, bool]:
+    normalized = normalize_whitespace(value)
+    if len(normalized) <= _MAX_BLOCK_TEXT_CHARS:
+        return normalized, False
+    return normalized[:_MAX_BLOCK_TEXT_CHARS].rstrip(), True
+
+
+def _link_kind(*, link: str, label: str, section_category: str) -> str:
+    text = label.lower()
+    path = urlsplit(link).path.lower()
+    if (
+        re.search(r"подать\s+заяв|заполнить\s+заяв|перейти\s+к\s+заяв", text)
+        or re.search(r"личн\w*\s+кабинет", text)
+        or urlsplit(link).hostname == "zayavka.fondpotanin.ru"
+    ):
+        return "application"
+    if section_category == "results" or re.search(
+        r"победител|итог|результат|лауреат", text
+    ):
+        return "result"
+    if (
+        re.search(r"\.(?:pdf|docx?|xlsx?|pptx?)(?:$|[?#])", link, re.IGNORECASE)
+        or path.startswith("/upload/")
+        or re.search(r"положени|правил|регламент|документ|бюджет", text)
+        or section_category == "documents"
+    ):
+        return "document"
+    if "подроб" in text or "услов" in text or path.startswith("/competitions/"):
+        return "detail"
+    return "reference"
+
+
+def _collection_policy(link: str, kind: str) -> tuple[str, str | None]:
+    parsed = urlsplit(link)
+    if kind == "application":
+        return "reference_only", "application_form_not_collected"
+    if parsed.hostname != POTANIN_HOST:
+        return "reference_only", "outside_official_origin"
+    if parsed.path.startswith("/upload/") and kind in {"document", "result"}:
+        return "fetch", None
+    if parsed.path.startswith("/press/") and kind == "result":
+        return "fetch", None
+    if parsed.path.startswith("/press/"):
+        return "reference_only", "not_result_material"
+    return "reference_only", "outside_bounded_artifact_paths"
+
+
+def _links_in_node(
+    node: Any,
+    *,
+    source_url: str,
+    section_title: str | None,
+    section_category: str,
+) -> list[dict[str, object]]:
+    links: list[dict[str, object]] = []
+    anchors = list(node.xpath(".//a[@href]"))
+    if _tag_name(node) == "a" and node.get("href"):
+        anchors.insert(0, node)
+    for anchor in anchors:
+        href = anchor.get("href")
+        if not href:
+            continue
+        link = _absolute_safe_url(source_url, href)
+        if link is None or link == source_url:
+            continue
+        label = _node_text(anchor)
+        kind = _link_kind(link=link, label=label, section_category=section_category)
+        collection, reason = _collection_policy(link, kind)
+        entry: dict[str, object] = {
+            "url": link,
+            "label": label,
+            "kind": kind,
+            "section_title": section_title,
+            "section_category": section_category,
+            "collection": collection,
+        }
+        if reason is not None:
+            entry["collection_reason"] = reason
+        if entry not in links:
+            links.append(entry)
+    return links
+
+
+def _extract_content_blocks(scope: Any, source_url: str) -> list[dict[str, object]]:
+    blocks: list[dict[str, object]] = []
+    headings = scope.xpath(".//h2 | .//h3 | .//h4")
+    for position, heading in enumerate(headings, 1):
         title = _node_text(heading)
         if not title:
             continue
         fragments: list[str] = []
+        related_nodes: list[Any] = [heading]
         sibling = heading.getnext()
         while sibling is not None:
-            if _tag_name(sibling) in {"h2", "h3"}:
+            if _tag_name(sibling) in {"h2", "h3", "h4"}:
                 break
+            related_nodes.append(sibling)
             text = _node_text(sibling)
             if text:
                 fragments.append(text)
@@ -227,13 +343,71 @@ def _extract_sections(scope: Any) -> dict[str, str]:
         if not value:
             parent = heading.getparent()
             if parent is not None:
-                nested_headings = parent.xpath(".//h2 | .//h3")
+                nested_headings = parent.xpath(".//h2 | .//h3 | .//h4")
                 if len(nested_headings) == 1:
+                    related_nodes = [parent]
                     value = _text_without_heading(parent, heading)
-        if value:
-            sections[title] = normalize_whitespace(
-                " ".join(filter(None, (sections.get(title), value)))
-            )
+        text, text_truncated = _bounded_text(value)
+        category = _section_category(title)
+        links: list[dict[str, object]] = []
+        for node in related_nodes:
+            for link in _links_in_node(
+                node,
+                source_url=source_url,
+                section_title=title,
+                section_category=category,
+            ):
+                if link not in links:
+                    links.append(link)
+        if not text and not links:
+            continue
+        blocks.append(
+            {
+                "position": position,
+                "heading": title,
+                "heading_key": normalize_heading(title),
+                "category": category,
+                "text": text or None,
+                "text_truncated": text_truncated,
+                "links": links,
+            }
+        )
+    return blocks
+
+
+def _extract_sections(blocks: Iterable[dict[str, object]]) -> dict[str, str]:
+    sections: dict[str, str] = {}
+    for block in blocks:
+        title = block.get("heading")
+        text = block.get("text")
+        if not isinstance(title, str) or not isinstance(text, str) or not text:
+            continue
+        sections[title] = normalize_whitespace(" ".join(filter(None, (sections.get(title), text))))
+    return sections
+
+
+def _is_total_fund_section(title: str) -> bool:
+    heading = normalize_heading(title)
+    return "грантовый фонд" in heading or "общий фонд" in heading
+
+
+def _per_program_funding_sections(
+    blocks: Iterable[dict[str, object]],
+) -> list[tuple[str, str]]:
+    sections: list[tuple[str, str]] = []
+    for block in blocks:
+        title = block.get("heading")
+        text = block.get("text")
+        category = block.get("category")
+        if not isinstance(title, str) or not isinstance(text, str) or not text:
+            continue
+        if _is_total_fund_section(title):
+            continue
+        has_funding_signal = bool(
+            re.search(r"(?:грант\w*|поддержк\w*|финансир\w*)", text, re.IGNORECASE)
+        )
+        if category == "funding" or (has_funding_signal and parse_rub_amounts(text)):
+            sections.append((title, text))
     return sections
 
 
@@ -287,39 +461,75 @@ def _absolute_safe_url(base_url: str, href: str) -> str | None:
     return normalize_outbound_url(candidate)
 
 
-def _collect_links(scope: Any, source_url: str) -> tuple[dict[str, list[str]], list[str]]:
+def _collect_links(
+    scope: Any,
+    blocks: Iterable[dict[str, object]],
+    source_url: str,
+) -> tuple[dict[str, object], list[str]]:
     links = {
         "application_candidates": [],
         "document_urls": [],
         "result_urls": [],
         "detail_urls": [],
+        "inventory": [],
     }
-    for anchor in scope.xpath(".//a[@href]"):
-        link = _absolute_safe_url(source_url, anchor.get("href"))
-        if link is None or link == source_url:
+    inventory: list[dict[str, object]] = []
+    for block in blocks:
+        block_links = block.get("links")
+        if isinstance(block_links, list):
+            inventory.extend(
+                item for item in block_links if isinstance(item, dict)
+            )
+    inventory.extend(
+        _links_in_node(
+            scope,
+            source_url=source_url,
+            section_title=None,
+            section_category="page",
+        )
+    )
+    unique_inventory: list[dict[str, object]] = []
+    entries_by_url: dict[str, dict[str, object]] = {}
+    for entry in inventory:
+        url = entry.get("url")
+        if not isinstance(url, str):
             continue
-        text = _node_text(anchor)
-        class_name = (anchor.get("class") or "").lower()
-        text_lower = text.lower()
-        host = urlsplit(link).hostname
-        if (
-            re.search(r"подать\s+заяв|заполнить\s+заяв|перейти\s+к\s+заяв", text_lower)
-            or re.search(r"личн\w*\s+кабинет", text_lower)
-            or host == "zayavka.fondpotanin.ru"
-        ):
-            bucket = "application_candidates"
-        elif re.search(r"\.(?:pdf|docx?|xlsx?|pptx?)(?:$|[?#])", link, re.IGNORECASE) or re.search(
-            r"положени|правил|регламент|документ|бюджет", text_lower
-        ):
-            bucket = "document_urls"
-        elif re.search(r"победител|итог", text_lower):
-            bucket = "result_urls"
-        elif ("button" in class_name or "подроб" in text_lower or "услов" in text_lower):
-            bucket = "detail_urls"
-        else:
+        existing = entries_by_url.get(url)
+        if existing is None:
+            copied = dict(entry)
+            entries_by_url[url] = copied
+            unique_inventory.append(copied)
             continue
-        if link not in links[bucket]:
+        context = {
+            "section_title": entry.get("section_title"),
+            "section_category": entry.get("section_category"),
+        }
+        contexts = existing.setdefault(
+            "contexts",
+            [
+                {
+                    "section_title": existing.get("section_title"),
+                    "section_category": existing.get("section_category"),
+                }
+            ],
+        )
+        if isinstance(contexts, list) and context not in contexts:
+            contexts.append(context)
+
+    for entry in unique_inventory:
+        link = entry.get("url")
+        kind = entry.get("kind")
+        if not isinstance(link, str) or not isinstance(kind, str):
+            continue
+        bucket = {
+            "application": "application_candidates",
+            "document": "document_urls",
+            "result": "result_urls",
+            "detail": "detail_urls",
+        }.get(kind)
+        if bucket is not None and link not in links[bucket]:
             links[bucket].append(link)
+    links["inventory"] = unique_inventory
 
     warnings: list[str] = []
     if len(links["application_candidates"]) > 1:
@@ -398,13 +608,14 @@ def parse_competition_page(
             )
         )
 
-    sections = _extract_sections(scope)
+    content_blocks = _extract_content_blocks(scope, source_url)
+    sections = _extract_sections(content_blocks)
     source_status, status_issues = _source_status(scope)
     issues.extend(status_issues)
 
     schedule_texts = _relevant_section_texts(
         sections,
-        ("когда", "порядок", "прием", "приём", "заяв"),
+        ("когда", "порядок", "график", "прием", "приём", "заяв"),
     )
     schedule_texts.extend(
         _node_text(node)
@@ -425,9 +636,10 @@ def parse_competition_page(
         )
 
     total_fund_texts = [
-        f"{title} {text}"
+        (title, text)
         for title, text in sections.items()
-        if "грантовый фонд" in normalize_heading(title)
+        if _section_category(title) == "funding"
+        or "грантовый фонд" in normalize_heading(title)
     ]
     if not total_fund_texts:
         total_fund_texts = [main_text]
@@ -442,7 +654,7 @@ def parse_competition_page(
             )
         )
     per_program_funding = extract_per_program_funding(
-        list(sections.values()) or [main_text]
+        _per_program_funding_sections(content_blocks) or [main_text]
     )
 
     taxonomy_texts = _relevant_section_texts(
@@ -451,10 +663,22 @@ def parse_competition_page(
     )
     if not taxonomy_texts:
         taxonomy_texts = [main_text]
-    links, link_warnings = _collect_links(scope, source_url)
+    links, link_warnings = _collect_links(scope, content_blocks, source_url)
     warnings = list(link_warnings)
     if per_program_funding.warning:
         warnings.append(per_program_funding.warning)
+    if total_fund.warning:
+        warnings.append(total_fund.warning)
+    unclassified_blocks = [
+        block
+        for block in content_blocks
+        if block.get("category") == "unclassified"
+        and (block.get("text") or block.get("links"))
+    ]
+    for block in unclassified_blocks[:20]:
+        heading = block.get("heading")
+        if isinstance(heading, str):
+            warnings.append(f"unclassified_content_block: {heading}")
 
     record = {
         "record_key": source_url,
@@ -486,11 +710,18 @@ def parse_competition_page(
             },
             "summary": _first_summary(scope),
             "sections": sections,
+            "content_inventory": {
+                "blocks": content_blocks,
+                "unclassified_block_count": len(unclassified_blocks),
+                "raw_capture_contains_full_content": True,
+            },
             "links": {
                 "document_urls": links["document_urls"],
                 "result_urls": links["result_urls"],
                 "detail_urls": links["detail_urls"],
+                "inventory": links["inventory"],
             },
+            "artifacts": links["inventory"],
         },
         "warnings": warnings,
     }

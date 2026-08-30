@@ -109,10 +109,16 @@ class UrllibResponseFetcher:
 
 
 def _extension_for_content_type(content_format: str) -> str:
+    if "pdf" in content_format:
+        return ".pdf"
     if "xml" in content_format:
         return ".xml"
     if "html" in content_format:
         return ".html"
+    if "wordprocessingml" in content_format:
+        return ".docx"
+    if "spreadsheetml" in content_format:
+        return ".xlsx"
     return ".bin"
 
 
