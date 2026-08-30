@@ -29,7 +29,7 @@ PROVENANCE_TABLES = {
 
 
 @pytest.mark.postgres
-def test_b3_migration_applies_to_a_clean_database_and_rolls_back(
+def test_provenance_migration_applies_to_a_clean_database_and_rolls_back(
     alembic_config: object,
     test_database_url: str,
 ) -> None:
@@ -41,7 +41,7 @@ def test_b3_migration_applies_to_a_clean_database_and_rolls_back(
         assert (CANONICAL_TABLES | PROVENANCE_TABLES).issubset(inspect(engine).get_table_names())
         with engine.connect() as connection:
             assert connection.scalar(text("SELECT version_num FROM alembic_version")) == (
-                "0003_b3_provenance"
+                "0004_adapter_run_statistics"
             )
 
         command.downgrade(alembic_config, "0002_b2_canonical_schema")
@@ -58,7 +58,7 @@ def test_b3_migration_applies_to_a_clean_database_and_rolls_back(
 
 
 @pytest.mark.postgres
-def test_b3_upgrade_rejects_published_b2_program_without_provenance(
+def test_provenance_upgrade_rejects_published_legacy_program_without_provenance(
     alembic_config: object,
     test_database_url: str,
 ) -> None:

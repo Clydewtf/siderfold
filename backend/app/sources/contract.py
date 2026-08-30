@@ -1,0 +1,240 @@
+from __future__ import annotations
+
+from collections.abc import Mapping, Sequence
+from dataclasses import dataclass, field
+from datetime import datetime
+from pathlib import Path
+from typing import Any, Literal, Protocol
+from uuid import UUID
+
+from pydantic import BaseModel, ConfigDict, Field, field_validator
+
+from app.import_bridge.contract import (
+    ParsedRow,
+    ValidationIssue,
+    add_duplicate_key_issues,
+    parse_record,
+)
+from app.sources.registry import SourceDefinition, SourceLimits, require_allowed_url
+
+
+ADAPTER_CONTRACT_VERSION = "siderfold.adapter/v1"
+ADAPTER_REPORT_VERSION = "siderfold.adapter-report/v1"
+
+
+class AdapterStage(str):
+    DISCOVER = "discover"
+    FETCH = "fetch"
+    EXTRACT = "extract"
+    VALIDATE = "validate"
+    REPORT = "report"
+    RUN = "run"
+
+
+class AdapterIssue(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    stage: str
+    severity: Literal["warning", "error"]
+    code: str = Field(min_length=1, max_length=100)
+    message: str = Field(min_length=1, max_length=2_000)
+    resource_key: str | None = Field(default=None, max_length=512)
+    row_number: int | None = Field(default=None, ge=1)
+    field: str | None = Field(default=None, max_length=255)
+
+
+class AdapterContext:
+    """Runtime context shared by all adapter stages."""
+
+    def __init__(
+        self,
+        *,
+        source: SourceDefinition,
+        dry_run: bool,
+        project_root: Path,
+        started_at: datetime,
+        run_id: UUID | None = None,
+    ) -> None:
+        self.source = source
+        self.dry_run = dry_run
+        self.project_root = project_root
+        self.started_at = started_at
+        self.run_id = run_id
+
+    @property
+    def limits(self) -> SourceLimits:
+        return self.source.limits
+
+    def require_allowed_url(self, url: str) -> str:
+        return require_allowed_url(url, self.source)
+
+
+class DiscoveredResource(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    external_key: str = Field(min_length=1, max_length=512)
+    url: str = Field(min_length=1, max_length=2_048)
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+    @field_validator("url")
+    @classmethod
+    def require_http_url(cls, value: str) -> str:
+        from app.sources.registry import normalize_url
+
+        return normalize_url(value)
+
+
+class DiscoveryResult(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    resources: tuple[DiscoveredResource, ...] = ()
+    issues: tuple[AdapterIssue, ...] = ()
+
+
+@dataclass(frozen=True)
+class FetchResult:
+    resource: DiscoveredResource
+    final_url: str
+    content: bytes
+    content_format: str
+    received_at: datetime
+    external_content_uri: str
+    response_metadata: Mapping[str, Any] = field(default_factory=dict)
+
+
+@dataclass(frozen=True)
+class ExtractedRecord:
+    row_number: int
+    raw_payload: Mapping[str, Any]
+
+
+@dataclass(frozen=True)
+class ExtractResult:
+    records: tuple[ExtractedRecord, ...] = ()
+    issues: tuple[AdapterIssue, ...] = ()
+
+
+@dataclass(frozen=True)
+class ValidationResult:
+    rows: tuple[ParsedRow, ...] = ()
+    issues: tuple[AdapterIssue, ...] = ()
+
+
+class RunStatistics(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    discovered: int = Field(default=0, ge=0)
+    fetched: int = Field(default=0, ge=0)
+    extracted: int = Field(default=0, ge=0)
+    valid: int = Field(default=0, ge=0)
+    warnings: int = Field(default=0, ge=0)
+    errors: int = Field(default=0, ge=0)
+    duplicates: int = Field(default=0, ge=0)
+    requests: int = Field(default=0, ge=0)
+    response_bytes: int = Field(default=0, ge=0)
+
+
+class AdapterRunSummary(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    source_key: str
+    adapter_name: str
+    adapter_version: str
+    status: Literal["completed", "failed"]
+    dry_run: bool
+    statistics: RunStatistics
+    issues: tuple[AdapterIssue, ...] = ()
+    import_counts: dict[str, int] | None = None
+
+
+class AdapterReport(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    report_version: Literal[ADAPTER_REPORT_VERSION] = ADAPTER_REPORT_VERSION
+    contract_version: Literal[ADAPTER_CONTRACT_VERSION] = ADAPTER_CONTRACT_VERSION
+    source_key: str
+    adapter_name: str
+    adapter_version: str
+    status: Literal["completed", "failed"]
+    dry_run: bool
+    statistics: RunStatistics
+    issues: tuple[AdapterIssue, ...] = ()
+    import_counts: dict[str, int] | None = None
+    source_id: UUID | None = None
+    ingestion_run_id: UUID | None = None
+
+
+class SourceAdapter(Protocol):
+    name: str
+    version: str
+
+    def discover(self, context: AdapterContext) -> DiscoveryResult:
+        ...
+
+    def fetch(
+        self,
+        resource: DiscoveredResource,
+        context: AdapterContext,
+    ) -> FetchResult:
+        ...
+
+    def extract(
+        self,
+        fetched: FetchResult,
+        context: AdapterContext,
+    ) -> ExtractResult:
+        ...
+
+    def validate(
+        self,
+        records: Sequence[ExtractedRecord],
+        context: AdapterContext,
+    ) -> ValidationResult:
+        ...
+
+    def report(self, summary: AdapterRunSummary) -> AdapterReport:
+        ...
+
+
+def validate_import_records(records: Sequence[ExtractedRecord]) -> ValidationResult:
+    parsed_rows = [
+        parse_record(record.raw_payload, row_number=record.row_number)
+        for record in records
+    ]
+    return ValidationResult(rows=add_duplicate_key_issues(parsed_rows))
+
+
+def validation_issue_to_adapter_issue(
+    issue: ValidationIssue,
+    *,
+    stage: str = AdapterStage.VALIDATE,
+) -> AdapterIssue:
+    return AdapterIssue(
+        stage=stage,
+        severity="error",
+        code=issue.code,
+        message=issue.message,
+        row_number=issue.row_number,
+        field=issue.field,
+    )
+
+
+def adapter_report(
+    adapter: SourceAdapter,
+    summary: AdapterRunSummary,
+    *,
+    source_id: UUID | None = None,
+    ingestion_run_id: UUID | None = None,
+) -> AdapterReport:
+    return AdapterReport(
+        source_key=summary.source_key,
+        adapter_name=adapter.name,
+        adapter_version=adapter.version,
+        status=summary.status,
+        dry_run=summary.dry_run,
+        statistics=summary.statistics,
+        issues=summary.issues,
+        import_counts=summary.import_counts,
+        source_id=source_id,
+        ingestion_run_id=ingestion_run_id,
+    )

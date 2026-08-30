@@ -1,4 +1,4 @@
-"""Create the B2 canonical program schema.
+"""Create the canonical program schema.
 
 Revision ID: 0002_b2_canonical_schema
 Revises: 0001_b1_baseline

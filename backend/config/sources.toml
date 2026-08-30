@@ -1,0 +1,22 @@
+version = 1
+
+[sources.fixture-catalog]
+source_key = "fixture-catalog"
+name = "Siderfold demonstration catalog"
+canonical_url = "https://fixture.siderfold.test/catalog"
+allowed_url_prefixes = ["https://fixture.siderfold.test/catalog"]
+access_method = "fixture"
+schedule = "manual"
+status = "active"
+responsible = "siderfold-data"
+adapter_name = "fixture-catalog"
+adapter_version = "1.0.0"
+fixture_path = "tests/fixtures/adapters/catalog_v1.json"
+secret_env_vars = []
+
+[sources.fixture-catalog.limits]
+max_requests = 1
+max_response_bytes = 100000
+max_total_bytes = 100000
+max_records = 100
+timeout_seconds = 5

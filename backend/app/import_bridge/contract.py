@@ -207,10 +207,14 @@ class ImportPackage:
     rows: tuple[ParsedRow, ...]
 
     def fingerprint_bytes(self) -> bytes:
+        capture = self.metadata.capture.model_dump(mode="json")
+        capture.pop("received_at", None)
+        capture.pop("external_content_uri", None)
+        capture.pop("response_metadata", None)
         normalized = {
             "contract_version": self.metadata.contract_version,
             "source": self.metadata.source.model_dump(mode="json"),
-            "capture": self.metadata.capture.model_dump(mode="json"),
+            "capture": capture,
             "adapter": self.metadata.adapter.model_dump(mode="json"),
             "rows": [row.raw_payload for row in self.rows],
         }

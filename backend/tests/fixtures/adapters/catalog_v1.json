@@ -1,0 +1,32 @@
+{
+  "records": [
+    {
+      "record_key": "fixture:catalog:alpha",
+      "title": "Демонстрационная программа Alpha",
+      "record_url": "https://fixture.siderfold.test/catalog/alpha",
+      "deadline_on": "2026-12-01",
+      "funding": {
+        "value_kind": "maximum",
+        "currency_code": "RUB",
+        "max_amount": "100000"
+      },
+      "payload": {
+        "organizer": "Siderfold fixture foundation"
+      },
+      "warnings": []
+    },
+    {
+      "record_key": "fixture:catalog:beta",
+      "title": "Демонстрационная программа Beta",
+      "record_url": "https://fixture.siderfold.test/catalog/beta",
+      "deadline_on": null,
+      "funding": null,
+      "payload": {
+        "organizer": "Siderfold fixture foundation"
+      },
+      "warnings": [
+        "deadline is not stated in the fixture"
+      ]
+    }
+  ]
+}

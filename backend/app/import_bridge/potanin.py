@@ -102,7 +102,7 @@ def load_potanin_output(path: Path) -> ImportPackage:
     """Adapt the untracked local Potanin JSON output in memory.
 
     The parser output remains in place. Only its bytes and selected normalized
-    fields are used to build a B4 package for the import bridge.
+    fields are used to build a package for the import bridge.
     """
 
     try:

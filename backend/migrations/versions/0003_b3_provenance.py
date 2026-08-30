@@ -1,4 +1,4 @@
-"""Add B3 raw, staging, and provenance records.
+"""Add raw, staging, and provenance records.
 
 Revision ID: 0003_b3_provenance
 Revises: 0002_b2_canonical_schema
@@ -65,8 +65,8 @@ def upgrade() -> None:
     )
     if has_untraced_published_programs:
         raise RuntimeError(
-            "B3 requires provenance for published programs. "
-            "Backfill or archive published B2 rows before upgrading."
+            "A published row requires provenance. "
+            "Backfill or archive existing published rows before upgrading."
         )
 
     ingestion_run_status.create(bind, checkfirst=True)

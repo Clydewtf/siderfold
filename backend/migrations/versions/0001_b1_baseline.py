@@ -1,4 +1,4 @@
-"""B1 baseline for the empty backend schema."""
+"""Baseline for the empty backend schema."""
 
 from typing import Sequence, Union
 
