@@ -6,6 +6,7 @@ import json
 from dataclasses import dataclass, replace
 from datetime import date, datetime
 from decimal import Decimal
+from hashlib import sha256
 from pathlib import Path
 from typing import Any, Literal
 from urllib.parse import urlparse
@@ -198,6 +199,17 @@ class ParsedRow:
     record: ImportRecord | None
     raw_payload: dict[str, Any]
     issues: tuple[ValidationIssue, ...] = ()
+    capture_key: str | None = None
+
+
+@dataclass(frozen=True)
+class ImportCapture:
+    """One immutable source response and the rows extracted from it."""
+
+    capture: ContractCapture
+    raw_bytes: bytes
+    rows: tuple[ParsedRow, ...] = ()
+    capture_key: str | None = None
 
 
 @dataclass(frozen=True)
@@ -205,18 +217,41 @@ class ImportPackage:
     metadata: PackageMetadata
     raw_bytes: bytes
     rows: tuple[ParsedRow, ...]
+    captures: tuple[ImportCapture, ...] = ()
+
+    def resolved_captures(self) -> tuple[ImportCapture, ...]:
+        """Return per-response captures, preserving the legacy single-capture shape."""
+
+        if self.captures:
+            return self.captures
+        return (
+            ImportCapture(
+                capture=self.metadata.capture,
+                raw_bytes=self.raw_bytes,
+                rows=self.rows,
+            ),
+        )
 
     def fingerprint_bytes(self) -> bytes:
-        capture = self.metadata.capture.model_dump(mode="json")
-        capture.pop("received_at", None)
-        capture.pop("external_content_uri", None)
-        capture.pop("response_metadata", None)
+        captures = []
+        for capture in self.resolved_captures():
+            capture_metadata = capture.capture.model_dump(mode="json")
+            capture_metadata.pop("received_at", None)
+            capture_metadata.pop("external_content_uri", None)
+            capture_metadata.pop("response_metadata", None)
+            captures.append(
+                {
+                    "capture_key": capture.capture_key,
+                    "capture": capture_metadata,
+                    "content_sha256": sha256(capture.raw_bytes).hexdigest(),
+                    "rows": [row.raw_payload for row in capture.rows],
+                }
+            )
         normalized = {
             "contract_version": self.metadata.contract_version,
             "source": self.metadata.source.model_dump(mode="json"),
-            "capture": capture,
             "adapter": self.metadata.adapter.model_dump(mode="json"),
-            "rows": [row.raw_payload for row in self.rows],
+            "captures": captures,
         }
         return json.dumps(
             normalized,
@@ -249,7 +284,12 @@ def _issues_from_validation_error(
     )
 
 
-def parse_record(raw_value: Any, *, row_number: int) -> ParsedRow:
+def parse_record(
+    raw_value: Any,
+    *,
+    row_number: int,
+    capture_key: str | None = None,
+) -> ParsedRow:
     raw_payload = raw_value if isinstance(raw_value, dict) else {"value": raw_value}
     try:
         record = ImportRecord.model_validate(raw_value)
@@ -259,8 +299,14 @@ def parse_record(raw_value: Any, *, row_number: int) -> ParsedRow:
             record=None,
             raw_payload=raw_payload,
             issues=_issues_from_validation_error(error, row_number=row_number),
+            capture_key=capture_key,
         )
-    return ParsedRow(row_number=row_number, record=record, raw_payload=raw_payload)
+    return ParsedRow(
+        row_number=row_number,
+        record=record,
+        raw_payload=raw_payload,
+        capture_key=capture_key,
+    )
 
 
 def add_duplicate_key_issues(rows: list[ParsedRow]) -> tuple[ParsedRow, ...]:

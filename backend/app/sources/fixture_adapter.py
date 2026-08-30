@@ -93,7 +93,11 @@ class FixtureCatalogAdapter:
             )
 
         records = tuple(
-            ExtractedRecord(row_number=index, raw_payload=value if isinstance(value, dict) else {"value": value})
+            ExtractedRecord(
+                row_number=index,
+                raw_payload=value if isinstance(value, dict) else {"value": value},
+                capture_key=fetched.resource.external_key,
+            )
             for index, value in enumerate(payload["records"], 1)
         )
         return ExtractResult(records=records)

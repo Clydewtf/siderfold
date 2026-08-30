@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import Any, Literal, Protocol
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from app.import_bridge.contract import (
     ParsedRow,
@@ -54,12 +54,14 @@ class AdapterContext:
         project_root: Path,
         started_at: datetime,
         run_id: UUID | None = None,
+        raw_capture_dir: Path | None = None,
     ) -> None:
         self.source = source
         self.dry_run = dry_run
         self.project_root = project_root
         self.started_at = started_at
         self.run_id = run_id
+        self.raw_capture_dir = raw_capture_dir
 
     @property
     def limits(self) -> SourceLimits:
@@ -84,13 +86,6 @@ class DiscoveredResource(BaseModel):
         return normalize_url(value)
 
 
-class DiscoveryResult(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    resources: tuple[DiscoveredResource, ...] = ()
-    issues: tuple[AdapterIssue, ...] = ()
-
-
 @dataclass(frozen=True)
 class FetchResult:
     resource: DiscoveredResource
@@ -102,10 +97,34 @@ class FetchResult:
     response_metadata: Mapping[str, Any] = field(default_factory=dict)
 
 
+class DiscoveryResult(BaseModel):
+    """URLs discovered from a source plus immutable discovery captures.
+
+    Some official sources publish their catalog as a bounded sitemap. Keeping
+    that sitemap capture alongside the detail URLs preserves the discovery
+    evidence and makes its request visible in run statistics.
+    """
+
+    model_config = ConfigDict(extra="forbid", arbitrary_types_allowed=True)
+
+    resources: tuple[DiscoveredResource, ...] = ()
+    captures: tuple[FetchResult, ...] = ()
+    issues: tuple[AdapterIssue, ...] = ()
+    request_count: int = Field(default=0, ge=0)
+    response_bytes: int = Field(default=0, ge=0)
+    coverage_scope: str = Field(
+        default="resources returned by discovery",
+        min_length=1,
+        max_length=500,
+    )
+    quality_limitations: tuple[str, ...] = ()
+
+
 @dataclass(frozen=True)
 class ExtractedRecord:
     row_number: int
     raw_payload: Mapping[str, Any]
+    capture_key: str | None = None
 
 
 @dataclass(frozen=True)
@@ -134,6 +153,49 @@ class RunStatistics(BaseModel):
     response_bytes: int = Field(default=0, ge=0)
 
 
+class QualityRatio(BaseModel):
+    """A bounded quality calculation with its explicit denominator."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    numerator: int = Field(ge=0)
+    denominator: int = Field(ge=0)
+    value: float | None = Field(default=None, ge=0, le=1)
+
+    @model_validator(mode="after")
+    def validate_ratio(self) -> QualityRatio:
+        if self.denominator == 0:
+            if self.value is not None:
+                raise ValueError("value must be null when denominator is zero")
+            return self
+        if self.numerator > self.denominator:
+            raise ValueError("numerator cannot exceed denominator")
+        expected = self.numerator / self.denominator
+        if self.value is None or abs(self.value - expected) > 1e-12:
+            raise ValueError("value must equal numerator divided by denominator")
+        return self
+
+
+class FreshnessMetric(QualityRatio):
+    """Coverage of source-provided freshness metadata, not a staleness claim."""
+
+    newest_source_last_modified_at: str | None = None
+    captured_at: datetime
+
+
+class AdapterQualityMetrics(BaseModel):
+    """Comparable, denominator-based quality measurements for one source run."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    coverage_scope: str = Field(min_length=1, max_length=500)
+    completeness: QualityRatio
+    validity: QualityRatio
+    duplicate_rate: QualityRatio
+    freshness: FreshnessMetric
+    limitations: tuple[str, ...] = ()
+
+
 class AdapterRunSummary(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -145,6 +207,7 @@ class AdapterRunSummary(BaseModel):
     statistics: RunStatistics
     issues: tuple[AdapterIssue, ...] = ()
     import_counts: dict[str, int] | None = None
+    quality: AdapterQualityMetrics | None = None
 
 
 class AdapterReport(BaseModel):
@@ -160,6 +223,7 @@ class AdapterReport(BaseModel):
     statistics: RunStatistics
     issues: tuple[AdapterIssue, ...] = ()
     import_counts: dict[str, int] | None = None
+    quality: AdapterQualityMetrics | None = None
     source_id: UUID | None = None
     ingestion_run_id: UUID | None = None
 
@@ -198,7 +262,11 @@ class SourceAdapter(Protocol):
 
 def validate_import_records(records: Sequence[ExtractedRecord]) -> ValidationResult:
     parsed_rows = [
-        parse_record(record.raw_payload, row_number=record.row_number)
+        parse_record(
+            record.raw_payload,
+            row_number=record.row_number,
+            capture_key=record.capture_key,
+        )
         for record in records
     ]
     return ValidationResult(rows=add_duplicate_key_issues(parsed_rows))
@@ -235,6 +303,7 @@ def adapter_report(
         statistics=summary.statistics,
         issues=summary.issues,
         import_counts=summary.import_counts,
+        quality=summary.quality,
         source_id=source_id,
         ingestion_run_id=ingestion_run_id,
     )

@@ -42,6 +42,26 @@ def test_default_registry_contains_a_non_secret_fixture_source() -> None:
     assert definition.fixture_path == "tests/fixtures/adapters/catalog_v1.json"
 
 
+def test_potanin_registry_entry_bounds_discovery_and_card_requests() -> None:
+    definition = load_registry(DEFAULT_REGISTRY_PATH).get("potanin-competitions")
+
+    assert definition.access_method is SourceAccessMethod.HTTP
+    assert definition.secret_env_vars == ()
+    assert definition.allowed_exact_urls == (
+        "https://fondpotanin.ru/sitemap-iblock-competitions.xml",
+    )
+    assert is_url_allowed(
+        "https://fondpotanin.ru/sitemap-iblock-competitions.xml",
+        definition,
+    )
+    assert is_url_allowed(
+        "https://fondpotanin.ru/competitions/example-card/",
+        definition,
+    )
+    assert not is_url_allowed("https://zayavka.fondpotanin.ru/ru/", definition)
+    assert not is_url_allowed("https://fondpotanin.ru/activity/programms/", definition)
+
+
 def test_allowlist_matches_an_explicit_path_prefix_only() -> None:
     definition = _definition()
 

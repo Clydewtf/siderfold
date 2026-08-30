@@ -20,3 +20,24 @@ max_response_bytes = 100000
 max_total_bytes = 100000
 max_records = 100
 timeout_seconds = 5
+
+[sources.potanin-competitions]
+source_key = "potanin-competitions"
+name = "Фонд Потанина: конкурсы"
+canonical_url = "https://fondpotanin.ru/competitions/"
+allowed_url_prefixes = ["https://fondpotanin.ru/competitions"]
+allowed_exact_urls = ["https://fondpotanin.ru/sitemap-iblock-competitions.xml"]
+access_method = "http"
+schedule = "manual"
+status = "active"
+responsible = "siderfold-data"
+adapter_name = "potanin-competitions"
+adapter_version = "1.0.0"
+secret_env_vars = []
+
+[sources.potanin-competitions.limits]
+max_requests = 48
+max_response_bytes = 2000000
+max_total_bytes = 40000000
+max_records = 200
+timeout_seconds = 20

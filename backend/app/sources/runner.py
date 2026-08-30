@@ -4,6 +4,7 @@ import json
 from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import datetime, timezone
+from hashlib import sha256
 from pathlib import Path
 from typing import Callable
 from uuid import UUID, uuid4
@@ -19,6 +20,7 @@ from app.import_bridge.contract import (
     ContractAdapter,
     ContractCapture,
     ContractSource,
+    ImportCapture,
     ImportPackage,
     PackageMetadata,
 )
@@ -27,17 +29,21 @@ from app.sources.contract import (
     ADAPTER_CONTRACT_VERSION,
     AdapterContext,
     AdapterIssue,
+    AdapterQualityMetrics,
     AdapterReport,
     AdapterRunSummary,
     AdapterStage,
     DiscoveredResource,
     ExtractedRecord,
     FetchResult,
+    FreshnessMetric,
+    QualityRatio,
     RunStatistics,
     SourceAdapter,
     ValidationResult,
     validation_issue_to_adapter_issue,
 )
+from app.sources.adapters.potanin.adapter import potanin_adapter
 from app.sources.fixture_adapter import fixture_adapter
 from app.sources.registry import (
     DEFAULT_REGISTRY_PATH,
@@ -53,6 +59,7 @@ AdapterFactory = Callable[[], SourceAdapter]
 
 ADAPTER_FACTORIES: dict[str, AdapterFactory] = {
     "fixture-catalog": fixture_adapter,
+    "potanin-competitions": potanin_adapter,
 }
 
 
@@ -123,7 +130,7 @@ def _statistics(
     requests: int,
     response_bytes: int,
     validation: ValidationResult,
-    pipeline_issues: Sequence[AdapterIssue],
+    issues: Sequence[AdapterIssue],
 ) -> RunStatistics:
     valid = sum(1 for row in validation.rows if row.record is not None and not row.issues)
     record_warnings = sum(
@@ -131,10 +138,14 @@ def _statistics(
         for row in validation.rows
         if row.record is not None
     )
-    pipeline_warnings = sum(issue.severity == "warning" for issue in pipeline_issues)
-    row_issues = [issue for row in validation.rows for issue in row.issues]
-    duplicates = sum(issue.code == "duplicate_record_key" for issue in row_issues)
-    errors = sum(issue.severity == "error" for issue in pipeline_issues)
+    pipeline_warnings = sum(issue.severity == "warning" for issue in issues)
+    duplicate_codes = {
+        "duplicate_record_key",
+        "duplicate_normalized_url",
+        "duplicate_sitemap_url",
+    }
+    duplicates = sum(issue.code in duplicate_codes for issue in issues)
+    errors = sum(issue.severity == "error" for issue in issues)
     return RunStatistics(
         discovered=discovered,
         fetched=fetched,
@@ -148,6 +159,65 @@ def _statistics(
     )
 
 
+def _ratio(numerator: int, denominator: int) -> QualityRatio:
+    return QualityRatio(
+        numerator=numerator,
+        denominator=denominator,
+        value=numerator / denominator if denominator else None,
+    )
+
+
+def _quality_metrics(
+    *,
+    discovery_resources: Sequence[DiscoveredResource],
+    discovery_coverage_scope: str,
+    discovery_limitations: Sequence[str],
+    validation: ValidationResult,
+    extracted_count: int,
+    started_at: datetime,
+) -> AdapterQualityMetrics:
+    """Measure parsing coverage without implying that an external catalog is complete."""
+
+    discovered_count = len(discovery_resources)
+    valid_count = sum(
+        1
+        for row in validation.rows
+        if row.record is not None and not row.issues
+    )
+    duplicate_codes = {
+        "duplicate_record_key",
+        "duplicate_normalized_url",
+        "duplicate_sitemap_url",
+    }
+    duplicate_rows = sum(
+        any(issue.code in duplicate_codes for issue in row.issues)
+        for row in validation.rows
+    )
+    source_lastmods = sorted(
+        value
+        for resource in discovery_resources
+        if isinstance(
+            value := resource.metadata.get("sitemap_last_modified_at"), str
+        )
+        and value
+    )
+    completeness_denominator = max(discovered_count, valid_count)
+    return AdapterQualityMetrics(
+        coverage_scope=discovery_coverage_scope,
+        completeness=_ratio(valid_count, completeness_denominator),
+        validity=_ratio(valid_count, extracted_count),
+        duplicate_rate=_ratio(duplicate_rows, extracted_count),
+        freshness=FreshnessMetric(
+            numerator=len(source_lastmods),
+            denominator=discovered_count,
+            value=(len(source_lastmods) / discovered_count if discovered_count else None),
+            newest_source_last_modified_at=source_lastmods[-1] if source_lastmods else None,
+            captured_at=started_at,
+        ),
+        limitations=tuple(discovery_limitations),
+    )
+
+
 def _build_import_package(
     definition: SourceDefinition,
     adapter: SourceAdapter,
@@ -158,14 +228,30 @@ def _build_import_package(
         raise AdapterExecutionError("an import package requires at least one fetch result")
 
     first = fetched[0]
-    if len(fetched) == 1:
-        raw_bytes = first.content
-        content_format = first.content_format
-        external_content_uri = first.external_content_uri
-    else:
-        raw_bytes = b"\n".join(item.content for item in fetched)
-        content_format = "application/octet-stream"
-        external_content_uri = first.external_content_uri
+    fetched_by_key = {item.resource.external_key: item for item in fetched}
+    if len(fetched_by_key) != len(fetched):
+        raise AdapterExecutionError("fetch resource keys must be unique within one run")
+    raw_content_hashes = {sha256(item.content).hexdigest() for item in fetched}
+    if len(raw_content_hashes) != len(fetched):
+        raise AdapterExecutionError(
+            "multiple source responses have identical content and cannot be traced safely"
+        )
+
+    rows_by_capture_key: dict[str, list] = {
+        item.resource.external_key: [] for item in fetched
+    }
+    fallback_capture_key = first.resource.external_key
+    for row in validation.rows:
+        capture_key = row.capture_key or fallback_capture_key
+        if row.capture_key is None and len(fetched) > 1:
+            raise AdapterExecutionError(
+                "every extracted row must identify its raw capture when multiple resources are fetched"
+            )
+        if capture_key not in rows_by_capture_key:
+            raise AdapterExecutionError(
+                f"validation row references an unknown capture: {capture_key}"
+            )
+        rows_by_capture_key[capture_key].append(row)
 
     metadata = PackageMetadata(
         contract_version=CONTRACT_VERSION,
@@ -176,8 +262,8 @@ def _build_import_package(
         capture=ContractCapture(
             source_url=first.final_url,
             received_at=first.received_at,
-            external_content_uri=external_content_uri,
-            content_format=content_format,
+            external_content_uri=first.external_content_uri,
+            content_format=first.content_format,
             response_metadata={
                 "adapter_contract_version": ADAPTER_CONTRACT_VERSION,
                 "fetch_count": len(fetched),
@@ -198,8 +284,26 @@ def _build_import_package(
     )
     return ImportPackage(
         metadata=metadata,
-        raw_bytes=raw_bytes,
+        raw_bytes=first.content,
         rows=validation.rows,
+        captures=tuple(
+            ImportCapture(
+                capture=ContractCapture(
+                    source_url=item.final_url,
+                    received_at=item.received_at,
+                    external_content_uri=item.external_content_uri,
+                    content_format=item.content_format,
+                    response_metadata={
+                        "adapter_contract_version": ADAPTER_CONTRACT_VERSION,
+                        **dict(item.response_metadata),
+                    },
+                ),
+                raw_bytes=item.content,
+                rows=tuple(rows_by_capture_key[item.resource.external_key]),
+                capture_key=item.resource.external_key,
+            )
+            for item in fetched
+        ),
     )
 
 
@@ -210,6 +314,7 @@ def execute_adapter(
     dry_run: bool,
     project_root: Path,
     started_at: datetime | None = None,
+    raw_capture_dir: Path | None = None,
 ) -> AdapterExecution:
     started = started_at or datetime.now(timezone.utc)
     context = AdapterContext(
@@ -217,12 +322,17 @@ def execute_adapter(
         dry_run=dry_run,
         project_root=project_root,
         started_at=started,
+        raw_capture_dir=raw_capture_dir,
     )
     pipeline_issues: list[AdapterIssue] = []
     fetched_results: list[FetchResult] = []
     extracted_records: list[ExtractedRecord] = []
     request_count = 0
     response_bytes = 0
+    discovery_resources: tuple[DiscoveredResource, ...] = ()
+    discovery_captures: tuple[FetchResult, ...] = ()
+    discovery_coverage_scope = "resources returned by discovery"
+    discovery_limitations: tuple[str, ...] = ()
 
     try:
         discovery = adapter.discover(context)
@@ -235,12 +345,80 @@ def execute_adapter(
                 message=str(error),
             )
         )
-        discovery_resources: tuple[DiscoveredResource, ...] = ()
         discovery_issues: tuple[AdapterIssue, ...] = ()
     else:
         discovery_resources = discovery.resources
+        discovery_captures = discovery.captures
         discovery_issues = discovery.issues
+        discovery_coverage_scope = discovery.coverage_scope
+        discovery_limitations = discovery.quality_limitations
         pipeline_issues.extend(discovery_issues)
+        request_count = discovery.request_count
+        response_bytes = discovery.response_bytes
+
+    if request_count < len(discovery_captures):
+        request_count = len(discovery_captures)
+    captured_response_bytes = sum(len(capture.content) for capture in discovery_captures)
+    if response_bytes < captured_response_bytes:
+        response_bytes = captured_response_bytes
+
+    if request_count > definition.limits.max_requests:
+        pipeline_issues.append(
+            AdapterIssue(
+                stage=AdapterStage.DISCOVER,
+                severity="error",
+                code="request_limit_exceeded",
+                message=(
+                    f"max_requests limit ({definition.limits.max_requests}) "
+                    "was exceeded during discovery"
+                ),
+            )
+        )
+    if response_bytes > definition.limits.max_total_bytes:
+        pipeline_issues.append(
+            AdapterIssue(
+                stage=AdapterStage.DISCOVER,
+                severity="error",
+                code="response_limit_exceeded",
+                message=(
+                    f"max_total_bytes limit ({definition.limits.max_total_bytes}) "
+                    "was exceeded during discovery"
+                ),
+            )
+        )
+
+    for capture in discovery_captures:
+        try:
+            context.require_allowed_url(capture.resource.url)
+            context.require_allowed_url(capture.final_url)
+            if len(capture.content) > definition.limits.max_response_bytes:
+                raise AdapterExecutionError(
+                    "max_response_bytes limit "
+                    f"({definition.limits.max_response_bytes}) was exceeded"
+                )
+        except UrlAllowlistError as error:
+            pipeline_issues.append(
+                AdapterIssue(
+                    stage=AdapterStage.DISCOVER,
+                    severity="error",
+                    code="url_not_allowed",
+                    message=str(error),
+                    resource_key=capture.resource.external_key,
+                )
+            )
+            continue
+        except Exception as error:
+            pipeline_issues.append(
+                AdapterIssue(
+                    stage=AdapterStage.DISCOVER,
+                    severity="error",
+                    code="discovery_capture_error",
+                    message=str(error),
+                    resource_key=capture.resource.external_key,
+                )
+            )
+            continue
+        fetched_results.append(capture)
 
     if not discovery_resources and not any(
         issue.severity == "error" for issue in pipeline_issues
@@ -254,7 +432,15 @@ def execute_adapter(
             )
         )
 
-    for resource in discovery_resources:
+    resources_to_fetch = (
+        ()
+        if any(
+            issue.stage == AdapterStage.DISCOVER and issue.severity == "error"
+            for issue in pipeline_issues
+        )
+        else discovery_resources
+    )
+    for resource in resources_to_fetch:
         if request_count >= definition.limits.max_requests:
             pipeline_issues.append(
                 AdapterIssue(
@@ -370,6 +556,25 @@ def execute_adapter(
         else:
             pipeline_issues.extend(validation.issues)
 
+    package = None
+    if not any(issue.severity == "error" for issue in pipeline_issues) and fetched_results:
+        try:
+            package = _build_import_package(
+                definition,
+                adapter,
+                fetched_results,
+                validation,
+            )
+        except AdapterExecutionError as error:
+            pipeline_issues.append(
+                AdapterIssue(
+                    stage=AdapterStage.VALIDATE,
+                    severity="error",
+                    code="capture_trace_error",
+                    message=str(error),
+                )
+            )
+
     row_issues = _row_issues(validation.rows)
     report_issues = (*pipeline_issues, *row_issues)
     statistics = _statistics(
@@ -379,17 +584,9 @@ def execute_adapter(
         requests=request_count,
         response_bytes=response_bytes,
         validation=validation,
-        pipeline_issues=report_issues,
+        issues=report_issues,
     )
     failed = any(issue.severity == "error" for issue in pipeline_issues)
-    package = None
-    if not failed and fetched_results:
-        package = _build_import_package(
-            definition,
-            adapter,
-            fetched_results,
-            validation,
-        )
 
     summary = AdapterRunSummary(
         source_key=definition.source_key,
@@ -399,6 +596,14 @@ def execute_adapter(
         dry_run=dry_run,
         statistics=statistics,
         issues=report_issues,
+        quality=_quality_metrics(
+            discovery_resources=discovery_resources,
+            discovery_coverage_scope=discovery_coverage_scope,
+            discovery_limitations=discovery_limitations,
+            validation=validation,
+            extracted_count=len(extracted_records),
+            started_at=started,
+        ),
     )
     report = adapter.report(summary)
     return AdapterExecution(package=package, report=report)
@@ -536,6 +741,7 @@ def run_registered_source(
     engine: Engine | None = None,
     dry_run: bool = False,
     project_root: Path | None = None,
+    raw_capture_dir: Path | None = None,
 ) -> AdapterReport:
     resolved_registry_path = registry_path or DEFAULT_REGISTRY_PATH
     registry = load_registry(resolved_registry_path)
@@ -563,6 +769,7 @@ def run_registered_source(
             dry_run=dry_run,
             project_root=root,
             started_at=started_at,
+            raw_capture_dir=raw_capture_dir,
         )
     except Exception as error:
         report = _failure_report(
@@ -656,6 +863,7 @@ def list_registered_sources(registry: SourceRegistry) -> list[dict[str, object]]
             "name": definition.name,
             "canonical_url": definition.canonical_url,
             "allowed_url_prefixes": list(definition.allowed_url_prefixes),
+            "allowed_exact_urls": list(definition.allowed_exact_urls),
             "access_method": definition.access_method.value,
             "schedule": definition.schedule,
             "status": definition.status.value,

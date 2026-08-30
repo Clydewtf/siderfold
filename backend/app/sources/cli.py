@@ -48,15 +48,17 @@ def main(argv: Sequence[str] | None = None) -> int:
                 args.source_key,
                 registry_path=registry_path,
                 dry_run=True,
+                raw_capture_dir=settings.raw_capture_dir,
             )
         else:
             engine = create_db_engine(settings)
             try:
                 report = run_registered_source(
                     args.source_key,
-                    registry_path=registry_path,
-                    engine=engine,
-                )
+                registry_path=registry_path,
+                engine=engine,
+                raw_capture_dir=settings.raw_capture_dir,
+            )
             finally:
                 engine.dispose()
     except (RegistryValidationError, ValueError) as error:

@@ -79,6 +79,12 @@ def _normalize_allowlist_prefix(value: str) -> str:
     return normalized
 
 
+def _normalize_allowlist_url(value: str) -> str:
+    """Normalize one exact URL allowed for a source transport request."""
+
+    return normalize_url(value)
+
+
 def _same_origin(left: SplitResult, right: SplitResult) -> bool:
     left_port = left.port or (443 if left.scheme.lower() == "https" else 80)
     right_port = right.port or (443 if right.scheme.lower() == "https" else 80)
@@ -91,9 +97,13 @@ def _same_origin(left: SplitResult, right: SplitResult) -> bool:
 
 def is_url_allowed(url: str, definition: SourceDefinition) -> bool:
     try:
-        candidate = _parsed_http_url(normalize_url(url))
+        normalized_candidate = normalize_url(url)
+        candidate = _parsed_http_url(normalized_candidate)
     except ValueError:
         return False
+
+    if normalized_candidate in definition.allowed_exact_urls:
+        return True
 
     for prefix in definition.allowed_url_prefixes:
         parsed_prefix = _parsed_http_url(prefix)
@@ -134,7 +144,8 @@ class SourceDefinition(BaseModel):
     source_key: str = Field(min_length=2, max_length=64, pattern=r"^[a-z0-9][a-z0-9._-]+$")
     name: str = Field(min_length=1, max_length=255)
     canonical_url: str = Field(min_length=1, max_length=1024)
-    allowed_url_prefixes: tuple[str, ...] = Field(min_length=1)
+    allowed_url_prefixes: tuple[str, ...] = ()
+    allowed_exact_urls: tuple[str, ...] = ()
     access_method: SourceAccessMethod
     schedule: str = Field(min_length=1, max_length=100)
     status: SourceRegistryStatus = SourceRegistryStatus.ACTIVE
@@ -165,6 +176,14 @@ class SourceDefinition(BaseModel):
             raise ValueError("allowlist URL prefixes must be unique")
         return normalized
 
+    @field_validator("allowed_exact_urls")
+    @classmethod
+    def normalize_allowed_exact_urls(cls, values: tuple[str, ...]) -> tuple[str, ...]:
+        normalized = tuple(_normalize_allowlist_url(value) for value in values)
+        if len(set(normalized)) != len(normalized):
+            raise ValueError("exact allowlist URLs must be unique")
+        return normalized
+
     @field_validator("secret_env_vars")
     @classmethod
     def validate_secret_env_vars(cls, values: tuple[str, ...]) -> tuple[str, ...]:
@@ -185,6 +204,8 @@ class SourceDefinition(BaseModel):
 
     @model_validator(mode="after")
     def validate_access_configuration(self) -> SourceDefinition:
+        if not self.allowed_url_prefixes and not self.allowed_exact_urls:
+            raise ValueError("at least one allowed URL prefix or exact URL is required")
         if self.access_method is SourceAccessMethod.FIXTURE and not self.fixture_path:
             raise ValueError("fixture access requires fixture_path")
         if self.access_method is SourceAccessMethod.HTTP and self.fixture_path:
