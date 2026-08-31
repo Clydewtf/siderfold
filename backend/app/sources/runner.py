@@ -44,6 +44,10 @@ from app.sources.contract import (
     validation_issue_to_adapter_issue,
 )
 from app.sources.adapters.potanin.adapter import potanin_adapter
+from app.sources.adapters.telegram.adapter import (
+    TelegramDiscoveryAdapter,
+    telegram_discovery_adapter,
+)
 from app.sources.fixture_adapter import fixture_adapter
 from app.sources.registry import (
     DEFAULT_REGISTRY_PATH,
@@ -53,13 +57,15 @@ from app.sources.registry import (
     UrlAllowlistError,
     load_registry,
 )
+from app.sources.telegram_runner import run_telegram_discovery_source
 
 
-AdapterFactory = Callable[[], SourceAdapter]
+AdapterFactory = Callable[[], SourceAdapter | TelegramDiscoveryAdapter]
 
 ADAPTER_FACTORIES: dict[str, AdapterFactory] = {
     "fixture-catalog": fixture_adapter,
     "potanin-competitions": potanin_adapter,
+    "telegram-discovery": telegram_discovery_adapter,
 }
 
 
@@ -78,7 +84,7 @@ def _project_root_for_registry(registry_path: Path) -> Path:
     return resolved.parents[1] if len(resolved.parents) > 1 else resolved.parent
 
 
-def resolve_adapter(definition: SourceDefinition) -> SourceAdapter:
+def resolve_adapter(definition: SourceDefinition) -> SourceAdapter | TelegramDiscoveryAdapter:
     factory = ADAPTER_FACTORIES.get(definition.adapter_name)
     if factory is None:
         raise AdapterExecutionError(
@@ -815,6 +821,16 @@ def run_registered_source(
 
     try:
         adapter = resolve_adapter(definition)
+        if isinstance(adapter, TelegramDiscoveryAdapter):
+            return run_telegram_discovery_source(
+                definition,
+                registry,
+                adapter,
+                engine=engine,
+                dry_run=dry_run,
+                project_root=root,
+                started_at=started_at,
+            )
         execution = execute_adapter(
             definition,
             adapter,
@@ -923,6 +939,11 @@ def list_registered_sources(registry: SourceRegistry) -> list[dict[str, object]]
             "adapter_name": definition.adapter_name,
             "adapter_version": definition.adapter_version,
             "limits": definition.limits.model_dump(mode="json"),
+            "telegram_channel": (
+                definition.telegram_channel.model_dump(mode="json")
+                if definition.telegram_channel is not None
+                else None
+            ),
         }
         for definition in registry.sources.values()
     ]

@@ -7,6 +7,8 @@ from typing import Any
 from uuid import UUID, uuid4
 
 from sqlalchemy import (
+    BigInteger,
+    Boolean,
     CheckConstraint,
     Date,
     DateTime,
@@ -70,6 +72,17 @@ class ReviewDecisionOutcome(StrEnum):
     REJECT = "reject"
 
 
+class TelegramDiscoveryRoute(StrEnum):
+    SOURCE_ADAPTER = "source_adapter"
+    MANUAL_REVIEW = "manual_review"
+
+
+class TelegramLinkRole(StrEnum):
+    POSSIBLE_SOURCE = "possible_source"
+    REGISTRATION = "registration"
+    OTHER = "other"
+
+
 def _enum_values(enum_class: type[StrEnum]) -> list[str]:
     return [member.value for member in enum_class]
 
@@ -112,6 +125,20 @@ data_quality_severity_enum = Enum(
 review_decision_outcome_enum = Enum(
     ReviewDecisionOutcome,
     name="review_decision_outcome",
+    native_enum=True,
+    values_callable=_enum_values,
+)
+
+telegram_discovery_route_enum = Enum(
+    TelegramDiscoveryRoute,
+    name="telegram_discovery_route",
+    native_enum=True,
+    values_callable=_enum_values,
+)
+
+telegram_link_role_enum = Enum(
+    TelegramLinkRole,
+    name="telegram_link_role",
     native_enum=True,
     values_callable=_enum_values,
 )
@@ -549,4 +576,153 @@ class ReviewDecision(Base):
             "staged_record_id",
             "decided_at",
         ),
+    )
+
+
+class TelegramDiscoveryCursor(Base):
+    __tablename__ = "telegram_discovery_cursors"
+
+    source_id: Mapped[UUID] = mapped_column(
+        PostgreSQLUUID(as_uuid=True),
+        ForeignKey("sources.id", ondelete="RESTRICT"),
+        primary_key=True,
+    )
+    last_message_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=func.now(),
+    )
+
+    __table_args__ = (
+        CheckConstraint("last_message_id > 0", name="last_message_id_positive"),
+    )
+
+
+class TelegramDiscoveryMessage(Base):
+    __tablename__ = "telegram_discovery_messages"
+
+    id: Mapped[UUID] = mapped_column(PostgreSQLUUID(as_uuid=True), primary_key=True, default=uuid4)
+    source_id: Mapped[UUID] = mapped_column(
+        PostgreSQLUUID(as_uuid=True),
+        ForeignKey("sources.id", ondelete="RESTRICT"),
+        nullable=False,
+    )
+    ingestion_run_id: Mapped[UUID] = mapped_column(
+        PostgreSQLUUID(as_uuid=True),
+        ForeignKey("ingestion_runs.id", ondelete="RESTRICT"),
+        nullable=False,
+    )
+    raw_capture_id: Mapped[UUID] = mapped_column(
+        PostgreSQLUUID(as_uuid=True),
+        ForeignKey("raw_captures.id", ondelete="RESTRICT"),
+        nullable=False,
+    )
+    message_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    message_url: Mapped[str] = mapped_column(String(2048), nullable=False)
+    published_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    received_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    last_observed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    service_label: Mapped[str | None] = mapped_column(String(280))
+    content_sha256: Mapped[str] = mapped_column(String(64), nullable=False)
+    review_required: Mapped[bool] = mapped_column(
+        Boolean,
+        nullable=False,
+        default=False,
+        server_default=text("false"),
+    )
+    discovery_issues: Mapped[list[dict[str, Any]]] = mapped_column(
+        JSONB,
+        nullable=False,
+        default=list,
+        server_default=text("'[]'::jsonb"),
+    )
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=func.now(),
+    )
+
+    __table_args__ = (
+        CheckConstraint("message_id > 0", name="message_id_positive"),
+        CheckConstraint("length(btrim(message_url)) > 0", name="message_url_not_blank"),
+        CheckConstraint(
+            "service_label IS NULL OR length(btrim(service_label)) > 0",
+            name="service_label_not_blank",
+        ),
+        CheckConstraint("content_sha256 ~ '^[a-f0-9]{64}$'", name="content_sha256_format"),
+        CheckConstraint("last_observed_at >= received_at", name="observed_after_received"),
+        CheckConstraint("expires_at > received_at", name="expiry_after_received"),
+        UniqueConstraint("source_id", "message_id", name="uq_telegram_messages_source_message"),
+        Index("ix_telegram_messages_source_expires", "source_id", "expires_at"),
+        Index("ix_telegram_messages_review_expires", "review_required", "expires_at"),
+        Index("ix_telegram_messages_raw_capture", "raw_capture_id"),
+    )
+
+
+class TelegramDiscoveryUrl(Base):
+    __tablename__ = "telegram_discovery_urls"
+
+    id: Mapped[UUID] = mapped_column(PostgreSQLUUID(as_uuid=True), primary_key=True, default=uuid4)
+    normalized_url: Mapped[str] = mapped_column(String(2048), nullable=False)
+    route: Mapped[TelegramDiscoveryRoute] = mapped_column(
+        telegram_discovery_route_enum,
+        nullable=False,
+    )
+    target_source_key: Mapped[str | None] = mapped_column(String(64))
+    manual_review_reason: Mapped[str | None] = mapped_column(String(100))
+    first_seen_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    last_seen_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    seen_count: Mapped[int] = mapped_column(
+        BigInteger,
+        nullable=False,
+        default=1,
+        server_default=text("1"),
+    )
+
+    __table_args__ = (
+        CheckConstraint("length(btrim(normalized_url)) > 0", name="normalized_url_not_blank"),
+        CheckConstraint(
+            "(route = 'source_adapter' AND target_source_key IS NOT NULL "
+            "AND manual_review_reason IS NULL) "
+            "OR (route = 'manual_review' AND target_source_key IS NULL "
+            "AND manual_review_reason IS NOT NULL)",
+            name="route_target_matches_state",
+        ),
+        CheckConstraint(
+            "manual_review_reason IS NULL OR length(btrim(manual_review_reason)) > 0",
+            name="manual_review_reason_not_blank",
+        ),
+        CheckConstraint("last_seen_at >= first_seen_at", name="last_seen_after_first_seen"),
+        CheckConstraint("expires_at > last_seen_at", name="expiry_after_last_seen"),
+        CheckConstraint("seen_count > 0", name="seen_count_positive"),
+        UniqueConstraint("normalized_url", name="uq_telegram_urls_normalized_url"),
+        Index("ix_telegram_urls_route_expires", "route", "expires_at"),
+    )
+
+
+class TelegramDiscoveryMessageUrl(Base):
+    __tablename__ = "telegram_discovery_message_urls"
+
+    message_id: Mapped[UUID] = mapped_column(
+        PostgreSQLUUID(as_uuid=True),
+        ForeignKey("telegram_discovery_messages.id", ondelete="RESTRICT"),
+        primary_key=True,
+    )
+    discovery_url_id: Mapped[UUID] = mapped_column(
+        PostgreSQLUUID(as_uuid=True),
+        ForeignKey("telegram_discovery_urls.id", ondelete="RESTRICT"),
+        primary_key=True,
+    )
+    link_role: Mapped[TelegramLinkRole] = mapped_column(telegram_link_role_enum, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=func.now(),
+    )
+
+    __table_args__ = (
+        Index("ix_telegram_message_urls_discovery_url", "discovery_url_id"),
     )

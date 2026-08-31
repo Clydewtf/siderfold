@@ -45,3 +45,30 @@ max_response_bytes = 8000000
 max_total_bytes = 100000000
 max_records = 200
 timeout_seconds = 20
+
+[sources.telegram-cptgrantov-discovery]
+source_key = "telegram-cptgrantov-discovery"
+name = "Центр поддержки технологий и грантов: discovery"
+canonical_url = "https://t.me/cptgrantov"
+allowed_url_prefixes = ["https://t.me/s/cptgrantov"]
+access_method = "http"
+schedule = "manual"
+status = "active"
+responsible = "siderfold-data"
+adapter_name = "telegram-discovery"
+adapter_version = "1.0.0"
+secret_env_vars = []
+
+[sources.telegram-cptgrantov-discovery.limits]
+max_requests = 60
+max_response_bytes = 1000000
+max_total_bytes = 30000000
+max_records = 10000
+timeout_seconds = 20
+
+[sources.telegram-cptgrantov-discovery.telegram_channel]
+channel_handle = "cptgrantov"
+public_read_url = "https://t.me/s/cptgrantov"
+retention_days = 90
+min_request_interval_seconds = 2
+max_messages_per_run = 10000

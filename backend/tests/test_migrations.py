@@ -27,6 +27,13 @@ PROVENANCE_TABLES = {
     "staged_records",
 }
 
+TELEGRAM_DISCOVERY_TABLES = {
+    "telegram_discovery_cursors",
+    "telegram_discovery_message_urls",
+    "telegram_discovery_messages",
+    "telegram_discovery_urls",
+}
+
 
 @pytest.mark.postgres
 def test_provenance_migration_applies_to_a_clean_database_and_rolls_back(
@@ -38,7 +45,18 @@ def test_provenance_migration_applies_to_a_clean_database_and_rolls_back(
 
     engine = create_engine(test_database_url)
     try:
+        assert (
+            CANONICAL_TABLES | PROVENANCE_TABLES | TELEGRAM_DISCOVERY_TABLES
+        ).issubset(inspect(engine).get_table_names())
+        with engine.connect() as connection:
+            assert connection.scalar(text("SELECT version_num FROM alembic_version")) == (
+                "0005_telegram_discovery"
+            )
+
+        command.downgrade(alembic_config, "0004_adapter_run_statistics")
+
         assert (CANONICAL_TABLES | PROVENANCE_TABLES).issubset(inspect(engine).get_table_names())
+        assert TELEGRAM_DISCOVERY_TABLES.isdisjoint(inspect(engine).get_table_names())
         with engine.connect() as connection:
             assert connection.scalar(text("SELECT version_num FROM alembic_version")) == (
                 "0004_adapter_run_statistics"

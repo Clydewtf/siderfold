@@ -138,6 +138,47 @@ class SourceLimits(BaseModel):
     timeout_seconds: int = Field(default=30, ge=1, le=300)
 
 
+class TelegramChannelConfig(BaseModel):
+    """Bounded configuration for a public, read-only Telegram channel."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    channel_handle: str = Field(
+        min_length=5,
+        max_length=32,
+        pattern=r"^[A-Za-z0-9_]+$",
+    )
+    public_read_url: str = Field(min_length=1, max_length=2_048)
+    retention_days: int = Field(default=90, ge=1, le=365)
+    min_request_interval_seconds: int = Field(default=2, ge=1, le=60)
+    max_messages_per_run: int = Field(default=10_000, ge=1, le=1_000_000)
+
+    @field_validator("channel_handle")
+    @classmethod
+    def normalize_channel_handle(cls, value: str) -> str:
+        return value.lower()
+
+    @field_validator("public_read_url")
+    @classmethod
+    def normalize_public_read_url(cls, value: str) -> str:
+        return normalize_url(value)
+
+    @model_validator(mode="after")
+    def validate_public_read_url(self) -> TelegramChannelConfig:
+        parsed = _parsed_http_url(self.public_read_url)
+        expected_path = f"/s/{self.channel_handle}"
+        if (
+            parsed.scheme.lower() != "https"
+            or parsed.hostname.lower() != "t.me"
+            or parsed.path.rstrip("/") != expected_path
+            or parsed.query
+        ):
+            raise ValueError(
+                "public_read_url must be https://t.me/s/<configured channel handle>"
+            )
+        return self
+
+
 class SourceDefinition(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -155,6 +196,7 @@ class SourceDefinition(BaseModel):
     limits: SourceLimits = Field(default_factory=SourceLimits)
     fixture_path: str | None = Field(default=None, max_length=1024)
     secret_env_vars: tuple[str, ...] = ()
+    telegram_channel: TelegramChannelConfig | None = None
 
     @field_validator("name", "responsible", "adapter_name", "adapter_version")
     @classmethod
@@ -210,6 +252,30 @@ class SourceDefinition(BaseModel):
             raise ValueError("fixture access requires fixture_path")
         if self.access_method is SourceAccessMethod.HTTP and self.fixture_path:
             raise ValueError("fixture_path is only valid for fixture access")
+        if self.adapter_name == "telegram-discovery" and self.telegram_channel is None:
+            raise ValueError("telegram-discovery requires telegram_channel configuration")
+        if self.telegram_channel is not None:
+            if self.adapter_name != "telegram-discovery":
+                raise ValueError(
+                    "telegram_channel configuration is only valid for telegram-discovery"
+                )
+            if self.access_method is not SourceAccessMethod.HTTP:
+                raise ValueError("telegram-discovery requires http access")
+            if not is_url_allowed(self.telegram_channel.public_read_url, self):
+                raise ValueError(
+                    "telegram public_read_url must be covered by the source allowlist"
+                )
+            canonical = _parsed_http_url(self.canonical_url)
+            if (
+                canonical.scheme.lower() != "https"
+                or canonical.hostname.lower() != "t.me"
+                or canonical.path.rstrip("/")
+                != f"/{self.telegram_channel.channel_handle}"
+                or canonical.query
+            ):
+                raise ValueError(
+                    "telegram canonical_url must be https://t.me/<configured channel handle>"
+                )
         return self
 
     def resolve_fixture_path(self, project_root: Path) -> Path:
