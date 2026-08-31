@@ -97,6 +97,12 @@ class ReviewActionType(StrEnum):
     AUTO_MERGE = "auto_merge"
 
 
+class DiscoveryReviewActionType(StrEnum):
+    LINK_TO_REGISTERED_SOURCE = "link_to_registered_source"
+    REJECT = "reject"
+    NEEDS_CLARIFICATION = "needs_clarification"
+
+
 class TelegramDiscoveryRoute(StrEnum):
     SOURCE_ADAPTER = "source_adapter"
     MANUAL_REVIEW = "manual_review"
@@ -178,6 +184,13 @@ review_case_status_enum = Enum(
 review_action_type_enum = Enum(
     ReviewActionType,
     name="review_action_type",
+    native_enum=True,
+    values_callable=_enum_values,
+)
+
+discovery_review_action_type_enum = Enum(
+    DiscoveryReviewActionType,
+    name="discovery_review_action_type",
     native_enum=True,
     values_callable=_enum_values,
 )
@@ -941,6 +954,73 @@ class TelegramDiscoveryMessage(Base):
     )
 
 
+class TelegramDiscoveryMessageObservation(Base):
+    """Append-only observation of one Telegram message in a specific source run."""
+
+    __tablename__ = "telegram_discovery_message_observations"
+
+    id: Mapped[UUID] = mapped_column(PostgreSQLUUID(as_uuid=True), primary_key=True, default=uuid4)
+    telegram_discovery_message_id: Mapped[UUID] = mapped_column(
+        PostgreSQLUUID(as_uuid=True),
+        ForeignKey("telegram_discovery_messages.id", ondelete="RESTRICT"),
+        nullable=False,
+    )
+    ingestion_run_id: Mapped[UUID] = mapped_column(
+        PostgreSQLUUID(as_uuid=True),
+        ForeignKey("ingestion_runs.id", ondelete="RESTRICT"),
+        nullable=False,
+    )
+    raw_capture_id: Mapped[UUID] = mapped_column(
+        PostgreSQLUUID(as_uuid=True),
+        ForeignKey("raw_captures.id", ondelete="RESTRICT"),
+        nullable=False,
+    )
+    observed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    message_url: Mapped[str] = mapped_column(String(2048), nullable=False)
+    published_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    service_label: Mapped[str | None] = mapped_column(String(280))
+    content_sha256: Mapped[str] = mapped_column(String(64), nullable=False)
+    review_required: Mapped[bool] = mapped_column(
+        Boolean,
+        nullable=False,
+        default=False,
+        server_default=text("false"),
+    )
+    discovery_issues: Mapped[list[dict[str, Any]]] = mapped_column(
+        JSONB,
+        nullable=False,
+        default=list,
+        server_default=text("'[]'::jsonb"),
+    )
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=func.now(),
+    )
+
+    __table_args__ = (
+        CheckConstraint("length(btrim(message_url)) > 0", name="message_url"),
+        CheckConstraint(
+            "service_label IS NULL OR length(btrim(service_label)) > 0",
+            name="service_label",
+        ),
+        CheckConstraint("content_sha256 ~ '^[a-f0-9]{64}$'", name="content_hash"),
+        CheckConstraint("expires_at > observed_at", name="expiry"),
+        UniqueConstraint(
+            "telegram_discovery_message_id",
+            "ingestion_run_id",
+            name="uq_tg_message_observations_message_run",
+        ),
+        Index(
+            "ix_tg_message_observations_message_observed",
+            "telegram_discovery_message_id",
+            "observed_at",
+        ),
+        Index("ix_tg_message_observations_raw_capture", "raw_capture_id"),
+    )
+
+
 class TelegramDiscoveryUrl(Base):
     __tablename__ = "telegram_discovery_urls"
 
@@ -1005,4 +1085,121 @@ class TelegramDiscoveryMessageUrl(Base):
 
     __table_args__ = (
         Index("ix_telegram_message_urls_discovery_url", "discovery_url_id"),
+    )
+
+
+class DiscoveryReviewCase(Base):
+    """A bounded operator task for a Telegram discovery signal, not a program candidate."""
+
+    __tablename__ = "discovery_review_cases"
+
+    id: Mapped[UUID] = mapped_column(PostgreSQLUUID(as_uuid=True), primary_key=True, default=uuid4)
+    telegram_discovery_message_id: Mapped[UUID | None] = mapped_column(
+        PostgreSQLUUID(as_uuid=True),
+        ForeignKey("telegram_discovery_messages.id", ondelete="RESTRICT"),
+    )
+    telegram_discovery_url_id: Mapped[UUID | None] = mapped_column(
+        PostgreSQLUUID(as_uuid=True),
+        ForeignKey("telegram_discovery_urls.id", ondelete="RESTRICT"),
+    )
+    status: Mapped[ReviewCaseStatus] = mapped_column(
+        review_case_status_enum,
+        nullable=False,
+        default=ReviewCaseStatus.OPEN,
+        server_default=ReviewCaseStatus.OPEN.value,
+    )
+    opened_snapshot: Mapped[dict[str, Any]] = mapped_column(
+        JSONB,
+        nullable=False,
+        default=dict,
+        server_default=text("'{}'::jsonb"),
+    )
+    opened_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=func.now(),
+    )
+    resolved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=func.now(),
+    )
+
+    __table_args__ = (
+        CheckConstraint(
+            "(telegram_discovery_message_id IS NOT NULL AND telegram_discovery_url_id IS NULL) "
+            "OR (telegram_discovery_message_id IS NULL AND telegram_discovery_url_id IS NOT NULL)",
+            name="exactly_one_subject",
+        ),
+        CheckConstraint(
+            "(status IN ('open', 'needs_clarification') AND resolved_at IS NULL) "
+            "OR (status = 'resolved' AND resolved_at IS NOT NULL)",
+            name="resolution_timestamp_matches_status",
+        ),
+        UniqueConstraint(
+            "telegram_discovery_message_id",
+            name="uq_discovery_review_cases_message",
+        ),
+        UniqueConstraint(
+            "telegram_discovery_url_id",
+            name="uq_discovery_review_cases_url",
+        ),
+        Index("ix_discovery_review_cases_status_opened", "status", "opened_at"),
+    )
+
+
+class DiscoveryReviewAction(Base):
+    """An immutable decision in the discovery queue."""
+
+    __tablename__ = "discovery_review_actions"
+
+    id: Mapped[UUID] = mapped_column(PostgreSQLUUID(as_uuid=True), primary_key=True, default=uuid4)
+    discovery_review_case_id: Mapped[UUID] = mapped_column(
+        PostgreSQLUUID(as_uuid=True),
+        ForeignKey("discovery_review_cases.id", ondelete="RESTRICT"),
+        nullable=False,
+    )
+    action: Mapped[DiscoveryReviewActionType] = mapped_column(
+        discovery_review_action_type_enum,
+        nullable=False,
+    )
+    reason: Mapped[str] = mapped_column(Text, nullable=False)
+    actor: Mapped[str] = mapped_column(String(255), nullable=False)
+    target_source_key: Mapped[str | None] = mapped_column(String(64))
+    prior_values: Mapped[dict[str, Any]] = mapped_column(
+        JSONB,
+        nullable=False,
+        default=dict,
+        server_default=text("'{}'::jsonb"),
+    )
+    result_values: Mapped[dict[str, Any]] = mapped_column(
+        JSONB,
+        nullable=False,
+        default=dict,
+        server_default=text("'{}'::jsonb"),
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=func.now(),
+    )
+
+    __table_args__ = (
+        CheckConstraint("length(btrim(reason)) > 0", name="reason_not_blank"),
+        CheckConstraint("length(btrim(actor)) > 0", name="actor_not_blank"),
+        CheckConstraint(
+            "target_source_key IS NULL OR length(btrim(target_source_key)) > 0",
+            name="target_source_key_not_blank",
+        ),
+        CheckConstraint(
+            "(action = 'link_to_registered_source' AND target_source_key IS NOT NULL) "
+            "OR (action IN ('reject', 'needs_clarification') AND target_source_key IS NULL)",
+            name="target_matches_action",
+        ),
+        Index(
+            "ix_discovery_review_actions_case_created",
+            "discovery_review_case_id",
+            "created_at",
+        ),
     )

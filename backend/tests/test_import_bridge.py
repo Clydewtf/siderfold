@@ -8,9 +8,13 @@ from sqlalchemy.engine import Engine
 
 from app.domain.models import (
     DataQualityIssue,
+    DeduplicationMatch,
+    DeduplicationMatchDisposition,
     IngestionRun,
     Program,
     RawCapture,
+    ReviewAction,
+    ReviewActionType,
     ReviewCase,
     ReviewDecision,
     Source,
@@ -96,6 +100,42 @@ def test_changed_record_creates_a_new_candidate_and_reports_update(
         assert connection.scalar(select(func.count()).select_from(IngestionRun)) == 2
         assert connection.scalar(select(func.count()).select_from(RawCapture)) == 2
         assert connection.scalar(select(func.count()).select_from(StagedRecord)) == 3
+
+
+def test_clean_exact_duplicate_auto_merges_after_its_run_is_completed(
+    migrated_engine: Engine,
+    tmp_path: Path,
+) -> None:
+    payload = json.loads((FIXTURES_ROOT / "potanin_import_v1.json").read_text())
+    payload["records"] = [payload["records"][1]]
+    first_path = tmp_path / "clean-import.json"
+    second_path = tmp_path / "clean-import-repeat.json"
+    first_path.write_text(json.dumps(payload, ensure_ascii=False, separators=(",", ":")))
+    second_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2))
+
+    with migrated_engine.begin() as connection:
+        import_package(connection, load_json_contract(first_path))
+    with migrated_engine.begin() as connection:
+        repeated = import_package(connection, load_json_contract(second_path))
+
+    candidate_id = repeated.rows[0].staged_record_id
+    assert candidate_id is not None
+    assert repeated.rows[0].status == "updated"
+    with migrated_engine.connect() as connection:
+        match = connection.execute(
+            select(DeduplicationMatch.disposition).where(
+                DeduplicationMatch.candidate_staged_record_id == candidate_id
+            )
+        ).one()
+        assert match.disposition is DeduplicationMatchDisposition.AUTO_MERGED
+        assert connection.scalar(
+            select(ReviewAction.action)
+            .join(ReviewCase, ReviewCase.id == ReviewAction.review_case_id)
+            .where(ReviewCase.staged_record_id == candidate_id)
+        ) is ReviewActionType.AUTO_MERGE
+        assert connection.scalar(
+            select(StagedRecord.state).where(StagedRecord.id == candidate_id)
+        ) is StagedRecordState.REJECTED
 
 
 def test_invalid_rows_have_quality_issues_and_do_not_block_valid_candidates(

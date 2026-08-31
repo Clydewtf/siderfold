@@ -21,10 +21,15 @@ from app.domain.models import (
     Source,
     TelegramDiscoveryCursor,
     TelegramDiscoveryMessage,
+    TelegramDiscoveryMessageObservation,
     TelegramDiscoveryMessageUrl,
     TelegramDiscoveryRoute,
     TelegramDiscoveryUrl,
     TelegramLinkRole,
+)
+from app.review.discovery import (
+    ensure_discovery_review_case_for_message,
+    ensure_discovery_review_case_for_url,
 )
 from app.sources.adapters.telegram.adapter import (
     TelegramDiscoveryAdapter,
@@ -135,6 +140,21 @@ def _snapshot_bytes(records: Iterable[RoutedTelegramMessage]) -> bytes:
     return json.dumps(
         payload,
         ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode("utf-8")
+
+
+def _run_fingerprint_content(execution: TelegramDiscoveryExecution) -> bytes:
+    """Keep empty polls as distinct audit events while retaining content idempotency."""
+
+    if execution.records:
+        return execution.snapshot_bytes
+    return json.dumps(
+        {
+            "snapshot_sha256": sha256(execution.snapshot_bytes).hexdigest(),
+            "poll_marker": str(uuid4()),
+        },
         sort_keys=True,
         separators=(",", ":"),
     ).encode("utf-8")
@@ -554,6 +574,42 @@ def _get_existing_message_ids(
     }
 
 
+def _record_message_observation(
+    connection: Connection,
+    *,
+    telegram_discovery_message_id: UUID,
+    ingestion_run_id: UUID,
+    raw_capture_id: UUID,
+    record: RoutedTelegramMessage,
+    observed_at: datetime,
+    expires_at: datetime,
+    content_sha256: str,
+) -> None:
+    connection.execute(
+        postgresql_insert(TelegramDiscoveryMessageObservation)
+        .values(
+            id=uuid4(),
+            telegram_discovery_message_id=telegram_discovery_message_id,
+            ingestion_run_id=ingestion_run_id,
+            raw_capture_id=raw_capture_id,
+            observed_at=observed_at,
+            message_url=record.message_url,
+            published_at=record.published_at,
+            service_label=record.service_label,
+            content_sha256=content_sha256,
+            review_required=record.review_required,
+            discovery_issues=[_issue_payload(issue) for issue in record.issues],
+            expires_at=expires_at,
+        )
+        .on_conflict_do_nothing(
+            index_elements=(
+                "telegram_discovery_message_id",
+                "ingestion_run_id",
+            )
+        )
+    )
+
+
 def _get_or_create_url(
     connection: Connection,
     *,
@@ -610,7 +666,7 @@ def _persist_execution(
     expires_at = observed_at + timedelta(days=channel.retention_days)
     input_fingerprint = build_input_fingerprint(
         source_url=definition.canonical_url,
-        content=execution.snapshot_bytes,
+        content=_run_fingerprint_content(execution),
         adapter_name=execution.report.adapter_name,
         adapter_version=execution.report.adapter_version,
     )
@@ -707,8 +763,6 @@ def _persist_execution(
                     update(TelegramDiscoveryMessage)
                     .where(TelegramDiscoveryMessage.id == message_row_id)
                     .values(
-                        ingestion_run_id=run_id,
-                        raw_capture_id=raw_capture_id,
                         message_url=record.message_url,
                         published_at=record.published_at,
                         last_observed_at=observed_at,
@@ -723,8 +777,30 @@ def _persist_execution(
                 )
                 updated_count += 1
 
+            _record_message_observation(
+                connection,
+                telegram_discovery_message_id=message_row_id,
+                ingestion_run_id=run_id,
+                raw_capture_id=raw_capture_id,
+                record=record,
+                observed_at=observed_at,
+                expires_at=expires_at,
+                content_sha256=content_sha256,
+            )
             if record.review_required:
                 manual_review += 1
+            if record.review_required and not record.external_urls:
+                ensure_discovery_review_case_for_message(
+                    connection,
+                    telegram_discovery_message_id=message_row_id,
+                    message_id=record.message_id,
+                    message_url=record.message_url,
+                    reason_codes=tuple(
+                        issue.code for issue in record.issues
+                    )
+                    or ("missing_reliable_external_url",),
+                    opened_at=observed_at,
+                )
             for link in record.external_urls:
                 discovery_url_id, _is_new_url = _get_or_create_url(
                     connection,
@@ -734,6 +810,16 @@ def _persist_execution(
                 )
                 if link.route is TelegramDiscoveryRoute.SOURCE_ADAPTER:
                     routed_to_source += 1
+                else:
+                    ensure_discovery_review_case_for_url(
+                        connection,
+                        telegram_discovery_url_id=discovery_url_id,
+                        normalized_url=link.normalized_url,
+                        reason_code=(
+                            link.manual_review_reason or "manual_review_required"
+                        ),
+                        opened_at=observed_at,
+                    )
                 connection.execute(
                     postgresql_insert(TelegramDiscoveryMessageUrl)
                     .values(
@@ -849,19 +935,6 @@ def run_telegram_discovery_source(
         )
         return execution.report.model_copy(
             update={"source_id": source_id, "ingestion_run_id": run_id}
-        )
-    if not execution.records:
-        return execution.report.model_copy(
-            update={
-                "import_counts": {
-                    "new": 0,
-                    "updated": 0,
-                    "skipped": 0,
-                    "errors": 0,
-                    "routed_to_source": 0,
-                    "manual_review": 0,
-                }
-            }
         )
     try:
         persisted = _persist_execution(engine, definition, execution)

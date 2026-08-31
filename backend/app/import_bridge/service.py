@@ -391,6 +391,7 @@ def import_package(connection: Connection, package: ImportPackage) -> ImportRepo
         source_created=source_created,
         ingestion_run_id=run_id,
     )
+    review_candidate_ids: list[UUID] = []
     for capture in captures:
         raw_capture_id = _insert_raw_capture(
             connection,
@@ -438,7 +439,7 @@ def import_package(connection: Connection, package: ImportPackage) -> ImportRepo
                 row=row,
                 now=now,
             )
-            evaluate_staged_record(connection, staged_record_id)
+            review_candidate_ids.append(staged_record_id)
             if previous_staged_record_id is None:
                 status: Literal["new", "updated"] = "new"
                 report.new_count += 1
@@ -462,4 +463,6 @@ def import_package(connection: Connection, package: ImportPackage) -> ImportRepo
         status=IngestionRunStatus.COMPLETED,
         now=datetime.now(timezone.utc),
     )
+    for staged_record_id in review_candidate_ids:
+        evaluate_staged_record(connection, staged_record_id)
     return report
