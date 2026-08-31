@@ -50,6 +50,11 @@ DISCOVERY_REVIEW_TABLES = {
     "discovery_review_cases",
 }
 
+OPERATIONAL_TABLES = {
+    "source_execution_attempts",
+    "source_execution_runs",
+}
+
 
 @pytest.mark.postgres
 def test_provenance_migration_applies_to_a_clean_database_and_rolls_back(
@@ -67,11 +72,23 @@ def test_provenance_migration_applies_to_a_clean_database_and_rolls_back(
             | TELEGRAM_DISCOVERY_TABLES
             | REVIEW_QUEUE_TABLES
             | DISCOVERY_REVIEW_TABLES
+            | OPERATIONAL_TABLES
         ).issubset(inspect(engine).get_table_names())
         with engine.connect() as connection:
             assert connection.scalar(text("SELECT version_num FROM alembic_version")) == (
-                "0007_discovery_review"
+                "0008_c5_operations"
             )
+
+        command.downgrade(alembic_config, "0007_discovery_review")
+
+        assert (
+            CANONICAL_TABLES
+            | PROVENANCE_TABLES
+            | TELEGRAM_DISCOVERY_TABLES
+            | REVIEW_QUEUE_TABLES
+            | DISCOVERY_REVIEW_TABLES
+        ).issubset(inspect(engine).get_table_names())
+        assert OPERATIONAL_TABLES.isdisjoint(inspect(engine).get_table_names())
 
         command.downgrade(alembic_config, "0006_c4_review_deduplication")
 

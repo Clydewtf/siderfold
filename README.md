@@ -2,33 +2,25 @@
 
 Siderfold is an MVP website for collecting and exploring support programs:
 grants, accelerators, scholarships, funding sources, deadlines, and related
-analytics. The current version is frontend-only and uses local seed data.
+analytics. The repository combines the local frontend MVP with a backend data
+pipeline for controlled source ingestion and review.
 
 ## Current Version
 
-`v0.5.0` completes the local profile, visual polish, and end-to-end QA
-milestone on top of the app-shell, catalog/source, analytics-engine, and
-expanded seed-data foundations:
+`v0.7.0` adds an allowlisted source-ingestion contour on top of the local
+frontend MVP:
 
-- five keyboard-accessible sections: home, catalog, analytics, sources, and
-  profile;
-- versioned local browser state for theme, favorites, recent programs, regions,
-  topics, card density, data-quality visibility, and reduced motion;
-- shared program details with consistent favorites and recent-view behavior;
-- a complete local profile workspace with actionable program/source
-  collections, preferences, display controls, and clear demo states for
-  backend-dependent features;
-- a filterable analytics API for financial, regional, source, topic, temporal,
-  data-quality, support-gap, and transparent demo forecast calculations;
-- responsive, accessible desktop, tablet, and mobile coverage without a
-  backend;
-- Playwright coverage for the primary product journey, persistence, keyboard
-  navigation, drawer behavior, and document-overflow safety.
+- Python/FastAPI/PostgreSQL backend with canonical, provenance, staging, review,
+  and read-API layers;
+- allowlisted adapters for the Potanin source and Telegram discovery, with
+  fixtures, data-quality checks, idempotency, and no automatic publication;
+- deterministic deduplication and separate canonical/discovery review queues;
+- a local one-shot scheduler command with locking, bounded retries, rate limits,
+  execution metrics, and a recovery runbook.
 
-The analytics and profile screens remain intentionally lightweight. Forecast
-values are transparent demo calculations over seed history, not a real
-machine-learning model. User preferences stay in the current browser and are
-not synchronized with a server.
+The frontend remains on its existing seed data and is not connected to the
+backend yet. It keeps local preferences and transparent demo analytics; those
+are not claims about the complete support market.
 
 The project is intended to grow into a fuller platform with server-backed
 accounts and data, synchronization, and a richer analytics interface.
@@ -96,7 +88,8 @@ are intentionally not used yet; important states are fixed with Git tags.
 
 ## Status
 
-This repository currently represents the nearly final `v0.5.0` frontend-only
-MVP with a complete analytics dashboard and local profile workspace. The
-backend, persistent accounts, production data pipeline, and real report/CSV
-export are planned future work.
+This repository represents `v0.7.0`: source ingestion, provenance, moderation
+and local operational controls are ready for controlled use. The next milestone
+connects the frontend catalog to the public API; automatic host scheduling,
+accounts, notifications and production deployment remain explicit future
+decisions.

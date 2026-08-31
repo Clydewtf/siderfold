@@ -16,6 +16,7 @@ from sqlalchemy import (
     ForeignKey,
     ForeignKeyConstraint,
     Index,
+    Integer,
     Numeric,
     String,
     Text,
@@ -114,6 +115,25 @@ class TelegramLinkRole(StrEnum):
     OTHER = "other"
 
 
+class SourceExecutionStatus(StrEnum):
+    RUNNING = "running"
+    SUCCEEDED = "succeeded"
+    FAILED = "failed"
+    SKIPPED_LOCKED = "skipped_locked"
+    SKIPPED_RATE_LIMITED = "skipped_rate_limited"
+    INTERRUPTED = "interrupted"
+
+
+class SourceExecutionTrigger(StrEnum):
+    MANUAL = "manual"
+    SCHEDULED = "scheduled"
+
+
+class SourceExecutionAttemptStatus(StrEnum):
+    SUCCEEDED = "succeeded"
+    FAILED = "failed"
+
+
 def _enum_values(enum_class: type[StrEnum]) -> list[str]:
     return [member.value for member in enum_class]
 
@@ -205,6 +225,27 @@ telegram_discovery_route_enum = Enum(
 telegram_link_role_enum = Enum(
     TelegramLinkRole,
     name="telegram_link_role",
+    native_enum=True,
+    values_callable=_enum_values,
+)
+
+source_execution_status_enum = Enum(
+    SourceExecutionStatus,
+    name="source_execution_status",
+    native_enum=True,
+    values_callable=_enum_values,
+)
+
+source_execution_trigger_enum = Enum(
+    SourceExecutionTrigger,
+    name="source_execution_trigger",
+    native_enum=True,
+    values_callable=_enum_values,
+)
+
+source_execution_attempt_status_enum = Enum(
+    SourceExecutionAttemptStatus,
+    name="source_execution_attempt_status",
     native_enum=True,
     values_callable=_enum_values,
 )
@@ -486,6 +527,150 @@ class IngestionRun(Base):
             name="uq_ingestion_runs_source_input_fingerprint_unique",
         ),
         Index("ix_ingestion_runs_source_id_status", "source_id", "status"),
+    )
+
+
+class SourceExecutionRun(Base):
+    """One managed source execution, including skipped and recovered attempts."""
+
+    __tablename__ = "source_execution_runs"
+
+    id: Mapped[UUID] = mapped_column(PostgreSQLUUID(as_uuid=True), primary_key=True, default=uuid4)
+    source_id: Mapped[UUID] = mapped_column(
+        PostgreSQLUUID(as_uuid=True),
+        ForeignKey("sources.id", ondelete="RESTRICT"),
+        nullable=False,
+    )
+    source_key: Mapped[str] = mapped_column(String(64), nullable=False)
+    trigger: Mapped[SourceExecutionTrigger] = mapped_column(
+        source_execution_trigger_enum,
+        nullable=False,
+    )
+    status: Mapped[SourceExecutionStatus] = mapped_column(
+        source_execution_status_enum,
+        nullable=False,
+    )
+    owner_token: Mapped[UUID | None] = mapped_column(PostgreSQLUUID(as_uuid=True))
+    scheduled_for: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    lease_expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    ingestion_run_id: Mapped[UUID | None] = mapped_column(
+        PostgreSQLUUID(as_uuid=True),
+        ForeignKey("ingestion_runs.id", ondelete="RESTRICT"),
+    )
+    attempt_count: Mapped[int] = mapped_column(
+        Integer,
+        nullable=False,
+        default=0,
+        server_default=text("0"),
+    )
+    result_kind: Mapped[str | None] = mapped_column(String(50))
+    metrics: Mapped[dict[str, Any]] = mapped_column(
+        JSONB,
+        nullable=False,
+        default=dict,
+        server_default=text("'{}'::jsonb"),
+    )
+    error_codes: Mapped[list[str]] = mapped_column(
+        JSONB,
+        nullable=False,
+        default=list,
+        server_default=text("'[]'::jsonb"),
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=func.now(),
+    )
+
+    __table_args__ = (
+        CheckConstraint("length(btrim(source_key)) > 0", name="source_key_not_blank"),
+        CheckConstraint("attempt_count >= 0", name="attempt_count_nonnegative"),
+        CheckConstraint(
+            "result_kind IS NULL OR length(btrim(result_kind)) > 0",
+            name="result_kind_not_blank",
+        ),
+        CheckConstraint(
+            "(status = 'running' AND owner_token IS NOT NULL "
+            "AND finished_at IS NULL AND lease_expires_at IS NOT NULL "
+            "AND lease_expires_at > started_at) "
+            "OR (status IN ('succeeded', 'failed', 'skipped_locked', "
+            "'skipped_rate_limited', 'interrupted') AND finished_at IS NOT NULL)",
+            name="timestamps_match_status",
+        ),
+        Index("ix_source_execution_runs_source_started", "source_id", "started_at"),
+        Index("ix_source_execution_runs_status_lease", "status", "lease_expires_at"),
+        Index("ix_source_execution_runs_ingestion_run", "ingestion_run_id"),
+    )
+
+
+class SourceExecutionAttempt(Base):
+    """Append-only terminal record for one retry attempt of a managed execution."""
+
+    __tablename__ = "source_execution_attempts"
+
+    id: Mapped[UUID] = mapped_column(PostgreSQLUUID(as_uuid=True), primary_key=True, default=uuid4)
+    source_execution_run_id: Mapped[UUID] = mapped_column(
+        PostgreSQLUUID(as_uuid=True),
+        ForeignKey("source_execution_runs.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    attempt_number: Mapped[int] = mapped_column(Integer, nullable=False)
+    status: Mapped[SourceExecutionAttemptStatus] = mapped_column(
+        source_execution_attempt_status_enum,
+        nullable=False,
+    )
+    started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    finished_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    ingestion_run_id: Mapped[UUID | None] = mapped_column(
+        PostgreSQLUUID(as_uuid=True),
+        ForeignKey("ingestion_runs.id", ondelete="RESTRICT"),
+    )
+    retry_class: Mapped[str | None] = mapped_column(String(32))
+    backoff_seconds: Mapped[int] = mapped_column(
+        Integer,
+        nullable=False,
+        default=0,
+        server_default=text("0"),
+    )
+    metrics: Mapped[dict[str, Any]] = mapped_column(
+        JSONB,
+        nullable=False,
+        default=dict,
+        server_default=text("'{}'::jsonb"),
+    )
+    error_codes: Mapped[list[str]] = mapped_column(
+        JSONB,
+        nullable=False,
+        default=list,
+        server_default=text("'[]'::jsonb"),
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=func.now(),
+    )
+
+    __table_args__ = (
+        CheckConstraint("attempt_number > 0", name="attempt_number_positive"),
+        CheckConstraint("finished_at >= started_at", name="finished_after_started"),
+        CheckConstraint(
+            "retry_class IS NULL OR length(btrim(retry_class)) > 0",
+            name="retry_class_not_blank",
+        ),
+        CheckConstraint("backoff_seconds >= 0", name="backoff_nonnegative"),
+        UniqueConstraint(
+            "source_execution_run_id",
+            "attempt_number",
+            name="uq_source_execution_attempts_run_number",
+        ),
+        Index(
+            "ix_source_execution_attempts_run_created",
+            "source_execution_run_id",
+            "created_at",
+        ),
+        Index("ix_source_execution_attempts_ingestion_run", "ingestion_run_id"),
     )
 
 

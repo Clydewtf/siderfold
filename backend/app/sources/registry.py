@@ -9,6 +9,8 @@ from urllib.parse import SplitResult, urlsplit, urlunsplit
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
+from app.sources.schedule import CronExpressionError, validate_cron_expression
+
 
 REGISTRY_VERSION = 1
 DEFAULT_REGISTRY_PATH = Path(__file__).resolve().parents[2] / "config" / "sources.toml"
@@ -136,6 +138,7 @@ class SourceLimits(BaseModel):
     max_total_bytes: int = Field(default=20_000_000, ge=1, le=500_000_000)
     max_records: int = Field(default=10_000, ge=1, le=1_000_000)
     timeout_seconds: int = Field(default=30, ge=1, le=300)
+    min_run_interval_seconds: int = Field(default=60, ge=0, le=86_400)
 
 
 class TelegramChannelConfig(BaseModel):
@@ -240,8 +243,12 @@ class SourceDefinition(BaseModel):
         normalized = value.strip()
         if normalized == "manual":
             return normalized
-        if len(normalized.split()) != 5:
-            raise ValueError("schedule must be 'manual' or a five-field cron expression")
+        try:
+            validate_cron_expression(normalized)
+        except CronExpressionError as error:
+            raise ValueError(
+                "schedule must be 'manual' or a supported five-field cron expression"
+            ) from error
         return normalized
 
     @model_validator(mode="after")

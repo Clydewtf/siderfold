@@ -17,6 +17,12 @@ class Settings(BaseSettings):
     database_connect_timeout_seconds: int = Field(default=2, ge=1, le=60)
     source_registry_path: Path = Path(__file__).resolve().parents[2] / "config" / "sources.toml"
     raw_capture_dir: Path = Path("/tmp/siderfold/raw")
+    scheduler_max_attempts: int = Field(default=3, ge=1, le=10)
+    scheduler_initial_backoff_seconds: int = Field(default=2, ge=0, le=300)
+    scheduler_max_backoff_seconds: int = Field(default=60, ge=1, le=3_600)
+    scheduler_retry_after_max_seconds: int = Field(default=60, ge=1, le=3_600)
+    scheduler_run_lease_seconds: int = Field(default=900, ge=30, le=86_400)
+    scheduler_journal_retention_days: int = Field(default=90, ge=1, le=3_650)
 
     @field_validator("database_url")
     @classmethod

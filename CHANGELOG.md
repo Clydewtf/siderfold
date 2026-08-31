@@ -2,6 +2,24 @@
 
 All notable project milestones are documented in this file.
 
+## v0.7.0 - 2026-09-01
+
+Sources, Review And Local Operations.
+
+### Added
+
+- Allowlisted source registry and common adapter contract with deterministic fixture dry-runs, limits, source ownership and configured access methods.
+- Maintained Potanin adapter with normalized program fields, captured auxiliary resources, quality reporting and provenance-safe staging.
+- Public Telegram discovery for the configured allowlist channel: cursor/idempotency handling, normalized external URLs, and a separate manual-review queue for candidates without a reliable primary source.
+- Deterministic URL/field deduplication, review cases and immutable decision/action history for accept, reject, merge and clarification flows.
+- Local one-shot scheduler/runner with PostgreSQL advisory locks, bounded retry/backoff, rate limits, execution journal, safe stderr failure notifications, recovery handling and operational metrics.
+
+### Notes
+
+- Sources remain manually activated until their owner, permitted access and frequency are explicitly approved; the repository does not install a background scheduler or send external notifications.
+- Ingestion and discovery never publish a `Program` automatically. Raw captures, staging records, quality issues and review data remain internal and are excluded from the public API.
+- The frontend remains on controlled seed data; connecting it to the backend catalog is planned for v0.8.0.
+
 ## v0.6.0 - 2026-08-30
 
 Backend Foundation, Provenance And Read API.

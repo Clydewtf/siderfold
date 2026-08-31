@@ -20,6 +20,14 @@ class SourceFetchError(RuntimeError):
     """A bounded HTTP request could not produce one usable source response."""
 
 
+def _retry_after_seconds(headers: object) -> int | None:
+    getter = getattr(headers, "get", None)
+    value = getter("Retry-After") if callable(getter) else None
+    if not isinstance(value, str) or not value.strip().isdigit():
+        return None
+    return int(value.strip())
+
+
 class _RejectRedirects(HTTPRedirectHandler):
     """Keep a request on its originally allowlisted URL.
 
@@ -101,7 +109,9 @@ class UrllibResponseFetcher:
         except SourceFetchError:
             raise
         except HTTPError as error:
-            raise SourceFetchError(f"HTTP {error.code} for {url}") from error
+            retry_after = _retry_after_seconds(error.headers)
+            retry_hint = f"; Retry-After: {retry_after}" if retry_after is not None else ""
+            raise SourceFetchError(f"HTTP {error.code} for {url}{retry_hint}") from error
         except URLError as error:
             raise SourceFetchError(f"transport error for {url}: {error.reason}") from error
         except OSError as error:

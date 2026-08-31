@@ -14,6 +14,14 @@ class TelegramFetchError(RuntimeError):
     """A bounded public Telegram request could not produce a usable page."""
 
 
+def _retry_after_seconds(headers: object) -> int | None:
+    getter = getattr(headers, "get", None)
+    value = getter("Retry-After") if callable(getter) else None
+    if not isinstance(value, str) or not value.strip().isdigit():
+        return None
+    return int(value.strip())
+
+
 class _RejectRedirects(HTTPRedirectHandler):
     def redirect_request(self, request, fp, code, message, headers, newurl):  # type: ignore[no-untyped-def]
         del request, fp, message, headers
@@ -85,7 +93,9 @@ class UrllibTelegramResponseFetcher:
         except TelegramFetchError:
             raise
         except HTTPError as error:
-            raise TelegramFetchError(f"HTTP {error.code} for {url}") from error
+            retry_after = _retry_after_seconds(error.headers)
+            retry_hint = f"; Retry-After: {retry_after}" if retry_after is not None else ""
+            raise TelegramFetchError(f"HTTP {error.code} for {url}{retry_hint}") from error
         except URLError as error:
             raise TelegramFetchError(f"transport error for {url}: {error.reason}") from error
         except OSError as error:
