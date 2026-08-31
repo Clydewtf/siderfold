@@ -72,6 +72,31 @@ class ReviewDecisionOutcome(StrEnum):
     REJECT = "reject"
 
 
+class DeduplicationMatchLevel(StrEnum):
+    EXACT_EXTERNAL_ID = "exact_external_id"
+    EXACT_URL = "exact_url"
+    NORMALIZED_FIELDS = "normalized_fields"
+
+
+class DeduplicationMatchDisposition(StrEnum):
+    AUTO_MERGED = "auto_merged"
+    REVIEW_REQUIRED = "review_required"
+
+
+class ReviewCaseStatus(StrEnum):
+    OPEN = "open"
+    NEEDS_CLARIFICATION = "needs_clarification"
+    RESOLVED = "resolved"
+
+
+class ReviewActionType(StrEnum):
+    ACCEPT = "accept"
+    REJECT = "reject"
+    MERGE = "merge"
+    NEEDS_CLARIFICATION = "needs_clarification"
+    AUTO_MERGE = "auto_merge"
+
+
 class TelegramDiscoveryRoute(StrEnum):
     SOURCE_ADAPTER = "source_adapter"
     MANUAL_REVIEW = "manual_review"
@@ -125,6 +150,34 @@ data_quality_severity_enum = Enum(
 review_decision_outcome_enum = Enum(
     ReviewDecisionOutcome,
     name="review_decision_outcome",
+    native_enum=True,
+    values_callable=_enum_values,
+)
+
+deduplication_match_level_enum = Enum(
+    DeduplicationMatchLevel,
+    name="deduplication_match_level",
+    native_enum=True,
+    values_callable=_enum_values,
+)
+
+deduplication_match_disposition_enum = Enum(
+    DeduplicationMatchDisposition,
+    name="deduplication_match_disposition",
+    native_enum=True,
+    values_callable=_enum_values,
+)
+
+review_case_status_enum = Enum(
+    ReviewCaseStatus,
+    name="review_case_status",
+    native_enum=True,
+    values_callable=_enum_values,
+)
+
+review_action_type_enum = Enum(
+    ReviewActionType,
+    name="review_action_type",
     native_enum=True,
     values_callable=_enum_values,
 )
@@ -576,6 +629,233 @@ class ReviewDecision(Base):
             "staged_record_id",
             "decided_at",
         ),
+    )
+
+
+class DeduplicationMatch(Base):
+    __tablename__ = "deduplication_matches"
+
+    id: Mapped[UUID] = mapped_column(PostgreSQLUUID(as_uuid=True), primary_key=True, default=uuid4)
+    candidate_staged_record_id: Mapped[UUID] = mapped_column(
+        PostgreSQLUUID(as_uuid=True),
+        ForeignKey(
+            "staged_records.id",
+            ondelete="RESTRICT",
+            name="fk_dedup_matches_candidate_stage",
+        ),
+        nullable=False,
+    )
+    target_staged_record_id: Mapped[UUID | None] = mapped_column(
+        PostgreSQLUUID(as_uuid=True),
+        ForeignKey(
+            "staged_records.id",
+            ondelete="RESTRICT",
+            name="fk_dedup_matches_target_stage",
+        ),
+    )
+    target_program_id: Mapped[UUID | None] = mapped_column(
+        PostgreSQLUUID(as_uuid=True),
+        ForeignKey(
+            "programs.id",
+            ondelete="RESTRICT",
+            name="fk_dedup_matches_target_program",
+        ),
+    )
+    match_level: Mapped[DeduplicationMatchLevel] = mapped_column(
+        deduplication_match_level_enum,
+        nullable=False,
+    )
+    disposition: Mapped[DeduplicationMatchDisposition] = mapped_column(
+        deduplication_match_disposition_enum,
+        nullable=False,
+    )
+    evidence: Mapped[dict[str, Any]] = mapped_column(
+        JSONB,
+        nullable=False,
+        default=dict,
+        server_default=text("'{}'::jsonb"),
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=func.now(),
+    )
+
+    __table_args__ = (
+        CheckConstraint(
+            "(target_staged_record_id IS NOT NULL AND target_program_id IS NULL) "
+            "OR (target_staged_record_id IS NULL AND target_program_id IS NOT NULL)",
+            name="exactly_one_target",
+        ),
+        CheckConstraint(
+            "target_staged_record_id IS NULL "
+            "OR candidate_staged_record_id <> target_staged_record_id",
+            name="candidate_differs_from_staged_target",
+        ),
+        Index(
+            "ix_deduplication_matches_candidate_created_at",
+            "candidate_staged_record_id",
+            "created_at",
+        ),
+        Index(
+            "ix_deduplication_matches_target_staged_record_id",
+            "target_staged_record_id",
+        ),
+        Index(
+            "ix_deduplication_matches_target_program_id",
+            "target_program_id",
+        ),
+        Index(
+            "uq_deduplication_matches_candidate_staged_target_level",
+            "candidate_staged_record_id",
+            "target_staged_record_id",
+            "match_level",
+            unique=True,
+            postgresql_where=text("target_staged_record_id IS NOT NULL"),
+        ),
+        Index(
+            "uq_deduplication_matches_candidate_program_target_level",
+            "candidate_staged_record_id",
+            "target_program_id",
+            "match_level",
+            unique=True,
+            postgresql_where=text("target_program_id IS NOT NULL"),
+        ),
+    )
+
+
+class ReviewCase(Base):
+    __tablename__ = "review_cases"
+
+    id: Mapped[UUID] = mapped_column(PostgreSQLUUID(as_uuid=True), primary_key=True, default=uuid4)
+    staged_record_id: Mapped[UUID] = mapped_column(
+        PostgreSQLUUID(as_uuid=True),
+        ForeignKey(
+            "staged_records.id",
+            ondelete="RESTRICT",
+            name="fk_review_cases_stage",
+        ),
+        nullable=False,
+    )
+    status: Mapped[ReviewCaseStatus] = mapped_column(
+        review_case_status_enum,
+        nullable=False,
+        default=ReviewCaseStatus.OPEN,
+        server_default=ReviewCaseStatus.OPEN.value,
+    )
+    opened_snapshot: Mapped[dict[str, Any]] = mapped_column(
+        JSONB,
+        nullable=False,
+        default=dict,
+        server_default=text("'{}'::jsonb"),
+    )
+    opened_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=func.now(),
+    )
+    resolved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=func.now(),
+    )
+
+    __table_args__ = (
+        UniqueConstraint("staged_record_id", name="uq_review_cases_staged_record_id"),
+        CheckConstraint(
+            "(status IN ('open', 'needs_clarification') AND resolved_at IS NULL) "
+            "OR (status = 'resolved' AND resolved_at IS NOT NULL)",
+            name="resolution_timestamp_matches_status",
+        ),
+        Index("ix_review_cases_status_opened_at", "status", "opened_at"),
+    )
+
+
+class ReviewAction(Base):
+    __tablename__ = "review_actions"
+
+    id: Mapped[UUID] = mapped_column(PostgreSQLUUID(as_uuid=True), primary_key=True, default=uuid4)
+    review_case_id: Mapped[UUID] = mapped_column(
+        PostgreSQLUUID(as_uuid=True),
+        ForeignKey(
+            "review_cases.id",
+            ondelete="RESTRICT",
+            name="fk_review_actions_case",
+        ),
+        nullable=False,
+    )
+    action: Mapped[ReviewActionType] = mapped_column(review_action_type_enum, nullable=False)
+    reason: Mapped[str] = mapped_column(Text, nullable=False)
+    actor: Mapped[str] = mapped_column(String(255), nullable=False)
+    deduplication_match_id: Mapped[UUID | None] = mapped_column(
+        PostgreSQLUUID(as_uuid=True),
+        ForeignKey(
+            "deduplication_matches.id",
+            ondelete="RESTRICT",
+            name="fk_review_actions_match",
+        ),
+    )
+    target_staged_record_id: Mapped[UUID | None] = mapped_column(
+        PostgreSQLUUID(as_uuid=True),
+        ForeignKey(
+            "staged_records.id",
+            ondelete="RESTRICT",
+            name="fk_review_actions_target_stage",
+        ),
+    )
+    target_program_id: Mapped[UUID | None] = mapped_column(
+        PostgreSQLUUID(as_uuid=True),
+        ForeignKey(
+            "programs.id",
+            ondelete="RESTRICT",
+            name="fk_review_actions_target_program",
+        ),
+    )
+    review_decision_id: Mapped[UUID | None] = mapped_column(
+        PostgreSQLUUID(as_uuid=True),
+        ForeignKey(
+            "review_decisions.id",
+            ondelete="RESTRICT",
+            name="fk_review_actions_decision",
+        ),
+    )
+    prior_values: Mapped[dict[str, Any]] = mapped_column(
+        JSONB,
+        nullable=False,
+        default=dict,
+        server_default=text("'{}'::jsonb"),
+    )
+    result_values: Mapped[dict[str, Any]] = mapped_column(
+        JSONB,
+        nullable=False,
+        default=dict,
+        server_default=text("'{}'::jsonb"),
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=func.now(),
+    )
+
+    __table_args__ = (
+        CheckConstraint("length(btrim(reason)) > 0", name="reason_not_blank"),
+        CheckConstraint("length(btrim(actor)) > 0", name="actor_not_blank"),
+        CheckConstraint(
+            "(action IN ('merge', 'auto_merge') "
+            "AND ((target_staged_record_id IS NOT NULL AND target_program_id IS NULL) "
+            "OR (target_staged_record_id IS NULL AND target_program_id IS NOT NULL)) "
+            "AND review_decision_id IS NULL) "
+            "OR (action IN ('accept', 'reject') "
+            "AND target_staged_record_id IS NULL AND target_program_id IS NULL "
+            "AND review_decision_id IS NOT NULL) "
+            "OR (action = 'needs_clarification' "
+            "AND target_staged_record_id IS NULL AND target_program_id IS NULL "
+            "AND review_decision_id IS NULL)",
+            name="targets_match_action",
+        ),
+        Index("ix_review_actions_review_case_id_created_at", "review_case_id", "created_at"),
+        Index("ix_review_actions_deduplication_match_id", "deduplication_match_id"),
     )
 
 

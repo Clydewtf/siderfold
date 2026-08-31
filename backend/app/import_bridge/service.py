@@ -29,6 +29,7 @@ from app.import_bridge.contract import (
     ParsedRow,
     ValidationIssue,
 )
+from app.review.service import evaluate_staged_record
 
 
 REPORT_VERSION = "siderfold.import-report/v1"
@@ -437,6 +438,7 @@ def import_package(connection: Connection, package: ImportPackage) -> ImportRepo
                 row=row,
                 now=now,
             )
+            evaluate_staged_record(connection, staged_record_id)
             if previous_staged_record_id is None:
                 status: Literal["new", "updated"] = "new"
                 report.new_count += 1

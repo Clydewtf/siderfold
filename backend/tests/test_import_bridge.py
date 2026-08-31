@@ -11,6 +11,7 @@ from app.domain.models import (
     IngestionRun,
     Program,
     RawCapture,
+    ReviewCase,
     ReviewDecision,
     Source,
     StagedRecord,
@@ -44,6 +45,7 @@ def test_import_creates_review_candidates_without_canonical_publication(
         assert connection.scalar(select(func.count()).select_from(RawCapture)) == 1
         assert connection.scalar(select(func.count()).select_from(StagedRecord)) == 2
         assert connection.scalar(select(func.count()).select_from(DataQualityIssue)) == 1
+        assert connection.scalar(select(func.count()).select_from(ReviewCase)) == 2
         assert connection.scalar(select(func.count()).select_from(Program)) == 0
         assert connection.scalar(select(func.count()).select_from(ReviewDecision)) == 0
         assert set(connection.scalars(select(StagedRecord.state))) == {StagedRecordState.REVIEW}

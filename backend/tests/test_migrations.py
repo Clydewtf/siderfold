@@ -34,6 +34,12 @@ TELEGRAM_DISCOVERY_TABLES = {
     "telegram_discovery_urls",
 }
 
+REVIEW_QUEUE_TABLES = {
+    "deduplication_matches",
+    "review_actions",
+    "review_cases",
+}
+
 
 @pytest.mark.postgres
 def test_provenance_migration_applies_to_a_clean_database_and_rolls_back(
@@ -46,8 +52,22 @@ def test_provenance_migration_applies_to_a_clean_database_and_rolls_back(
     engine = create_engine(test_database_url)
     try:
         assert (
+            CANONICAL_TABLES
+            | PROVENANCE_TABLES
+            | TELEGRAM_DISCOVERY_TABLES
+            | REVIEW_QUEUE_TABLES
+        ).issubset(inspect(engine).get_table_names())
+        with engine.connect() as connection:
+            assert connection.scalar(text("SELECT version_num FROM alembic_version")) == (
+                "0006_c4_review_deduplication"
+            )
+
+        command.downgrade(alembic_config, "0005_telegram_discovery")
+
+        assert (
             CANONICAL_TABLES | PROVENANCE_TABLES | TELEGRAM_DISCOVERY_TABLES
         ).issubset(inspect(engine).get_table_names())
+        assert REVIEW_QUEUE_TABLES.isdisjoint(inspect(engine).get_table_names())
         with engine.connect() as connection:
             assert connection.scalar(text("SELECT version_num FROM alembic_version")) == (
                 "0005_telegram_discovery"
@@ -57,10 +77,6 @@ def test_provenance_migration_applies_to_a_clean_database_and_rolls_back(
 
         assert (CANONICAL_TABLES | PROVENANCE_TABLES).issubset(inspect(engine).get_table_names())
         assert TELEGRAM_DISCOVERY_TABLES.isdisjoint(inspect(engine).get_table_names())
-        with engine.connect() as connection:
-            assert connection.scalar(text("SELECT version_num FROM alembic_version")) == (
-                "0004_adapter_run_statistics"
-            )
 
         command.downgrade(alembic_config, "0002_b2_canonical_schema")
 
