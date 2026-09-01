@@ -20,7 +20,7 @@ vi.mock('./data/seed', async (importOriginal) => {
 
 describe('App navigation', () => {
   it('shows five primary tabs in product order', () => {
-    render(<App />);
+    render(<App dataMode="seed" />);
     expect(screen.getAllByRole('tab').map((tab) => tab.textContent)).toEqual([
       'Главная', 'Каталог', 'Аналитика', 'Источники', 'Профиль'
     ]);
@@ -30,7 +30,7 @@ describe('App navigation', () => {
     const consoleError = vi.spyOn(console, 'error').mockImplementation(() => undefined);
 
     try {
-      render(<App />);
+    render(<App dataMode="seed" />);
       expect(consoleError).not.toHaveBeenCalled();
     } finally {
       consoleError.mockRestore();
@@ -39,7 +39,7 @@ describe('App navigation', () => {
 
   it('switches every new shell section without reload', async () => {
     const user = userEvent.setup();
-    render(<App />);
+    render(<App dataMode="seed" />);
     await user.click(screen.getByRole('tab', { name: 'Аналитика' }));
     expect(screen.getByRole('heading', { name: 'Аналитика мер поддержки' })).toBeInTheDocument();
     await user.click(screen.getByRole('tab', { name: 'Профиль' }));
@@ -55,7 +55,7 @@ describe('App navigation', () => {
     Object.defineProperty(window, 'scrollY', { configurable: true, value: 0 });
 
     try {
-      render(<App />);
+    render(<App dataMode="seed" />);
       await user.click(screen.getByRole('tab', { name: 'Источники' }));
       expect(scrollTo).toHaveBeenLastCalledWith({ top: 0, behavior: 'auto' });
 
@@ -74,7 +74,7 @@ describe('App navigation', () => {
 
   it('renders clickable Siderfold brand and primary navigation labels', async () => {
     const user = userEvent.setup();
-    render(<App />);
+    render(<App dataMode="seed" />);
 
     await user.click(screen.getByRole('tab', { name: 'Каталог' }));
     expect(screen.getByRole('heading', { name: 'Каталог программ' })).toBeInTheDocument();
@@ -94,7 +94,7 @@ describe('App navigation', () => {
 
   it('associates the selected tab with its panel', async () => {
     const user = userEvent.setup();
-    render(<App />);
+    render(<App dataMode="seed" />);
 
     const homeTab = screen.getByRole('tab', { name: 'Главная' });
     const sourcesTab = screen.getByRole('tab', { name: 'Источники' });
@@ -117,7 +117,7 @@ describe('App navigation', () => {
   });
 
   it('points every tab to an existing panel', () => {
-    render(<App />);
+    render(<App dataMode="seed" />);
 
     for (const tab of screen.getAllByRole('tab')) {
       const panelId = tab.getAttribute('aria-controls');
@@ -129,7 +129,7 @@ describe('App navigation', () => {
 
   it('supports automatic keyboard activation across five tabs', async () => {
     const user = userEvent.setup();
-    render(<App />);
+    render(<App dataMode="seed" />);
     const home = screen.getByRole('tab', { name: 'Главная' });
     const catalog = screen.getByRole('tab', { name: 'Каталог' });
     const profile = screen.getByRole('tab', { name: 'Профиль' });
@@ -161,7 +161,7 @@ describe('App navigation', () => {
       throw new Error('Expected featured program source in seed data.');
     }
 
-    render(<App />);
+    render(<App dataMode="seed" />);
 
     await user.click(screen.getAllByRole('button', { name: /Подробнее о программе/i })[0]);
 
@@ -172,7 +172,7 @@ describe('App navigation', () => {
 
   it('records a viewed program and toggles its favorite state in the shared drawer', async () => {
     const user = userEvent.setup();
-    render(<App />);
+    render(<App dataMode="seed" />);
     await user.click(screen.getByRole('tab', { name: 'Каталог' }));
     await user.click(screen.getByRole('button', { name: /Подробнее о программе Старт-ИИ/i }));
     const dialog = screen.getByRole('dialog', { name: 'Старт-ИИ' });
@@ -184,7 +184,7 @@ describe('App navigation', () => {
 
   it('toggles a favorite directly from the catalog card and exposes it in profile', async () => {
     const user = userEvent.setup();
-    render(<App />);
+    render(<App dataMode="seed" />);
     await user.click(screen.getByRole('tab', { name: 'Каталог' }));
     await user.click(screen.getByRole('button', { name: 'Добавить Старт-ИИ в избранное' }));
     expect(screen.getByRole('button', { name: 'Удалить Старт-ИИ из избранного' })).toHaveAttribute('aria-pressed', 'true');
@@ -195,7 +195,7 @@ describe('App navigation', () => {
 
   it('opens the shared program drawer from the profile', async () => {
     const user = userEvent.setup();
-    render(<App />);
+    render(<App dataMode="seed" />);
 
     await user.click(screen.getByRole('tab', { name: 'Каталог' }));
     await user.click(screen.getByRole('button', { name: 'Добавить Старт-ИИ в избранное' }));
@@ -209,7 +209,7 @@ describe('App navigation', () => {
 
   it('opens a source-related program and records it as recently viewed', async () => {
     const user = userEvent.setup();
-    render(<App />);
+    render(<App dataMode="seed" />);
     await user.click(screen.getByRole('tab', { name: 'Источники' }));
     await user.click(screen.getByRole('button', { name: 'Выбрать источник Impact Hub Moscow' }));
     await user.click(screen.getAllByRole('button', { name: 'Открыть программу Eco Impact Lab' })[0]);
@@ -222,7 +222,7 @@ describe('App navigation', () => {
 
   it('deduplicates a recently viewed program opened from catalog and source details', async () => {
     const user = userEvent.setup();
-    render(<App />);
+    render(<App dataMode="seed" />);
     await user.click(screen.getByRole('tab', { name: 'Каталог' }));
     await user.click(screen.getByRole('button', { name: 'Подробнее о программе Eco Impact Lab' }));
     await user.click(screen.getByRole('button', { name: 'Закрыть детали' }));
@@ -237,7 +237,7 @@ describe('App navigation', () => {
 
   it('restores local profile data after app remount', async () => {
     const user = userEvent.setup();
-    const first = render(<App />);
+    const first = render(<App dataMode="seed" />);
 
     await user.click(screen.getByRole('tab', { name: 'Каталог' }));
     await user.click(screen.getByRole('button', { name: /Подробнее о программе Старт-ИИ/i }));
@@ -253,7 +253,7 @@ describe('App navigation', () => {
     await user.selectOptions(screen.getByLabelText('Тема интерфейса'), 'dark');
     first.unmount();
 
-    render(<App />);
+    render(<App dataMode="seed" />);
     await user.click(screen.getByRole('tab', { name: 'Профиль' }));
     const favoriteProgramsSection = screen
       .getByRole('heading', { name: 'Избранные программы' })
@@ -277,7 +277,7 @@ describe('App navigation', () => {
 
   it('shows requirements, documents, source, and external link in shared program details', async () => {
     const user = userEvent.setup();
-    render(<App />);
+    render(<App dataMode="seed" />);
     await user.click(screen.getByRole('tab', { name: 'Каталог' }));
     await user.click(screen.getByRole('button', { name: /Подробнее о программе Старт-ИИ/i }));
 
@@ -293,7 +293,7 @@ describe('App navigation', () => {
 
   it('moves focus into shared program details, traps tab focus, and restores focus on close', async () => {
     const user = userEvent.setup();
-    render(<App />);
+    render(<App dataMode="seed" />);
     await user.click(screen.getByRole('tab', { name: 'Каталог' }));
 
     const openButton = screen.getByRole('button', { name: /Подробнее о программе Старт-ИИ/i });
@@ -314,7 +314,7 @@ describe('App navigation', () => {
 
   it('closes shared program details with Escape and restores focus to the opener', async () => {
     const user = userEvent.setup();
-    render(<App />);
+    render(<App dataMode="seed" />);
     await user.click(screen.getByRole('tab', { name: 'Каталог' }));
 
     const openButton = screen.getByRole('button', { name: /Подробнее о программе Старт-ИИ/i });
@@ -329,7 +329,7 @@ describe('App navigation', () => {
 
   it('shows document fallback in shared program details when all document URLs are invalid', async () => {
     const user = userEvent.setup();
-    render(<App />);
+    render(<App dataMode="seed" />);
     await user.click(screen.getByRole('tab', { name: 'Каталог' }));
     await user.click(screen.getByRole('button', { name: /Подробнее о программе Музейная лаборатория/i }));
 

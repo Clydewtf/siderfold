@@ -1,5 +1,6 @@
 import type { KeyboardEvent, ReactNode } from 'react';
 import { BarChart3, Database, Home, LibraryBig, UserRound } from 'lucide-react';
+import type { DataMode } from '../data-access/runtime';
 import type { TabId } from '../types';
 import { APP_VERSION } from '../version';
 
@@ -22,12 +23,16 @@ function getPanelId(tab: TabId) {
 export function AppShell({
   activeTab,
   onTabChange,
+  dataMode = 'seed',
   children
 }: {
   activeTab: TabId;
   onTabChange: (tab: TabId) => void;
+  dataMode?: DataMode;
   children: ReactNode;
 }) {
+  const modeLabel = dataMode === 'api' ? 'API-режим' : 'Демо-режим';
+
   function moveToTab(tab: TabId) {
     onTabChange(tab);
     document.getElementById(getTabId(tab))?.focus();
@@ -74,7 +79,7 @@ export function AppShell({
             <span className="grid">
               <span className="text-lg font-semibold text-ink">Siderfold</span>
               <span className="flex w-fit items-center gap-1.5 rounded-full border border-ink/10 bg-white/70 px-2 py-0.5 text-[11px] font-semibold uppercase tracking-normal text-graphite">
-                <span>Демо-режим</span>
+                <span>{modeLabel}</span>
                 <span aria-label={`Версия ${APP_VERSION}`} className="text-ink/70">
                   v{APP_VERSION}
                 </span>

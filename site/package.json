@@ -9,7 +9,8 @@
     "preview": "vite preview --host 127.0.0.1",
     "test": "node --test ./scripts/select-webstorage-flag.test.mjs && node ./scripts/run-tests.mjs",
     "test:watch": "vitest",
-    "test:e2e": "playwright test",
+    "test:e2e": "playwright test --config=playwright.config.ts && playwright test --config=playwright.api.config.ts",
+    "test:e2e:api": "playwright test --config=playwright.api.config.ts",
     "lint": "tsc -b --pretty false"
   },
   "dependencies": {
