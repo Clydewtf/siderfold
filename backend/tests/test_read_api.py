@@ -233,6 +233,62 @@ def test_program_search_filter_and_empty_state_semantics_are_stable(
     ]
 
 
+def test_program_search_handles_russian_word_forms_typos_and_relevance_sort(
+    migrated_engine: Engine,
+) -> None:
+    with migrated_engine.begin() as connection:
+        source_id = _insert_named_source(connection, "Russian Search Source")
+        morphology_id = insert_program_with_source(
+            connection,
+            source_id=source_id,
+            title="Грантовая программа для НКО",
+            publication_status=PublicationStatus.PUBLISHED,
+            published_at=PUBLISHED_AT,
+        )
+        fuzzy_id = insert_program_with_source(
+            connection,
+            source_id=source_id,
+            title="Конкурс для некоммерческих организаций",
+            publication_status=PublicationStatus.PUBLISHED,
+            published_at=PUBLISHED_AT,
+        )
+        insert_program_with_source(
+            connection,
+            source_id=source_id,
+            title="Конкурс для некоммерческих организаций — архив",
+            publication_status=PublicationStatus.ARCHIVED,
+            published_at=PUBLISHED_AT,
+        )
+
+    client = TestClient(create_app(engine=migrated_engine))
+    morphology = client.get(
+        "/api/v1/programs",
+        params={"q": "грантовой программы", "sort": "relevance"},
+    )
+    typo_tolerant = client.get(
+        "/api/v1/programs",
+        params={"q": "конкурсс некоммерчиских", "sort": "relevance"},
+    )
+    relevance_without_query = client.get("/api/v1/programs", params={"sort": "relevance"})
+    ascending_relevance = client.get(
+        "/api/v1/programs",
+        params={"q": "грантовая", "sort": "relevance", "order": "asc"},
+    )
+
+    assert morphology.status_code == 200
+    assert [item["id"] for item in morphology.json()["items"]] == [str(morphology_id)]
+    assert typo_tolerant.status_code == 200
+    assert [item["id"] for item in typo_tolerant.json()["items"]] == [str(fuzzy_id)]
+    assert relevance_without_query.status_code == 422
+    assert relevance_without_query.json()["error"]["details"] == [
+        {"field": "sort", "reason": "relevance requires q"}
+    ]
+    assert ascending_relevance.status_code == 422
+    assert ascending_relevance.json()["error"]["details"] == [
+        {"field": "order", "reason": "relevance only supports desc"}
+    ]
+
+
 def test_program_detail_has_only_public_fields_and_nested_catalog_data(
     migrated_engine: Engine,
 ) -> None:
@@ -370,7 +426,7 @@ def test_openapi_documents_versioned_public_contract_without_internal_fields(
     migrated_engine: Engine,
 ) -> None:
     spec = create_app(engine=migrated_engine).openapi()
-    assert spec["info"]["version"] == "0.7.0"
+    assert spec["info"]["version"] == "0.8.0"
     paths = spec["paths"]
     assert {
         "/api/v1/programs",
@@ -403,6 +459,7 @@ def test_openapi_documents_versioned_public_contract_without_internal_fields(
     )
     sort_schema_name = sort_parameter["schema"]["$ref"].rsplit("/", maxsplit=1)[-1]
     assert "updated_at" in spec["components"]["schemas"][sort_schema_name]["enum"]
+    assert "relevance" in spec["components"]["schemas"][sort_schema_name]["enum"]
     source_parameters = {
         parameter["name"]
         for parameter in paths["/api/v1/sources"]["get"]["parameters"]

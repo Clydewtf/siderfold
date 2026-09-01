@@ -2,6 +2,24 @@
 
 All notable project milestones are documented in this file.
 
+## v0.8.0 - 2026-09-02
+
+Public Catalog And Controlled Moderation.
+
+### Added
+
+- Published-only public API with stable pagination, filters, sorting, safe errors, OpenAPI contracts and source attribution.
+- Russian title search with word-form matching, bounded trigram typo tolerance and relevance ordering.
+- Explicit frontend API mode for catalog, filters and program cards, with dedicated loading, empty and safe error states; seed data remains an opt-in development/demo mode.
+- Reproducible analytics snapshots for freshness, completeness, conflicts, source coverage and review status, while detailed technical metrics stay internal.
+- Protected operator endpoints for canonical and discovery review queues, data-quality issues, ingestion runs, idempotent review decisions, program archival and later republishing.
+
+### Notes
+
+- Only reviewed `published` programs reach the public API and frontend. Raw captures, staging records, quality details, review decisions and internal operator data remain private.
+- The local workflow is intentionally controlled: source runs create candidates, operators review them, and publication is explicit. There is no automatic publication or uncontrolled background collection.
+- The static internal token is appropriate for a local or closed operator environment. A public internet deployment still needs HTTPS, secret rotation and stronger access control.
+
 ## v0.7.0 - 2026-09-01
 
 Sources, Review And Local Operations.

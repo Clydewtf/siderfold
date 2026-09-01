@@ -335,7 +335,12 @@ class Program(Base):
         ),
         Index(
             "ix_programs_title_search",
-            func.to_tsvector(text("'simple'"), title),
+            func.to_tsvector(text("'russian'"), title),
+            postgresql_using="gin",
+        ),
+        Index(
+            "ix_programs_title_trigram",
+            text("lower(title) gin_trgm_ops"),
             postgresql_using="gin",
         ),
     )
@@ -1204,7 +1209,10 @@ class ProgramPublicationAction(Base):
     )
 
     __table_args__ = (
-        CheckConstraint("action = 'republish'", name="only_republish_supported"),
+        CheckConstraint(
+            "action IN ('archive', 'republish')",
+            name="publication_lifecycle_action_allowed",
+        ),
         CheckConstraint("length(btrim(reason)) > 0", name="reason_not_blank"),
         CheckConstraint("length(btrim(actor)) > 0", name="actor_not_blank"),
         CheckConstraint("jsonb_typeof(prior_values) = 'object'", name="prior_values_is_object"),

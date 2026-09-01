@@ -25,6 +25,8 @@ from app.api.internal.schemas import (
     InternalReviewCaseDetail,
     InternalReviewQueueItem,
     InternalSource,
+    ProgramArchiveRequest,
+    ProgramArchiveResponse,
     ProgramRepublishRequest,
     ProgramRepublishResponse,
 )
@@ -51,6 +53,7 @@ from app.review.operator import (
     IdempotencyKeyConflict,
     OperatorAuditLink,
     OperatorOperationOutcome,
+    archive_program,
     execute_idempotent_operator_operation,
     republish_program,
 )
@@ -681,4 +684,56 @@ def apply_internal_republish(
         review_decision_id=values["review_decision_id"],
         program_publication_action_id=values["program_publication_action_id"],
         published_at=values["published_at"],
+    )
+
+
+@router.post("/programs/{program_id}/archive", response_model=ProgramArchiveResponse)
+def apply_internal_archive(
+    program_id: UUID,
+    payload: ProgramArchiveRequest,
+    connection: Connection = Depends(get_internal_database_connection),
+    access: InternalAccess = Depends(require_internal_access),
+    idempotency_key: str = Depends(require_idempotency_key),
+) -> ProgramArchiveResponse:
+    request_payload = payload.model_dump(mode="json")
+
+    def execute() -> OperatorOperationOutcome:
+        action_result = archive_program(
+            connection,
+            program_id,
+            reason=payload.reason,
+            actor=access.actor,
+        )
+        return OperatorOperationOutcome(
+            result_payload={
+                "program_id": str(action_result.program_id),
+                "review_case_id": str(action_result.review_case_id),
+                "review_decision_id": str(action_result.review_decision_id),
+                "program_publication_action_id": str(action_result.publication_action_id),
+                "archived_at": action_result.archived_at.isoformat(),
+            },
+            audit_link=OperatorAuditLink(
+                program_publication_action_id=action_result.publication_action_id
+            ),
+        )
+
+    result = execute_idempotent_operator_operation(
+        connection,
+        actor=access.actor,
+        idempotency_key=idempotency_key,
+        action="archive",
+        target_type="program",
+        target_id=program_id,
+        request_payload=request_payload,
+        execute=execute,
+    )
+    values = result.result_payload
+    return ProgramArchiveResponse(
+        operation_id=result.operation_id,
+        replayed=result.replayed,
+        program_id=values["program_id"],
+        review_case_id=values["review_case_id"],
+        review_decision_id=values["review_decision_id"],
+        program_publication_action_id=values["program_publication_action_id"],
+        archived_at=values["archived_at"],
     )

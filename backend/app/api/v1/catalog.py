@@ -1,15 +1,17 @@
 from __future__ import annotations
 
 from collections.abc import Iterator, Mapping, Sequence
+from dataclasses import dataclass
 from datetime import date
 from enum import StrEnum
+import re
 from typing import Any, TypeVar
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, FastAPI, Query, Request, status
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
-from sqlalchemy import asc, desc, exists, func, literal_column, select
+from sqlalchemy import and_, asc, case, desc, exists, func, literal, literal_column, or_, select
 from sqlalchemy.engine import Connection
 from sqlalchemy.exc import SQLAlchemyError
 
@@ -49,6 +51,7 @@ class ProgramSort(StrEnum):
     UPDATED_AT = "updated_at"
     DEADLINE = "deadline"
     TITLE = "title"
+    RELEVANCE = "relevance"
 
 
 class SourceSort(StrEnum):
@@ -79,6 +82,9 @@ class ReadApiError(Exception):
 
 router = APIRouter(prefix="/api/v1", tags=["catalog"])
 HTTP_422_STATUS = 422
+RUSSIAN_TEXT_SEARCH_CONFIGURATION = literal_column("'russian'")
+STRICT_WORD_SIMILARITY_THRESHOLD = "0.55"
+FUZZY_TERM_PATTERN = re.compile(r"[^\W_]{4,}", re.UNICODE)
 
 COMMON_ERROR_RESPONSES = {
     HTTP_422_STATUS: {
@@ -196,10 +202,67 @@ def _program_summary_select():
     )
 
 
+@dataclass(frozen=True)
+class ProgramSearch:
+    query: str
+    tsquery: Any
+    morphology_match: Any
+    fuzzy_match: Any | None
+    fuzzy_score: Any | None
+
+
 def _title_search_vector():
     """Return the same PostgreSQL expression used by the public search index."""
 
-    return func.to_tsvector(literal_column("'simple'"), Program.title)
+    return func.to_tsvector(RUSSIAN_TEXT_SEARCH_CONFIGURATION, Program.title)
+
+
+def _fuzzy_terms(query: str) -> tuple[str, ...]:
+    terms: list[str] = []
+    for match in FUZZY_TERM_PATTERN.finditer(query):
+        term = match.group().casefold()
+        if term not in terms:
+            terms.append(term)
+    return tuple(terms)
+
+
+def _program_search(query: str) -> ProgramSearch:
+    tsquery = func.websearch_to_tsquery(RUSSIAN_TEXT_SEARCH_CONFIGURATION, query)
+    morphology_match = _title_search_vector().op("@@")(tsquery)
+    fuzzy_terms = _fuzzy_terms(query)
+    if not fuzzy_terms:
+        return ProgramSearch(
+            query=query,
+            tsquery=tsquery,
+            morphology_match=morphology_match,
+            fuzzy_match=None,
+            fuzzy_score=None,
+        )
+
+    title = func.lower(Program.title)
+    fuzzy_match = and_(*(title.op("%>>")(literal(term)) for term in fuzzy_terms))
+    fuzzy_score = func.least(
+        *(func.strict_word_similarity(literal(term), title) for term in fuzzy_terms)
+    )
+    return ProgramSearch(
+        query=query,
+        tsquery=tsquery,
+        morphology_match=morphology_match,
+        fuzzy_match=fuzzy_match,
+        fuzzy_score=fuzzy_score,
+    )
+
+
+def _configure_fuzzy_search(connection: Connection) -> None:
+    connection.execute(
+        select(
+            func.set_config(
+                "pg_trgm.strict_word_similarity_threshold",
+                STRICT_WORD_SIMILARITY_THRESHOLD,
+                True,
+            )
+        )
+    )
 
 
 def _normalize_query(value: str | None, *, field: str = "q") -> str | None:
@@ -218,7 +281,7 @@ def _normalize_query(value: str | None, *, field: str = "q") -> str | None:
 
 def _program_filter_clauses(
     *,
-    query: str | None,
+    search: ProgramSearch | None,
     source_ids: Sequence[UUID] | None,
     theme_slugs: Sequence[str] | None,
     geography_slugs: Sequence[str] | None,
@@ -228,12 +291,11 @@ def _program_filter_clauses(
 ) -> list[Any]:
     clauses: list[Any] = [Program.publication_status == PublicationStatus.PUBLISHED]
 
-    if query is not None:
-        clauses.append(
-            _title_search_vector().op("@@")(
-                func.websearch_to_tsquery(literal_column("'simple'"), query)
-            )
-        )
+    if search is not None:
+        if search.fuzzy_match is None:
+            clauses.append(search.morphology_match)
+        else:
+            clauses.append(or_(search.morphology_match, search.fuzzy_match))
 
     if source_ids:
         clauses.append(
@@ -302,7 +364,24 @@ def _program_filter_clauses(
     return clauses
 
 
-def _program_order_by(sort: ProgramSort, order: SortOrder) -> tuple[Any, Any]:
+def _program_order_by(
+    sort: ProgramSort,
+    order: SortOrder,
+    *,
+    search: ProgramSearch | None,
+) -> tuple[Any, ...]:
+    if sort is ProgramSort.RELEVANCE:
+        if search is None:
+            raise RuntimeError("relevance ordering requires a search query")
+        fuzzy_score = search.fuzzy_score if search.fuzzy_score is not None else literal(0)
+        return (
+            desc(case((search.morphology_match, 1), else_=0)),
+            desc(func.ts_rank_cd(_title_search_vector(), search.tsquery, 32)),
+            desc(fuzzy_score),
+            desc(Program.published_at),
+            asc(Program.id),
+        )
+
     if sort is ProgramSort.DEADLINE:
         expression = ProgramDeadline.deadline_on
     elif sort is ProgramSort.TITLE:
@@ -314,6 +393,29 @@ def _program_order_by(sort: ProgramSort, order: SortOrder) -> tuple[Any, Any]:
 
     ordered_expression = asc(expression) if order is SortOrder.ASC else desc(expression)
     return ordered_expression.nulls_last(), asc(Program.id)
+
+
+def _validate_program_sort(
+    sort: ProgramSort,
+    order: SortOrder,
+    search: ProgramSearch | None,
+) -> None:
+    if sort is not ProgramSort.RELEVANCE:
+        return
+    if search is None:
+        raise ReadApiError(
+            status_code=HTTP_422_STATUS,
+            code="invalid_request",
+            message="sort=relevance requires q.",
+            details=(ApiErrorDetail(field="sort", reason="relevance requires q"),),
+        )
+    if order is not SortOrder.DESC:
+        raise ReadApiError(
+            status_code=HTTP_422_STATUS,
+            code="invalid_request",
+            message="sort=relevance only supports order=desc.",
+            details=(ApiErrorDetail(field="order", reason="relevance only supports desc"),),
+        )
 
 
 def _source_ref(row: Mapping[str, Any], prefix: str = "primary_source_") -> SourceRef:
@@ -392,14 +494,17 @@ def list_programs(
     page_size: int = Query(default=20, ge=1, le=100, description="Items per page, maximum 100."),
     sort: ProgramSort = Query(
         default=ProgramSort.PUBLISHED_AT,
-        description="published_at, updated_at, deadline, or title.",
+        description="published_at, updated_at, deadline, title, or relevance when q is supplied.",
     ),
     order: SortOrder = Query(default=SortOrder.DESC, description="asc or desc."),
     q: str | None = Query(
         default=None,
         min_length=1,
         max_length=200,
-        description="Case-insensitive title-term search. All supplied terms must match.",
+        description=(
+            "Russian title search with word-form matching and bounded typo tolerance. "
+            "All supplied terms must match."
+        ),
     ),
     source_id: list[UUID] | None = Query(
         default=None,
@@ -422,8 +527,12 @@ def list_programs(
 ) -> Page[ProgramListItem]:
     _validate_deadline_range(deadline_from, deadline_to)
     normalized_query = _normalize_query(q)
+    search = _program_search(normalized_query) if normalized_query is not None else None
+    _validate_program_sort(sort, order, search)
+    if search is not None and search.fuzzy_match is not None:
+        _configure_fuzzy_search(connection)
     clauses = _program_filter_clauses(
-        query=normalized_query,
+        search=search,
         source_ids=source_id,
         theme_slugs=theme,
         geography_slugs=geography,
@@ -437,7 +546,7 @@ def list_programs(
     rows = connection.execute(
         _program_summary_select()
         .where(*clauses)
-        .order_by(*_program_order_by(sort, order))
+        .order_by(*_program_order_by(sort, order, search=search))
         .offset((page - 1) * page_size)
         .limit(page_size)
     ).mappings()

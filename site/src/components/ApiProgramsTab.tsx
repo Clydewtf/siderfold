@@ -47,7 +47,7 @@ function toQuery(filters: ApiFilterState): ProgramQuery {
     page: filters.page,
     pageSize: 20,
     sort: filters.sort,
-    order: filters.order,
+    order: filters.sort === 'relevance' ? 'desc' : filters.order,
     query: filters.query || undefined,
     sourceId: filters.sourceId || undefined,
     theme: filters.theme || undefined,
@@ -104,7 +104,29 @@ export function ApiProgramsTab({
 
   const totalPages = Math.max(1, Math.ceil((page?.total ?? 0) / (page?.pageSize ?? 20)));
   const update = (patch: Partial<ApiFilterState>) => {
-    setLocalFilters((current) => ({ ...current, ...patch, page: 'page' in patch ? patch.page ?? 1 : 1 }));
+    setLocalFilters((current) => {
+      const next = {
+        ...current,
+        ...patch,
+        page: 'page' in patch ? patch.page ?? 1 : 1
+      };
+      if ('query' in patch) {
+        if (patch.query?.trim() && current.sort === 'published_at') {
+          next.sort = 'relevance';
+          next.order = 'desc';
+        } else if (!patch.query?.trim() && current.sort === 'relevance') {
+          next.sort = 'published_at';
+        }
+      }
+      if (next.sort === 'relevance') {
+        if (next.query.trim()) {
+          next.order = 'desc';
+        } else {
+          next.sort = 'published_at';
+        }
+      }
+      return next;
+    });
   };
   const reset = () => setLocalFilters(defaultFilters);
   const sourceOptions = filters?.sources ?? [];
@@ -135,7 +157,7 @@ export function ApiProgramsTab({
               value={localFilters.query}
               onChange={(event) => update({ query: event.target.value })}
               className="w-full rounded-lg border border-ink/10 bg-white py-2 pl-9 pr-20 text-ink"
-              placeholder="Название программы"
+              placeholder="Название, словоформа или слово с опечаткой"
             />
             {localFilters.query ? (
               <button type="button" onClick={() => update({ query: '' })} aria-label="Очистить поиск" className="absolute right-2 top-1/2 rounded-md px-2 py-1 text-xs font-semibold text-graphite hover:bg-ink/5">
@@ -190,11 +212,12 @@ export function ApiProgramsTab({
                 <option value="updated_at">Дата обновления</option>
                 <option value="deadline">Дедлайн</option>
                 <option value="title">Название</option>
+                <option value="relevance" disabled={!localFilters.query.trim()}>Релевантность поиска</option>
               </select>
             </label>
             <label className="grid gap-1 text-sm font-medium text-graphite">
               Порядок
-              <select value={localFilters.order} onChange={(event) => update({ order: event.target.value as ApiFilterState['order'] })} className="rounded-lg border border-ink/10 bg-white px-3 py-2 text-ink">
+              <select value={localFilters.order} onChange={(event) => update({ order: event.target.value as ApiFilterState['order'] })} disabled={localFilters.sort === 'relevance'} className="rounded-lg border border-ink/10 bg-white px-3 py-2 text-ink disabled:cursor-not-allowed disabled:opacity-60">
                 <option value="desc">По убыванию</option>
                 <option value="asc">По возрастанию</option>
               </select>

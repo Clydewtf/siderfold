@@ -66,6 +66,7 @@ PUBLIC_CATALOG_INDEXES = {
     "programs": {
         "ix_programs_publication_status_updated_at_id",
         "ix_programs_title_search",
+        "ix_programs_title_trigram",
     },
     "program_sources": {"ix_program_sources_source_id_program_id"},
     "program_deadlines": {"ix_program_deadlines_deadline_on_program_id"},
@@ -119,8 +120,31 @@ def test_provenance_migration_applies_to_a_clean_database_and_rolls_back(
             assert expected_indexes.issubset(_index_names(engine, table_name))
         with engine.connect() as connection:
             assert connection.scalar(text("SELECT version_num FROM alembic_version")) == (
+                "0012_catalog_search_and_archive"
+            )
+
+        with engine.connect() as connection:
+            assert connection.scalar(
+                text("SELECT EXISTS (SELECT 1 FROM pg_extension WHERE extname = 'pg_trgm')")
+            )
+
+        command.downgrade(alembic_config, "0011_internal_moderation")
+
+        assert "ix_programs_title_trigram" not in _index_names(engine, "programs")
+        with engine.connect() as connection:
+            assert connection.scalar(text("SELECT version_num FROM alembic_version")) == (
                 "0011_internal_moderation"
             )
+
+        command.upgrade(alembic_config, "head")
+
+        assert "ix_programs_title_trigram" in _index_names(engine, "programs")
+        with engine.connect() as connection:
+            assert connection.scalar(text("SELECT version_num FROM alembic_version")) == (
+                "0012_catalog_search_and_archive"
+            )
+
+        command.downgrade(alembic_config, "0011_internal_moderation")
 
         command.downgrade(alembic_config, "0010_analytics_snapshots")
 

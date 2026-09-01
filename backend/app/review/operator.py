@@ -69,6 +69,15 @@ class ProgramRepublishResult:
     published_at: datetime
 
 
+@dataclass(frozen=True)
+class ProgramArchiveResult:
+    program_id: UUID
+    review_case_id: UUID
+    review_decision_id: UUID
+    publication_action_id: UUID
+    archived_at: datetime
+
+
 def _now() -> datetime:
     return datetime.now(timezone.utc)
 
@@ -279,4 +288,88 @@ def republish_program(
             review_decision_id=row["publication_review_decision_id"],
             publication_action_id=publication_action_id,
             published_at=now,
+        )
+
+
+def archive_program(
+    connection: Connection,
+    program_id: UUID,
+    *,
+    reason: str,
+    actor: str,
+) -> ProgramArchiveResult:
+    """Hide a published program while preserving the review evidence that published it."""
+
+    normalized_reason = _nonblank(reason, field="reason")
+    normalized_actor = _nonblank(actor, field="actor")
+    with connection.begin_nested():
+        row = connection.execute(
+            select(
+                Program.id,
+                Program.publication_status,
+                Program.published_at,
+                Program.publication_review_decision_id,
+                ReviewDecision.staged_record_id,
+                ReviewDecision.decision,
+                ReviewCase.id.label("review_case_id"),
+                ReviewCase.status.label("review_case_status"),
+            )
+            .select_from(Program)
+            .join(
+                ReviewDecision,
+                ReviewDecision.id == Program.publication_review_decision_id,
+            )
+            .join(ReviewCase, ReviewCase.staged_record_id == ReviewDecision.staged_record_id)
+            .where(Program.id == program_id)
+            .with_for_update()
+        ).mappings().one_or_none()
+        if row is None:
+            raise ReviewPolicyError("program does not have a publish review history")
+        if PublicationStatus(row["publication_status"]) is not PublicationStatus.PUBLISHED:
+            raise ReviewPolicyError("only published programs can be archived")
+        if ReviewDecisionOutcome(row["decision"]) is not ReviewDecisionOutcome.PUBLISH:
+            raise ReviewPolicyError("program is not backed by a publish decision")
+        if ReviewCaseStatus(row["review_case_status"]) is not ReviewCaseStatus.RESOLVED:
+            raise ReviewPolicyError("publish review case must be resolved before archiving")
+
+        now = _now()
+        publication_action_id = uuid4()
+        connection.execute(
+            insert(ProgramPublicationAction).values(
+                id=publication_action_id,
+                program_id=program_id,
+                review_case_id=row["review_case_id"],
+                publication_review_decision_id=row["publication_review_decision_id"],
+                action="archive",
+                reason=normalized_reason,
+                actor=normalized_actor,
+                prior_values={
+                    "publication_status": PublicationStatus.PUBLISHED.value,
+                    "published_at": row["published_at"].isoformat()
+                    if row["published_at"] is not None
+                    else None,
+                },
+                result_values={
+                    "publication_status": PublicationStatus.ARCHIVED.value,
+                    "published_at": row["published_at"].isoformat()
+                    if row["published_at"] is not None
+                    else None,
+                },
+                created_at=now,
+            )
+        )
+        connection.execute(
+            update(Program)
+            .where(Program.id == program_id)
+            .values(
+                publication_status=PublicationStatus.ARCHIVED,
+                updated_at=now,
+            )
+        )
+        return ProgramArchiveResult(
+            program_id=program_id,
+            review_case_id=row["review_case_id"],
+            review_decision_id=row["publication_review_decision_id"],
+            publication_action_id=publication_action_id,
+            archived_at=now,
         )

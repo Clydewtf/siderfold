@@ -8,7 +8,7 @@ export const fundingKinds = [
 ] as const;
 
 export type FundingKind = (typeof fundingKinds)[number];
-export type CatalogSort = 'published_at' | 'updated_at' | 'deadline' | 'title';
+export type CatalogSort = 'published_at' | 'updated_at' | 'deadline' | 'title' | 'relevance';
 export type SortOrder = 'asc' | 'desc';
 
 export type ProgramQuery = {

@@ -349,7 +349,7 @@ def test_internal_merge_rejects_a_candidate_without_deleting_match_history(
         ) == 1
 
 
-def test_internal_republish_uses_prior_review_evidence_and_is_idempotent(
+def test_internal_archive_and_republish_use_prior_review_evidence_and_are_idempotent(
     migrated_engine: Engine,
 ) -> None:
     with migrated_engine.begin() as connection:
@@ -369,14 +369,32 @@ def test_internal_republish_uses_prior_review_evidence_and_is_idempotent(
     )
     assert accepted.status_code == 200
     program_id = UUID(accepted.json()["program_id"])
-    with migrated_engine.begin() as connection:
-        connection.execute(
-            update(Program)
-            .where(Program.id == program_id)
-            .values(publication_status=PublicationStatus.ARCHIVED)
-        )
 
+    archive = client.post(
+        f"/api/internal/v1/programs/{program_id}/archive",
+        headers=_request_headers("archive-once"),
+        json={"reason": "Официальная страница больше не актуальна."},
+    )
+    archive_replay = client.post(
+        f"/api/internal/v1/programs/{program_id}/archive",
+        headers=_request_headers("archive-once"),
+        json={"reason": "Официальная страница больше не актуальна."},
+    )
+    assert archive.status_code == archive_replay.status_code == 200
+    assert archive.json()["replayed"] is False
+    assert archive_replay.json()["replayed"] is True
+    assert archive.json()["program_publication_action_id"] == archive_replay.json()[
+        "program_publication_action_id"
+    ]
     assert client.get(f"/api/v1/programs/{program_id}").status_code == 404
+
+    second_archive = client.post(
+        f"/api/internal/v1/programs/{program_id}/archive",
+        headers=_request_headers("archive-again"),
+        json={"reason": "Повторное архивирование недопустимо."},
+    )
+    assert second_archive.status_code == 409
+
     first = client.post(
         f"/api/internal/v1/programs/{program_id}/republish",
         headers=_request_headers("republish-once"),
@@ -404,18 +422,18 @@ def test_internal_republish_uses_prior_review_evidence_and_is_idempotent(
 
     with migrated_engine.connect() as connection:
         publication_actions = list(
-            connection.scalars(
-                select(ProgramPublicationAction.id).where(
-                    ProgramPublicationAction.program_id == program_id
-                )
-            )
+            connection.execute(
+                select(ProgramPublicationAction.id, ProgramPublicationAction.action)
+                .where(ProgramPublicationAction.program_id == program_id)
+                .order_by(ProgramPublicationAction.created_at, ProgramPublicationAction.id)
+            ).all()
         )
-        assert len(publication_actions) == 1
+        assert [action.action for action in publication_actions] == ["archive", "republish"]
         with pytest.raises(IntegrityError):
             with migrated_engine.begin() as mutation_connection:
                 mutation_connection.execute(
                     update(ProgramPublicationAction)
-                    .where(ProgramPublicationAction.id == publication_actions[0])
+                    .where(ProgramPublicationAction.id == publication_actions[0].id)
                     .values(reason="изменено")
                 )
 

@@ -1,47 +1,51 @@
-# Local source operations
+# Локальная эксплуатация источников
 
-The source runner is intentionally a one-shot local command. It does not start
-a daemon, enable a schedule, publish programs or send notifications outside the
-machine.
+Запуск источника намеренно сделан одноразовой локальной командой. Он не
+запускает постоянный процесс, не включает расписание, не публикует программы и
+не отправляет уведомления за пределы компьютера.
 
-## Before a run
+## Перед запуском
 
-Use the project's Python environment and migrate the local database:
+Используй Python-окружение проекта и примени миграции к локальной БД. Скрипт
+`scripts/start-local.sh` по умолчанию создаёт его вне репозитория; переменная
+ниже использует тот же путь. Если окружение находится в другом месте, задай
+`SIDERFOLD_BACKEND_VENV` перед этой командой.
 
 ```bash
 cd backend
-../.venv/bin/python -m alembic upgrade head
+export PYTHON_BIN="${SIDERFOLD_BACKEND_VENV:-/private/tmp/siderfold-backend-venv}/bin/python"
+$PYTHON_BIN -m alembic upgrade head
 ```
 
-If the virtual environment has not been created yet, install the backend's
-declared dependencies into an isolated environment first. The environment keeps
-the project's Python packages separate from the macOS system Python.
+Если виртуальное окружение ещё не создано, сначала установи объявленные
+зависимости бэкенда в изолированное окружение. Оно отделяет пакеты проекта от
+системного Python macOS.
 
-Check the configured sources without contacting them:
+Проверь настроенные источники без обращения к ним:
 
 ```bash
-../.venv/bin/siderfold-sources list
+$PYTHON_BIN -m app.sources.cli list
 ```
 
-Run a local fixture through the complete protected path:
+Прогони локальную тестовую фикстуру через полный защищённый контур:
 
 ```bash
-../.venv/bin/siderfold-sources run fixture-catalog
-../.venv/bin/siderfold-sources runs --source-key fixture-catalog
+$PYTHON_BIN -m app.sources.cli run fixture-catalog
+$PYTHON_BIN -m app.sources.cli runs --source-key fixture-catalog
 ```
 
-`run` acquires a PostgreSQL advisory lock for the source. A competing command
-does not wait or start a second parser; it records `skipped_locked` in the
-execution journal instead.
+`run` получает блокировку PostgreSQL для источника. Параллельная команда не
+ждёт и не запускает второй парсер: вместо этого она записывает
+`skipped_locked` в журнал запусков.
 
-## Review и публикация
+## Проверка и публикация
 
 Ниже — обычная последовательность для добавления проверенных данных в публичный
 каталог. Она подходит для локальной операторской среды; автоматической
 публикации или постоянного фонового запуска здесь нет.
 
 1. Запусти приложение с токеном внутреннего доступа. Токен не нужно записывать
-   в файл проекта: задай его в терминале, из которого запускается backend.
+   в файл проекта: задай его в терминале, из которого запускается бэкенд.
 
    ```bash
    cd /path/to/siderfold
@@ -56,6 +60,7 @@ execution journal instead.
 
    ```bash
    cd /path/to/siderfold/backend
+   export PYTHON_BIN="${SIDERFOLD_BACKEND_VENV:-/private/tmp/siderfold-backend-venv}/bin/python"
    DB_PORT="$(docker compose --project-name siderfold port db 5432 | awk -F: '{print $NF}' | tr -d '\r')"
    export DATABASE_URL="postgresql+psycopg://siderfold:siderfold@127.0.0.1:${DB_PORT}/siderfold"
    export INTERNAL_API_TOKEN='тот-же-токен'
@@ -66,18 +71,19 @@ execution journal instead.
    непонятные предупреждения.
 
    ```bash
-   ../.venv/bin/python -m app.sources.cli dry-run potanin-competitions
+   $PYTHON_BIN -m app.sources.cli dry-run potanin-competitions
    ```
 
 4. Если отчёт приемлем, выполни управляемый запуск источника. Он сохраняет
-   provenance, raw-метаданные и staging-кандидатов, но не создаёт опубликованные
-   программы сам по себе.
+   происхождение данных, метаданные исходных материалов и кандидатов для
+   проверки, но не создаёт
+   опубликованные программы сам по себе.
 
    ```bash
-   ../.venv/bin/python -m app.sources.cli run potanin-competitions
+   $PYTHON_BIN -m app.sources.cli run potanin-competitions
    ```
 
-5. Посмотри созданный import-батч, очередь и детали конкретного кандидата.
+5. Посмотри созданный пакет импорта, очередь и детали конкретного кандидата.
 
    ```bash
    curl -sS -H "Authorization: Bearer $INTERNAL_API_TOKEN" \
@@ -90,7 +96,7 @@ execution journal instead.
      http://127.0.0.1:8000/api/internal/v1/review/cases/<review_case_id>
    ```
 
-   Warning означает, что поле неполное или требует оценки; оно не подменяется
+   Предупреждение означает, что поле неполное или требует оценки; оно не подменяется
    выдуманным значением. Ошибка блокирует принятие. Для решения нужно сверить
    нормализованные поля с первоисточником и доказательствами кандидата.
 
@@ -113,81 +119,106 @@ execution journal instead.
      "http://127.0.0.1:8000/api/internal/v1/review/cases/$REVIEW_CASE_ID/actions"
    ```
 
-7. Убедись, что опубликованная программа появилась в public API и в каталоге,
-   запущенном в API-режиме. Internal endpoints и технические данные review в
-   public API не попадают.
+7. Убедись, что опубликованная программа появилась в публичном API и в каталоге,
+   запущенном в API-режиме. Внутренние маршруты и технические данные проверки в
+   публичный API не попадают.
 
    ```bash
    curl -sS http://127.0.0.1:8000/api/v1/programs
    ```
 
+8. Если официальный источник перестал подтверждать программу, архивируй её,
+   а не изменяй таблицы напрямую. Архивная карточка исчезает из публичного API,
+   но история проверки и причина остаются в журнале аудита. Повтор того же запроса с
+   тем же ключом безопасен.
+
+   ```bash
+   export PROGRAM_ID='<program_id>'
+   export IDEMPOTENCY_KEY="archive-$(uuidgen)"
+
+   curl -sS -X POST \
+     -H "Authorization: Bearer $INTERNAL_API_TOKEN" \
+     -H "Content-Type: application/json" \
+     -H "Idempotency-Key: $IDEMPOTENCY_KEY" \
+     -d '{"reason":"Официальная страница больше не подтверждает программу."}' \
+     "http://127.0.0.1:8000/api/internal/v1/programs/$PROGRAM_ID/archive"
+   ```
+
+   Когда официальный источник снова подтверждён, используй новый ключ и
+   `POST /api/internal/v1/programs/$PROGRAM_ID/republish` с той же структурой
+   запроса. Повторно публиковать можно только архивированную программу.
+
 Пока модерация управляется API, а не отдельной веб-страницей. Не изменяй
-канонические таблицы напрямую: это обойдёт ограничения, идемпотентность и audit
-trail.
+канонические таблицы напрямую: это обойдёт ограничения, идемпотентность и журнал
+аудита.
 
-## Scheduling deliberately
+## Осознанное подключение расписания
 
-`schedule-once` evaluates cron expressions in UTC, starts due active sources,
-and exits:
+`schedule-once` проверяет выражения расписания в UTC, запускает активные источники,
+для которых наступило время, и завершается:
 
 ```bash
-../.venv/bin/siderfold-sources schedule-once
-../.venv/bin/siderfold-sources schedule-once --at 2026-09-01T04:15:00+00:00
+$PYTHON_BIN -m app.sources.cli schedule-once
+$PYTHON_BIN -m app.sources.cli schedule-once --at 2026-09-01T04:15:00+00:00
 ```
 
-The checked-in sources are `manual`, so this command currently selects none.
-Do not change a network source to a cron expression until its permitted access,
-owner and acceptable frequency have been reviewed. After that decision, a host
-scheduler such as `launchd` or cron may call the command at a bounded cadence;
-the repository itself must not create that scheduler entry.
+Источники из репозитория имеют режим `manual`, поэтому сейчас команда никого не
+выбирает. Не меняй сетевой источник на выражение расписания, пока не проверены
+разрешённый доступ, ответственный и допустимая частота. После этого решения
+планировщик хоста, например `launchd` или cron, может вызывать команду с
+ограниченной периодичностью; сам репозиторий не должен создавать такую задачу.
 
-Example cron entry, added by the operator rather than the application:
+Пример cron-записи, которую добавляет оператор, а не приложение:
 
 ```text
-* * * * * /absolute/path/to/.venv/bin/siderfold-sources schedule-once >> /absolute/path/to/siderfold-scheduler.log 2>&1
+* * * * * cd /absolute/path/to/siderfold/backend && /absolute/path/to/python -m app.sources.cli schedule-once >> /absolute/path/to/siderfold-scheduler.log 2>&1
 ```
 
-Each source also has `min_run_interval_seconds` in `config/sources.toml`.
-The scheduler records a rate-limited attempt instead of making a second request
-too soon. Existing request, byte and transport-time limits remain in effect.
+У каждого источника также есть `min_run_interval_seconds` в
+`config/sources.toml`. Вместо слишком раннего второго запроса планировщик
+записывает ограниченную по частоте попытку. Ограничения на количество запросов,
+объём байтов и время транспорта продолжают действовать.
 
-## Failures and recovery
+## Сбои и восстановление
 
-The runner retries only temporary transport, HTTP 408/429/5xx and database
-availability failures. It makes at most three attempts with bounded backoff.
-Configuration, allowlist, parser, validation and other HTTP 4xx failures are
-terminal and are not retried.
+Команда запуска повторяет только временные транспортные ошибки, HTTP 408/429/5xx
+и недоступность БД. Она выполняет не более трёх попыток с ограниченно
+увеличивающейся паузой. Ошибки конфигурации, нарушения белого списка, ошибки
+парсера и валидации, а также другие HTTP 4xx считаются окончательными и не
+повторяются.
 
-A successful empty poll is recorded as `empty_success`. Any report containing
-errors is `failed`, even if it contains zero records. A failure from one source
-does not prevent the same scheduler tick from trying the next due source.
+Успешный пустой опрос записывается как `empty_success`. Любой отчёт с ошибками
+получает статус `failed`, даже если в нём ноль записей. Сбой одного источника не
+мешает тому же запуску планировщика попробовать следующий источник, для которого
+наступило время.
 
-The command writes a redacted JSON notification to stderr only for a failed
-execution. It contains the source key, execution ID and error codes; it never
-includes response bodies, cookies, tokens or exception text. There are no
-webhooks or external notification integrations.
+Команда пишет сокращённое JSON-уведомление в stderr только для неуспешного
+запуска. В нём есть ключ источника, ID запуска и коды ошибок; в нём никогда нет
+тела ответа, cookie, токенов или текста исключения. Вебхуки и внешние
+интеграции уведомлений отсутствуют.
 
-If a process is interrupted, PostgreSQL releases its advisory lock when that
-database session closes. The next protected run marks the unfinished operation
-and any matching `IngestionRun` as interrupted/failed before it starts fresh.
-Do not clear advisory locks manually. Inspect the journal first:
+Если процесс прерван, PostgreSQL освобождает блокировку при закрытии сессии
+БД. Следующий защищённый запуск помечает незавершённую операцию и подходящий
+`IngestionRun` как прерванные/неуспешные перед новым запуском. Не очищай
+блокировку вручную. Сначала посмотри журнал:
 
 ```bash
-../.venv/bin/siderfold-sources runs --limit 50
+$PYTHON_BIN -m app.sources.cli runs --limit 50
 ```
 
-## Journal retention
+## Хранение журнала
 
-Execution rows contain timing, outcome, retries, import counters, field-error
-counts, freshness and the two review-queue sizes. They are operational metadata;
-raw captures, staging records and provenance are not removed by journal cleanup.
+Строки запуска содержат время, результат, повторы, счётчики импорта, число
+ошибок полей, свежесть и размеры двух очередей проверки. Это операционные
+метаданные; `RawCapture`, `StagedRecord` и происхождение данных очистка журнала
+не удаляет.
 
-Retention defaults to 90 days through `SCHEDULER_JOURNAL_RETENTION_DAYS`. Cleanup
-is always explicit:
+Срок хранения по умолчанию — 90 дней через
+`SCHEDULER_JOURNAL_RETENTION_DAYS`. Очистка всегда запускается явно:
 
 ```bash
-../.venv/bin/siderfold-sources prune-journal --retention-days 90
+$PYTHON_BIN -m app.sources.cli prune-journal --retention-days 90
 ```
 
-Run this only after checking the journal and only for local operational history
-that is no longer needed. The command never runs automatically.
+Запускай её только после проверки журнала и только для уже ненужной локальной
+операционной истории. Команда никогда не выполняется автоматически.

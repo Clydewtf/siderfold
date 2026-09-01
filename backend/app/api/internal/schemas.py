@@ -189,3 +189,17 @@ class ProgramRepublishResponse(InternalSchema):
     review_decision_id: UUID
     program_publication_action_id: UUID
     published_at: datetime
+
+
+class ProgramArchiveRequest(InternalSchema):
+    reason: str = Field(min_length=1, max_length=4_000)
+
+
+class ProgramArchiveResponse(InternalSchema):
+    operation_id: UUID
+    replayed: bool
+    program_id: UUID
+    review_case_id: UUID
+    review_decision_id: UUID
+    program_publication_action_id: UUID
+    archived_at: datetime
