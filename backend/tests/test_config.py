@@ -29,3 +29,10 @@ def test_settings_reject_invalid_port() -> None:
 def test_settings_reject_non_psycopg_database_url() -> None:
     with pytest.raises(ValidationError):
         Settings(database_url="sqlite:///./siderfold.db")
+
+
+def test_settings_reject_blank_internal_token_and_operator_identity() -> None:
+    with pytest.raises(ValidationError):
+        Settings(internal_api_token="   ")
+    with pytest.raises(ValidationError):
+        Settings(internal_operator_id="   ")

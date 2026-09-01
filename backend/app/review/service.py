@@ -1066,6 +1066,8 @@ def request_clarification(
 
     with connection.begin_nested():
         status, candidate = _lock_review_case(connection, review_case_id)
+        if status is ReviewCaseStatus.NEEDS_CLARIFICATION:
+            raise ReviewPolicyError("review case already needs clarification")
         now = _now()
         normalized_reason = _nonblank(reason, field="reason")
         action_id = _insert_review_action(

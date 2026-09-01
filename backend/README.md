@@ -169,6 +169,128 @@ deadline, funding, тем и географии. В них намеренно о
 `404 program_not_found`, `503 database_unavailable` и `500 internal_error`. Полная схема доступна в
 генерируемом OpenAPI (`/docs` и `/openapi.json`).
 
+## Операторская модерация
+
+Операционные маршруты находятся под `/api/internal/v1` и не входят в публичный
+OpenAPI. Они отключены, пока в окружении нет `INTERNAL_API_TOKEN`; после
+настройки каждый запрос должен передавать его как `Authorization: Bearer …`.
+`INTERNAL_OPERATOR_ID` задаёт подпись оператора в audit trail. Оба значения
+задаются только локально или через среду развёртывания и не хранятся в
+репозитории.
+
+Оператор может просматривать каноническую и discovery-очереди, источники,
+запуски адаптеров (`/runs`), import-батчи (`/ingestion-runs`) и проблемы качества.
+Канонический кейс принимает действия
+`accept`, `reject`, `merge` и `needs_clarification`; URL из discovery-очереди
+можно связать с уже разрешённым адаптером, отклонить или оставить на уточнении.
+Каждый POST требует отдельный заголовок `Idempotency-Key`: повтор того же
+запроса возвращает сохранённый результат без второго действия, а повторное
+использование ключа с другим содержимым отклоняется.
+
+Повторная публикация доступна только для архивированной программы, ранее
+опубликованной через review. Она создаёт отдельную неизменяемую запись с
+причиной, оператором и ссылкой на исходное решение; raw-содержимое и локальные
+URI файлов не отдаются ни одним internal endpoint-ом.
+
+После запуска backend с `INTERNAL_API_TOKEN` недавние import-батчи можно
+посмотреть так:
+
+```bash
+curl -sS -H "Authorization: Bearer $INTERNAL_API_TOKEN" \
+  http://127.0.0.1:8000/api/internal/v1/ingestion-runs
+```
+
+### Рабочий цикл review
+
+Ниже — обычная последовательность для добавления проверенных данных в публичный
+каталог. Она подходит для локальной операторской среды; автоматической
+публикации или постоянного фонового запуска здесь нет.
+
+1. Запусти приложение с токеном внутреннего доступа. Токен не нужно записывать
+   в файл проекта: задай его в терминале, из которого запускается backend.
+
+   ```bash
+   cd /path/to/siderfold
+   export INTERNAL_API_TOKEN='длинный-случайный-токен'
+   export INTERNAL_OPERATOR_ID='имя-оператора'
+   ./scripts/start-local.sh api
+   ```
+
+2. В отдельном терминале подготовь доступ к той же локальной БД. Docker выдаёт
+   свободный порт, поэтому не следует предполагать, что PostgreSQL доступен на
+   `5432`.
+
+   ```bash
+   cd /path/to/siderfold/backend
+   DB_PORT="$(docker compose --project-name siderfold port db 5432 | awk -F: '{print $NF}' | tr -d '\r')"
+   export DATABASE_URL="postgresql+psycopg://siderfold:siderfold@127.0.0.1:${DB_PORT}/siderfold"
+   export INTERNAL_API_TOKEN='тот-же-токен'
+   ```
+
+3. Сначала запусти адаптер в `dry-run` и прочитай отчёт. Не запускай запись в
+   БД, если формат источника неожиданно изменился, в отчёте есть ошибки или
+   непонятные предупреждения.
+
+   ```bash
+   ../.venv/bin/python -m app.sources.cli dry-run potanin-competitions
+   ```
+
+4. Если отчёт приемлем, выполни управляемый запуск источника. Он сохраняет
+   provenance, raw-метаданные и staging-кандидатов, но не создаёт опубликованные
+   программы сам по себе.
+
+   ```bash
+   ../.venv/bin/python -m app.sources.cli run potanin-competitions
+   ```
+
+5. Посмотри созданный import-батч, очередь и детали конкретного кандидата.
+
+   ```bash
+   curl -sS -H "Authorization: Bearer $INTERNAL_API_TOKEN" \
+     http://127.0.0.1:8000/api/internal/v1/ingestion-runs
+
+   curl -sS -H "Authorization: Bearer $INTERNAL_API_TOKEN" \
+     http://127.0.0.1:8000/api/internal/v1/review/cases
+
+   curl -sS -H "Authorization: Bearer $INTERNAL_API_TOKEN" \
+     http://127.0.0.1:8000/api/internal/v1/review/cases/<review_case_id>
+   ```
+
+   Warning означает, что поле неполное или требует оценки; оно не подменяется
+   выдуманным значением. Ошибка блокирует принятие. Для решения нужно сверить
+   нормализованные поля с первоисточником и доказательствами кандидата.
+
+6. Прими решение через внутренний API. Каждый запрос на изменение требует новый
+   `Idempotency-Key`; повтор того же запроса с тем же ключом безопасно вернёт
+   прежний результат. `accept` публикует подтверждённую программу, `reject`
+   оставляет доказательства в истории, `needs_clarification` возвращает кейс на
+   уточнение. `merge` допустим только при явном подтверждённом совпадении и
+   требует `deduplication_match_id` из деталей кейса.
+
+   ```bash
+   export REVIEW_CASE_ID='<review_case_id>'
+   export IDEMPOTENCY_KEY="accept-$(uuidgen)"
+
+   curl -sS -X POST \
+     -H "Authorization: Bearer $INTERNAL_API_TOKEN" \
+     -H "Content-Type: application/json" \
+     -H "Idempotency-Key: $IDEMPOTENCY_KEY" \
+     -d '{"action":"accept","reason":"Данные сверены с официальной страницей источника."}' \
+     "http://127.0.0.1:8000/api/internal/v1/review/cases/$REVIEW_CASE_ID/actions"
+   ```
+
+7. Убедись, что опубликованная программа появилась в public API и в каталоге,
+   запущенном в API-режиме. Internal endpoints и технические данные review в
+   public API не попадают.
+
+   ```bash
+   curl -sS http://127.0.0.1:8000/api/v1/programs
+   ```
+
+Пока модерация управляется API, а не отдельной веб-страницей. Не изменяй
+канонические таблицы напрямую: это обойдёт ограничения, идемпотентность и audit
+trail.
+
 ## Реестр источников и адаптеры
 
 Реестр хранится в `config/sources.toml` и содержит только операционные данные:

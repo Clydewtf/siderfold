@@ -57,6 +57,11 @@ OPERATIONAL_TABLES = {
 
 ANALYTICS_TABLES = {"analytics_snapshots"}
 
+INTERNAL_MODERATION_TABLES = {
+    "operator_operations",
+    "program_publication_actions",
+}
+
 PUBLIC_CATALOG_INDEXES = {
     "programs": {
         "ix_programs_publication_status_updated_at_id",
@@ -71,6 +76,14 @@ PUBLIC_CATALOG_INDEXES = {
 
 ANALYTICS_INDEXES = {
     "analytics_snapshots": {"ix_analytics_snapshots_scope_as_of_id"},
+}
+
+INTERNAL_MODERATION_INDEXES = {
+    "operator_operations": {"ix_operator_operations_target_created"},
+    "program_publication_actions": {
+        "ix_program_publication_actions_program_created",
+        "ix_program_publication_actions_review_case_created",
+    },
 }
 
 
@@ -96,11 +109,22 @@ def test_provenance_migration_applies_to_a_clean_database_and_rolls_back(
             | DISCOVERY_REVIEW_TABLES
             | OPERATIONAL_TABLES
             | ANALYTICS_TABLES
+            | INTERNAL_MODERATION_TABLES
         ).issubset(inspect(engine).get_table_names())
         for table_name, expected_indexes in PUBLIC_CATALOG_INDEXES.items():
             assert expected_indexes.issubset(_index_names(engine, table_name))
         for table_name, expected_indexes in ANALYTICS_INDEXES.items():
             assert expected_indexes.issubset(_index_names(engine, table_name))
+        for table_name, expected_indexes in INTERNAL_MODERATION_INDEXES.items():
+            assert expected_indexes.issubset(_index_names(engine, table_name))
+        with engine.connect() as connection:
+            assert connection.scalar(text("SELECT version_num FROM alembic_version")) == (
+                "0011_internal_moderation"
+            )
+
+        command.downgrade(alembic_config, "0010_analytics_snapshots")
+
+        assert INTERNAL_MODERATION_TABLES.isdisjoint(inspect(engine).get_table_names())
         with engine.connect() as connection:
             assert connection.scalar(text("SELECT version_num FROM alembic_version")) == (
                 "0010_analytics_snapshots"

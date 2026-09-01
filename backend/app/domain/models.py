@@ -1161,6 +1161,116 @@ class ReviewAction(Base):
     )
 
 
+class ProgramPublicationAction(Base):
+    """An append-only publication lifecycle action backed by prior review evidence."""
+
+    __tablename__ = "program_publication_actions"
+
+    id: Mapped[UUID] = mapped_column(PostgreSQLUUID(as_uuid=True), primary_key=True, default=uuid4)
+    program_id: Mapped[UUID] = mapped_column(
+        PostgreSQLUUID(as_uuid=True),
+        ForeignKey("programs.id", ondelete="RESTRICT"),
+        nullable=False,
+    )
+    review_case_id: Mapped[UUID] = mapped_column(
+        PostgreSQLUUID(as_uuid=True),
+        ForeignKey("review_cases.id", ondelete="RESTRICT"),
+        nullable=False,
+    )
+    publication_review_decision_id: Mapped[UUID] = mapped_column(
+        PostgreSQLUUID(as_uuid=True),
+        ForeignKey("review_decisions.id", ondelete="RESTRICT"),
+        nullable=False,
+    )
+    action: Mapped[str] = mapped_column(String(32), nullable=False)
+    reason: Mapped[str] = mapped_column(Text, nullable=False)
+    actor: Mapped[str] = mapped_column(String(255), nullable=False)
+    prior_values: Mapped[dict[str, Any]] = mapped_column(
+        JSONB,
+        nullable=False,
+        default=dict,
+        server_default=text("'{}'::jsonb"),
+    )
+    result_values: Mapped[dict[str, Any]] = mapped_column(
+        JSONB,
+        nullable=False,
+        default=dict,
+        server_default=text("'{}'::jsonb"),
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=func.now(),
+    )
+
+    __table_args__ = (
+        CheckConstraint("action = 'republish'", name="only_republish_supported"),
+        CheckConstraint("length(btrim(reason)) > 0", name="reason_not_blank"),
+        CheckConstraint("length(btrim(actor)) > 0", name="actor_not_blank"),
+        CheckConstraint("jsonb_typeof(prior_values) = 'object'", name="prior_values_is_object"),
+        CheckConstraint("jsonb_typeof(result_values) = 'object'", name="result_values_is_object"),
+        Index("ix_program_publication_actions_program_created", "program_id", "created_at"),
+        Index("ix_program_publication_actions_review_case_created", "review_case_id", "created_at"),
+    )
+
+
+class OperatorOperation(Base):
+    """An append-only idempotency record linked to one operator audit action."""
+
+    __tablename__ = "operator_operations"
+
+    id: Mapped[UUID] = mapped_column(PostgreSQLUUID(as_uuid=True), primary_key=True, default=uuid4)
+    actor: Mapped[str] = mapped_column(String(255), nullable=False)
+    idempotency_key: Mapped[str] = mapped_column(String(255), nullable=False)
+    action: Mapped[str] = mapped_column(String(64), nullable=False)
+    target_type: Mapped[str] = mapped_column(String(64), nullable=False)
+    target_id: Mapped[UUID] = mapped_column(PostgreSQLUUID(as_uuid=True), nullable=False)
+    request_fingerprint: Mapped[str] = mapped_column(String(64), nullable=False)
+    result_payload: Mapped[dict[str, Any]] = mapped_column(
+        JSONB,
+        nullable=False,
+        default=dict,
+        server_default=text("'{}'::jsonb"),
+    )
+    review_action_id: Mapped[UUID | None] = mapped_column(
+        PostgreSQLUUID(as_uuid=True),
+        ForeignKey("review_actions.id", ondelete="RESTRICT"),
+    )
+    discovery_review_action_id: Mapped[UUID | None] = mapped_column(
+        PostgreSQLUUID(as_uuid=True),
+        ForeignKey("discovery_review_actions.id", ondelete="RESTRICT"),
+    )
+    program_publication_action_id: Mapped[UUID | None] = mapped_column(
+        PostgreSQLUUID(as_uuid=True),
+        ForeignKey("program_publication_actions.id", ondelete="RESTRICT"),
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=func.now(),
+    )
+
+    __table_args__ = (
+        CheckConstraint("length(btrim(actor)) > 0", name="actor_not_blank"),
+        CheckConstraint("length(btrim(idempotency_key)) > 0", name="idempotency_key_not_blank"),
+        CheckConstraint("length(btrim(action)) > 0", name="action_not_blank"),
+        CheckConstraint("length(btrim(target_type)) > 0", name="target_type_not_blank"),
+        CheckConstraint(
+            "request_fingerprint ~ '^[a-f0-9]{64}$'",
+            name="request_fingerprint_sha256",
+        ),
+        CheckConstraint("jsonb_typeof(result_payload) = 'object'", name="result_payload_is_object"),
+        CheckConstraint(
+            "((review_action_id IS NOT NULL)::integer + "
+            "(discovery_review_action_id IS NOT NULL)::integer + "
+            "(program_publication_action_id IS NOT NULL)::integer) = 1",
+            name="exactly_one_audit_action",
+        ),
+        UniqueConstraint("actor", "idempotency_key", name="uq_operator_operations_actor_key"),
+        Index("ix_operator_operations_target_created", "target_type", "target_id", "created_at"),
+    )
+
+
 class TelegramDiscoveryCursor(Base):
     __tablename__ = "telegram_discovery_cursors"
 

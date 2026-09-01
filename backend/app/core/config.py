@@ -2,7 +2,7 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Literal
 
-from pydantic import Field, field_validator
+from pydantic import Field, SecretStr, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -23,6 +23,8 @@ class Settings(BaseSettings):
     scheduler_retry_after_max_seconds: int = Field(default=60, ge=1, le=3_600)
     scheduler_run_lease_seconds: int = Field(default=900, ge=30, le=86_400)
     scheduler_journal_retention_days: int = Field(default=90, ge=1, le=3_650)
+    internal_api_token: SecretStr | None = None
+    internal_operator_id: str = Field(default="operator", min_length=1, max_length=255)
 
     @field_validator("database_url")
     @classmethod
@@ -30,6 +32,21 @@ class Settings(BaseSettings):
         if not value.startswith("postgresql+psycopg://"):
             raise ValueError("DATABASE_URL must use the postgresql+psycopg scheme")
         return value
+
+    @field_validator("internal_api_token")
+    @classmethod
+    def reject_blank_internal_api_token(cls, value: SecretStr | None) -> SecretStr | None:
+        if value is not None and not value.get_secret_value().strip():
+            raise ValueError("INTERNAL_API_TOKEN must not be blank when configured")
+        return value
+
+    @field_validator("internal_operator_id")
+    @classmethod
+    def normalize_internal_operator_id(cls, value: str) -> str:
+        normalized = value.strip()
+        if not normalized:
+            raise ValueError("INTERNAL_OPERATOR_ID must not be blank")
+        return normalized
 
 
 @lru_cache
