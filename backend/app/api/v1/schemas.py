@@ -32,6 +32,8 @@ class ApiErrorResponse(PublicSchema):
 
 
 class SourceRef(PublicSchema):
+    """Public identity and canonical homepage of a source."""
+
     id: UUID
     name: str
     canonical_url: str
@@ -42,8 +44,10 @@ class SourcePublic(SourceRef):
 
 
 class SourceLinkPublic(PublicSchema):
+    """Attribution for one public program page observed at a source."""
+
     source: SourceRef
-    source_url: str
+    source_url: str = Field(min_length=1, max_length=2048)
     observed_at: datetime
 
 
@@ -61,16 +65,21 @@ class FundingPublic(PublicSchema):
 
 
 class ProgramListItem(PublicSchema):
+    """Public catalog card; every field is safe for an unauthenticated reader."""
+
     id: UUID
     title: str
     publication_status: Literal["published"]
     published_at: datetime
+    updated_at: datetime
     deadline_on: date | None = None
     funding: FundingPublic | None = None
-    primary_source: SourceRef
+    primary_source: SourceLinkPublic
 
 
 class ProgramDetail(ProgramListItem):
+    """Public program card with its visible taxonomy and source attributions."""
+
     sources: list[SourceLinkPublic]
     geographies: list[TaxonomyOption]
     themes: list[TaxonomyOption]

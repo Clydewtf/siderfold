@@ -9,7 +9,7 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, FastAPI, Query, Request, status
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
-from sqlalchemy import asc, desc, exists, func, select
+from sqlalchemy import asc, desc, exists, func, literal_column, select
 from sqlalchemy.engine import Connection
 from sqlalchemy.exc import SQLAlchemyError
 
@@ -46,6 +46,7 @@ from app.domain.models import (
 
 class ProgramSort(StrEnum):
     PUBLISHED_AT = "published_at"
+    UPDATED_AT = "updated_at"
     DEADLINE = "deadline"
     TITLE = "title"
 
@@ -170,6 +171,7 @@ def _program_summary_select():
             Program.id.label("program_id"),
             Program.title,
             Program.published_at,
+            Program.updated_at,
             ProgramDeadline.deadline_on,
             ProgramFunding.value_kind.label("funding_kind"),
             ProgramFunding.currency_code.label("funding_currency"),
@@ -178,7 +180,9 @@ def _program_summary_select():
             ProgramFunding.max_amount.label("funding_max"),
             Source.id.label("primary_source_id"),
             Source.name.label("primary_source_name"),
-            Source.canonical_url.label("primary_source_url"),
+            Source.canonical_url.label("primary_source_canonical_url"),
+            ProgramSource.source_url.label("primary_source_program_url"),
+            ProgramSource.observed_at.label("primary_source_observed_at"),
         )
         .select_from(Program)
         .join(
@@ -189,6 +193,26 @@ def _program_summary_select():
         .join(Source, Source.id == Program.primary_source_id)
         .outerjoin(ProgramDeadline, ProgramDeadline.program_id == Program.id)
         .outerjoin(ProgramFunding, ProgramFunding.program_id == Program.id)
+    )
+
+
+def _title_search_vector():
+    """Return the same PostgreSQL expression used by the public search index."""
+
+    return func.to_tsvector(literal_column("'simple'"), Program.title)
+
+
+def _normalize_query(value: str | None, *, field: str = "q") -> str | None:
+    if value is None:
+        return None
+    normalized = " ".join(value.split())
+    if normalized:
+        return normalized
+    raise ReadApiError(
+        status_code=HTTP_422_STATUS,
+        code="invalid_request",
+        message=f"{field} must not be blank.",
+        details=(ApiErrorDetail(field=field, reason="must not be blank"),),
     )
 
 
@@ -204,8 +228,12 @@ def _program_filter_clauses(
 ) -> list[Any]:
     clauses: list[Any] = [Program.publication_status == PublicationStatus.PUBLISHED]
 
-    if query is not None and query.strip():
-        clauses.append(Program.title.ilike(f"%{query.strip()}%"))
+    if query is not None:
+        clauses.append(
+            _title_search_vector().op("@@")(
+                func.websearch_to_tsquery(literal_column("'simple'"), query)
+            )
+        )
 
     if source_ids:
         clauses.append(
@@ -279,6 +307,8 @@ def _program_order_by(sort: ProgramSort, order: SortOrder) -> tuple[Any, Any]:
         expression = ProgramDeadline.deadline_on
     elif sort is ProgramSort.TITLE:
         expression = func.lower(Program.title)
+    elif sort is ProgramSort.UPDATED_AT:
+        expression = Program.updated_at
     else:
         expression = Program.published_at
 
@@ -290,7 +320,15 @@ def _source_ref(row: Mapping[str, Any], prefix: str = "primary_source_") -> Sour
     return SourceRef(
         id=row[f"{prefix}id"],
         name=row[f"{prefix}name"],
-        canonical_url=row[f"{prefix}url"],
+        canonical_url=row[f"{prefix}canonical_url"],
+    )
+
+
+def _source_link(row: Mapping[str, Any], prefix: str = "primary_source_") -> SourceLinkPublic:
+    return SourceLinkPublic(
+        source=_source_ref(row, prefix),
+        source_url=row[f"{prefix}program_url"],
+        observed_at=row[f"{prefix}observed_at"],
     )
 
 
@@ -312,9 +350,10 @@ def _program_list_item(row: Mapping[str, Any]) -> ProgramListItem:
         title=row["title"],
         publication_status="published",
         published_at=row["published_at"],
+        updated_at=row["updated_at"],
         deadline_on=row["deadline_on"],
         funding=_funding(row),
-        primary_source=_source_ref(row),
+        primary_source=_source_link(row),
     )
 
 
@@ -341,30 +380,50 @@ def _validate_deadline_range(
     response_model=Page[ProgramListItem],
     responses=COMMON_ERROR_RESPONSES,
     summary="List published programs",
+    description=(
+        "Returns only published canonical programs. Repeated values within one filter "
+        "are alternatives; different filter groups are combined. An empty result is a "
+        "successful page, not an error."
+    ),
 )
 def list_programs(
     connection: Connection = Depends(get_database_connection),
     page: int = Query(default=1, ge=1, description="1-based page number."),
     page_size: int = Query(default=20, ge=1, le=100, description="Items per page, maximum 100."),
-    sort: ProgramSort = Query(default=ProgramSort.PUBLISHED_AT),
-    order: SortOrder = Query(default=SortOrder.DESC),
-    q: str | None = Query(default=None, min_length=1, max_length=200),
-    source_id: list[UUID] | None = Query(default=None, description="Repeat for multiple sources."),
-    theme: list[str] | None = Query(default=None, description="Repeat for multiple theme slugs."),
+    sort: ProgramSort = Query(
+        default=ProgramSort.PUBLISHED_AT,
+        description="published_at, updated_at, deadline, or title.",
+    ),
+    order: SortOrder = Query(default=SortOrder.DESC, description="asc or desc."),
+    q: str | None = Query(
+        default=None,
+        min_length=1,
+        max_length=200,
+        description="Case-insensitive title-term search. All supplied terms must match.",
+    ),
+    source_id: list[UUID] | None = Query(
+        default=None,
+        description="Repeat for alternatives; the program may be linked to any listed source.",
+    ),
+    theme: list[str] | None = Query(
+        default=None,
+        description="Repeat for alternatives among canonical theme slugs.",
+    ),
     geography: list[str] | None = Query(
         default=None,
-        description="Repeat for multiple geography slugs.",
+        description="Repeat for alternatives among canonical geography slugs.",
     ),
     funding_kind: list[FundingValueKind] | None = Query(
         default=None,
-        description="Repeat for multiple funding kinds.",
+        description="Repeat for alternatives among funding kinds.",
     ),
     deadline_from: date | None = Query(default=None),
     deadline_to: date | None = Query(default=None),
 ) -> Page[ProgramListItem]:
     _validate_deadline_range(deadline_from, deadline_to)
+    normalized_query = _normalize_query(q)
     clauses = _program_filter_clauses(
-        query=q,
+        query=normalized_query,
         source_ids=source_id,
         theme_slugs=theme,
         geography_slugs=geography,
@@ -397,6 +456,7 @@ def list_programs(
         },
     },
     summary="Get one published program",
+    description="Returns a public card only when its canonical publication status is published.",
 )
 def get_program(
     program_id: UUID,
@@ -472,6 +532,7 @@ def get_program(
     response_model=Page[SourcePublic],
     responses=COMMON_ERROR_RESPONSES,
     summary="List sources used by published programs",
+    description="Returns sources only when they are linked to at least one published program.",
 )
 def list_sources(
     connection: Connection = Depends(get_database_connection),
@@ -479,7 +540,12 @@ def list_sources(
     page_size: int = Query(default=20, ge=1, le=100, description="Items per page, maximum 100."),
     sort: SourceSort = Query(default=SourceSort.NAME),
     order: SortOrder = Query(default=SortOrder.ASC),
-    q: str | None = Query(default=None, min_length=1, max_length=200),
+    q: str | None = Query(
+        default=None,
+        min_length=1,
+        max_length=200,
+        description="Case-insensitive source-name substring search.",
+    ),
 ) -> Page[SourcePublic]:
     published_program_exists = exists(
         select(1)
@@ -491,8 +557,9 @@ def list_sources(
         )
     )
     clauses: list[Any] = [published_program_exists]
-    if q is not None and q.strip():
-        clauses.append(Source.name.ilike(f"%{q.strip()}%"))
+    normalized_query = _normalize_query(q)
+    if normalized_query is not None:
+        clauses.append(Source.name.ilike(f"%{normalized_query}%"))
 
     published_program_count = (
         select(func.count(ProgramSource.program_id))
@@ -529,6 +596,7 @@ def list_sources(
     response_model=FilterOptions,
     responses=COMMON_ERROR_RESPONSES,
     summary="List filter values available for published programs",
+    description="Returns global filter options calculated from all published programs.",
 )
 def get_filters(
     connection: Connection = Depends(get_database_connection),

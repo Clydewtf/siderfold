@@ -115,6 +115,7 @@ def insert_program_with_source(
                 publication_status=publication_status,
                 published_at=published_at,
                 publication_review_decision_id=provenance.review_decision_id,
+                updated_at=published_at,
             )
         )
     return identifier

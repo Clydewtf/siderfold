@@ -1,13 +1,13 @@
 from __future__ import annotations
 
 import json
-from datetime import date
+from datetime import date, timedelta
 from decimal import Decimal
 from uuid import UUID, uuid4
 
 import pytest
 from fastapi.testclient import TestClient
-from sqlalchemy import insert
+from sqlalchemy import insert, update
 from sqlalchemy.engine import Connection, Engine
 from sqlalchemy.exc import OperationalError
 
@@ -15,6 +15,7 @@ from app.api.v1.schemas import Page, ProgramDetail, ProgramListItem
 from app.domain.models import (
     FundingValueKind,
     Geography,
+    Program,
     ProgramDeadline,
     ProgramFunding,
     ProgramGeography,
@@ -175,6 +176,9 @@ def test_program_list_is_published_only_and_supports_pagination_and_filters(
     assert page.page_size == 1
     assert len(page.items) == 1
     assert page.items[0].title == "Published Alpha"
+    assert page.items[0].updated_at == PUBLISHED_AT
+    assert page.items[0].primary_source.source.id == ids["main_source_id"]
+    assert page.items[0].primary_source.source_url.endswith(str(ids["alpha_id"]))
 
     filtered = client.get(
         "/api/v1/programs",
@@ -191,6 +195,44 @@ def test_program_list_is_published_only_and_supports_pagination_and_filters(
     assert filtered.json()["items"][0]["id"] == str(ids["alpha_id"])
 
 
+def test_program_search_filter_and_empty_state_semantics_are_stable(
+    migrated_engine: Engine,
+) -> None:
+    with migrated_engine.begin() as connection:
+        ids = _seed_catalog(connection)
+        connection.execute(
+            update(Program)
+            .where(Program.id == ids["beta_id"])
+            .values(updated_at=PUBLISHED_AT + timedelta(days=1))
+        )
+
+    client = TestClient(create_app(engine=migrated_engine))
+    searched = client.get("/api/v1/programs", params={"q": "published alpha"})
+    alternatives = client.get(
+        "/api/v1/programs",
+        params=[("theme", "education"), ("theme", "missing"), ("sort", "updated_at")],
+    )
+    empty = client.get("/api/v1/programs", params={"theme": "missing"})
+    outside_page = client.get("/api/v1/programs", params={"page": 2, "page_size": 2})
+
+    assert searched.status_code == 200
+    assert [item["id"] for item in searched.json()["items"]] == [str(ids["alpha_id"])]
+    assert alternatives.status_code == 200
+    assert alternatives.json()["total"] == 1
+    assert alternatives.json()["items"][0]["id"] == str(ids["alpha_id"])
+    assert empty.json() == {"items": [], "page": 1, "page_size": 20, "total": 0}
+    assert outside_page.json() == {"items": [], "page": 2, "page_size": 2, "total": 2}
+
+    updated_order = client.get(
+        "/api/v1/programs",
+        params={"sort": "updated_at", "order": "desc"},
+    )
+    assert [item["id"] for item in updated_order.json()["items"]] == [
+        str(ids["beta_id"]),
+        str(ids["alpha_id"]),
+    ]
+
+
 def test_program_detail_has_only_public_fields_and_nested_catalog_data(
     migrated_engine: Engine,
 ) -> None:
@@ -204,6 +246,7 @@ def test_program_detail_has_only_public_fields_and_nested_catalog_data(
     detail = ProgramDetail.model_validate(response.json())
     assert detail.id == ids["alpha_id"]
     assert detail.publication_status == "published"
+    assert detail.updated_at == PUBLISHED_AT
     assert detail.sources[0].source.id == ids["main_source_id"]
     assert [item.model_dump() for item in detail.themes] == [
         {"slug": "education", "name": "Education"}
@@ -224,6 +267,9 @@ def test_program_detail_has_only_public_fields_and_nested_catalog_data(
         "input_fingerprint",
         "adapter_name",
         "warnings",
+        "external_content_uri",
+        "source_execution",
+        "responsible",
     ):
         assert internal_field not in response_text
 
@@ -268,6 +314,7 @@ def test_read_api_returns_stable_validation_not_found_and_database_errors(
         "/api/v1/programs",
         params={"deadline_from": "2026-12-01", "deadline_to": "2026-01-01"},
     )
+    blank_query = client.get("/api/v1/programs", params={"q": "   "})
     invalid_id = client.get("/api/v1/programs/not-a-uuid")
     draft = client.get(f"/api/v1/programs/{ids['draft_id']}")
     archived = client.get(f"/api/v1/programs/{ids['archived_id']}")
@@ -278,6 +325,12 @@ def test_read_api_returns_stable_validation_not_found_and_database_errors(
     assert invalid_range.status_code == 422
     assert invalid_range.json()["error"]["code"] == "invalid_request"
     assert invalid_range.json()["error"]["details"][0]["field"] == "deadline"
+    assert blank_query.status_code == 422
+    assert blank_query.json()["error"] == {
+        "code": "invalid_request",
+        "message": "q must not be blank.",
+        "details": [{"field": "q", "reason": "must not be blank"}],
+    }
     assert invalid_id.status_code == 422
     assert invalid_id.json()["error"]["code"] == "invalid_request"
     assert draft.status_code == archived.status_code == 404
@@ -340,6 +393,13 @@ def test_openapi_documents_versioned_public_contract_without_internal_fields(
         "deadline_from",
         "deadline_to",
     } <= program_parameters
+    sort_parameter = next(
+        parameter
+        for parameter in paths["/api/v1/programs"]["get"]["parameters"]
+        if parameter["name"] == "sort"
+    )
+    sort_schema_name = sort_parameter["schema"]["$ref"].rsplit("/", maxsplit=1)[-1]
+    assert "updated_at" in spec["components"]["schemas"][sort_schema_name]["enum"]
     source_parameters = {
         parameter["name"]
         for parameter in paths["/api/v1/sources"]["get"]["parameters"]
@@ -387,5 +447,12 @@ def test_openapi_documents_versioned_public_contract_without_internal_fields(
         "warnings",
         "input_fingerprint",
         "adapter_name",
+        "external_content_uri",
+        "source_execution",
+        "responsible",
     ):
         assert internal_name not in public_schema_text
+
+    program_list_properties = components["ProgramListItem"]["properties"]
+    assert {"updated_at", "primary_source"} <= set(program_list_properties)
+    assert program_list_properties["primary_source"]["$ref"].endswith("/SourceLinkPublic")

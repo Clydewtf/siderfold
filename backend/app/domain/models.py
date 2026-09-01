@@ -327,6 +327,17 @@ class Program(Base):
             "publication_status",
             "published_at",
         ),
+        Index(
+            "ix_programs_publication_status_updated_at_id",
+            "publication_status",
+            "updated_at",
+            "id",
+        ),
+        Index(
+            "ix_programs_title_search",
+            func.to_tsvector(text("'simple'"), title),
+            postgresql_using="gin",
+        ),
     )
 
 
@@ -349,6 +360,7 @@ class ProgramSource(Base):
     __table_args__ = (
         CheckConstraint("length(btrim(source_url)) > 0", name="source_url_not_blank"),
         Index("ix_program_sources_source_id", "source_id"),
+        Index("ix_program_sources_source_id_program_id", "source_id", "program_id"),
     )
 
 
@@ -362,7 +374,10 @@ class ProgramDeadline(Base):
     )
     deadline_on: Mapped[date] = mapped_column(Date, nullable=False)
 
-    __table_args__ = (Index("ix_program_deadlines_deadline_on", "deadline_on"),)
+    __table_args__ = (
+        Index("ix_program_deadlines_deadline_on", "deadline_on"),
+        Index("ix_program_deadlines_deadline_on_program_id", "deadline_on", "program_id"),
+    )
 
 
 class Geography(Base):
@@ -393,7 +408,14 @@ class ProgramGeography(Base):
         primary_key=True,
     )
 
-    __table_args__ = (Index("ix_program_geographies_geography_id", "geography_id"),)
+    __table_args__ = (
+        Index("ix_program_geographies_geography_id", "geography_id"),
+        Index(
+            "ix_program_geographies_geography_id_program_id",
+            "geography_id",
+            "program_id",
+        ),
+    )
 
 
 class Theme(Base):
@@ -424,7 +446,10 @@ class ProgramTheme(Base):
         primary_key=True,
     )
 
-    __table_args__ = (Index("ix_program_themes_theme_id", "theme_id"),)
+    __table_args__ = (
+        Index("ix_program_themes_theme_id", "theme_id"),
+        Index("ix_program_themes_theme_id_program_id", "theme_id", "program_id"),
+    )
 
 
 class ProgramFunding(Base):
@@ -468,6 +493,7 @@ class ProgramFunding(Base):
             "value_kind",
             "currency_code",
         ),
+        Index("ix_program_funding_value_kind_program_id", "value_kind", "program_id"),
     )
 
 

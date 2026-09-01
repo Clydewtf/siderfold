@@ -55,6 +55,22 @@ OPERATIONAL_TABLES = {
     "source_execution_runs",
 }
 
+PUBLIC_CATALOG_INDEXES = {
+    "programs": {
+        "ix_programs_publication_status_updated_at_id",
+        "ix_programs_title_search",
+    },
+    "program_sources": {"ix_program_sources_source_id_program_id"},
+    "program_deadlines": {"ix_program_deadlines_deadline_on_program_id"},
+    "program_geographies": {"ix_program_geographies_geography_id_program_id"},
+    "program_themes": {"ix_program_themes_theme_id_program_id"},
+    "program_funding": {"ix_program_funding_value_kind_program_id"},
+}
+
+
+def _index_names(engine: object, table_name: str) -> set[str]:
+    return {index["name"] for index in inspect(engine).get_indexes(table_name)}
+
 
 @pytest.mark.postgres
 def test_provenance_migration_applies_to_a_clean_database_and_rolls_back(
@@ -74,6 +90,17 @@ def test_provenance_migration_applies_to_a_clean_database_and_rolls_back(
             | DISCOVERY_REVIEW_TABLES
             | OPERATIONAL_TABLES
         ).issubset(inspect(engine).get_table_names())
+        for table_name, expected_indexes in PUBLIC_CATALOG_INDEXES.items():
+            assert expected_indexes.issubset(_index_names(engine, table_name))
+        with engine.connect() as connection:
+            assert connection.scalar(text("SELECT version_num FROM alembic_version")) == (
+                "0009_public_catalog_indexes"
+            )
+
+        command.downgrade(alembic_config, "0008_c5_operations")
+
+        for table_name, expected_indexes in PUBLIC_CATALOG_INDEXES.items():
+            assert expected_indexes.isdisjoint(_index_names(engine, table_name))
         with engine.connect() as connection:
             assert connection.scalar(text("SELECT version_num FROM alembic_version")) == (
                 "0008_c5_operations"
