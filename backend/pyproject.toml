@@ -22,6 +22,7 @@ dependencies = [
 [project.scripts]
 siderfold-import = "app.import_bridge.cli:main"
 siderfold-sources = "app.sources.cli:main"
+siderfold-analytics = "app.analytics.cli:main"
 
 [project.optional-dependencies]
 test = [

@@ -700,6 +700,84 @@ class SourceExecutionAttempt(Base):
     )
 
 
+class AnalyticsSnapshot(Base):
+    """An immutable calculation input and result for catalog quality metrics."""
+
+    __tablename__ = "analytics_snapshots"
+
+    id: Mapped[UUID] = mapped_column(PostgreSQLUUID(as_uuid=True), primary_key=True, default=uuid4)
+    scope: Mapped[str] = mapped_column(String(64), nullable=False)
+    calculation_version: Mapped[str] = mapped_column(String(100), nullable=False)
+    as_of: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    freshness_window_days: Mapped[int] = mapped_column(Integer, nullable=False)
+    registry_fingerprint: Mapped[str] = mapped_column(String(64), nullable=False)
+    input_fingerprint: Mapped[str] = mapped_column(String(64), nullable=False)
+    source_scope: Mapped[dict[str, Any]] = mapped_column(
+        JSONB,
+        nullable=False,
+        default=dict,
+        server_default=text("'{}'::jsonb"),
+    )
+    input_manifest: Mapped[dict[str, Any]] = mapped_column(
+        JSONB,
+        nullable=False,
+        default=dict,
+        server_default=text("'{}'::jsonb"),
+    )
+    metrics: Mapped[dict[str, Any]] = mapped_column(
+        JSONB,
+        nullable=False,
+        default=dict,
+        server_default=text("'{}'::jsonb"),
+    )
+    limitations: Mapped[list[str]] = mapped_column(
+        JSONB,
+        nullable=False,
+        default=list,
+        server_default=text("'[]'::jsonb"),
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=func.now(),
+    )
+
+    __table_args__ = (
+        CheckConstraint("length(btrim(scope)) > 0", name="scope_not_blank"),
+        CheckConstraint(
+            "length(btrim(calculation_version)) > 0",
+            name="calculation_version_not_blank",
+        ),
+        CheckConstraint(
+            "freshness_window_days >= 1 AND freshness_window_days <= 3650",
+            name="freshness_window_days_in_range",
+        ),
+        CheckConstraint(
+            "registry_fingerprint ~ '^[a-f0-9]{64}$'",
+            name="registry_fingerprint_sha256",
+        ),
+        CheckConstraint(
+            "input_fingerprint ~ '^[a-f0-9]{64}$'",
+            name="input_fingerprint_sha256",
+        ),
+        CheckConstraint(
+            "jsonb_typeof(source_scope) = 'object'",
+            name="source_scope_is_object",
+        ),
+        CheckConstraint(
+            "jsonb_typeof(input_manifest) = 'object'",
+            name="input_manifest_is_object",
+        ),
+        CheckConstraint("jsonb_typeof(metrics) = 'object'", name="metrics_is_object"),
+        CheckConstraint(
+            "jsonb_typeof(limitations) = 'array'",
+            name="limitations_is_array",
+        ),
+        UniqueConstraint("input_fingerprint", name="uq_analytics_snapshots_input_fingerprint"),
+        Index("ix_analytics_snapshots_scope_as_of_id", "scope", "as_of", "id"),
+    )
+
+
 class RawCapture(Base):
     __tablename__ = "raw_captures"
 

@@ -270,6 +270,9 @@ def test_program_detail_has_only_public_fields_and_nested_catalog_data(
         "external_content_uri",
         "source_execution",
         "responsible",
+        "analytics_snapshot",
+        "quality_metric",
+        "source_scope",
     ):
         assert internal_field not in response_text
 

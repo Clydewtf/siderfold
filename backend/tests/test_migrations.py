@@ -55,6 +55,8 @@ OPERATIONAL_TABLES = {
     "source_execution_runs",
 }
 
+ANALYTICS_TABLES = {"analytics_snapshots"}
+
 PUBLIC_CATALOG_INDEXES = {
     "programs": {
         "ix_programs_publication_status_updated_at_id",
@@ -65,6 +67,10 @@ PUBLIC_CATALOG_INDEXES = {
     "program_geographies": {"ix_program_geographies_geography_id_program_id"},
     "program_themes": {"ix_program_themes_theme_id_program_id"},
     "program_funding": {"ix_program_funding_value_kind_program_id"},
+}
+
+ANALYTICS_INDEXES = {
+    "analytics_snapshots": {"ix_analytics_snapshots_scope_as_of_id"},
 }
 
 
@@ -89,9 +95,20 @@ def test_provenance_migration_applies_to_a_clean_database_and_rolls_back(
             | REVIEW_QUEUE_TABLES
             | DISCOVERY_REVIEW_TABLES
             | OPERATIONAL_TABLES
+            | ANALYTICS_TABLES
         ).issubset(inspect(engine).get_table_names())
         for table_name, expected_indexes in PUBLIC_CATALOG_INDEXES.items():
             assert expected_indexes.issubset(_index_names(engine, table_name))
+        for table_name, expected_indexes in ANALYTICS_INDEXES.items():
+            assert expected_indexes.issubset(_index_names(engine, table_name))
+        with engine.connect() as connection:
+            assert connection.scalar(text("SELECT version_num FROM alembic_version")) == (
+                "0010_analytics_snapshots"
+            )
+
+        command.downgrade(alembic_config, "0009_public_catalog_indexes")
+
+        assert ANALYTICS_TABLES.isdisjoint(inspect(engine).get_table_names())
         with engine.connect() as connection:
             assert connection.scalar(text("SELECT version_num FROM alembic_version")) == (
                 "0009_public_catalog_indexes"
