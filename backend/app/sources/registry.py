@@ -138,6 +138,7 @@ class SourceLimits(BaseModel):
     max_total_bytes: int = Field(default=20_000_000, ge=1, le=500_000_000)
     max_records: int = Field(default=10_000, ge=1, le=1_000_000)
     timeout_seconds: int = Field(default=30, ge=1, le=300)
+    max_run_seconds: int = Field(default=900, ge=1, le=3_600)
     min_run_interval_seconds: int = Field(default=60, ge=0, le=86_400)
 
 

@@ -32,6 +32,7 @@ from app.sources.contract import (
     AdapterContext,
     AdapterIssue,
     AdapterReport,
+    AdapterRunTimeoutError,
     AdapterRunSummary,
     AdapterStage,
     DiscoveredResource,
@@ -47,7 +48,7 @@ from app.sources.registry import UrlAllowlistError
 
 
 POTANIN_ADAPTER_NAME = "potanin-competitions"
-POTANIN_ADAPTER_VERSION = "1.1.0"
+POTANIN_ADAPTER_VERSION = "1.3.0"
 POTANIN_SITEMAP_URL = "https://fondpotanin.ru/sitemap-iblock-competitions.xml"
 _SITEMAP_RESOURCE_KEY = "potanin:sitemap:competitions"
 _PARSER_ISSUES_KEY = "_parser_issues"
@@ -206,6 +207,26 @@ def _artifact_entries(payload: dict[str, Any]) -> list[dict[str, Any]]:
     return [entry for entry in artifacts if isinstance(entry, dict)]
 
 
+def _append_result_funding_observations(
+    payload: dict[str, Any],
+    *,
+    artifact: dict[str, Any],
+    inspection: dict[str, Any],
+) -> None:
+    if artifact.get("kind") != "result":
+        return
+    funding = payload.get("funding")
+    observations = inspection.get("funding_observations")
+    if not isinstance(funding, dict) or not isinstance(observations, list):
+        return
+    amounts = funding.setdefault("amounts", [])
+    if not isinstance(amounts, list):
+        return
+    for observation in observations:
+        if isinstance(observation, dict) and observation not in amounts:
+            amounts.append(observation)
+
+
 def _nested_document_urls(fetched: FetchResult) -> list[str]:
     """Discover one extra document layer from an already-captured result page."""
 
@@ -240,7 +261,7 @@ class PotaninCompetitionsAdapter:
     version = POTANIN_ADAPTER_VERSION
 
     def __init__(self, *, fetcher: ResponseFetcher | None = None) -> None:
-        self._fetcher = fetcher or UrllibResponseFetcher()
+        self._fetcher = fetcher
         self._artifact_aliases: dict[str, FetchResult] = {}
         self._artifact_parent_urls: dict[str, set[str]] = {}
 
@@ -250,9 +271,12 @@ class PotaninCompetitionsAdapter:
         context: AdapterContext,
     ) -> FetchResult:
         requested_url = context.require_allowed_url(resource.url)
-        response: HttpResponse = self._fetcher.get(
+        fetcher = self._fetcher or UrllibResponseFetcher(
+            redirect_validator=context.require_allowed_url,
+        )
+        response: HttpResponse = fetcher.get(
             requested_url,
-            timeout_seconds=context.limits.timeout_seconds,
+            timeout_seconds=context.request_timeout_seconds(),
             max_response_bytes=context.limits.max_response_bytes,
         )
         return fetch_result_from_response(resource, response, context)
@@ -304,6 +328,8 @@ class PotaninCompetitionsAdapter:
         artifact_urls: set[str] = set()
         artifact_fetched = 0
         deferred_urls: set[str] = set()
+        card_total = len(sitemap.entries)
+        context.report_progress(f"каталог: найдено карточек {card_total}")
 
         for index, entry in enumerate(sitemap.entries, 1):
             resource = _card_resource(
@@ -327,7 +353,23 @@ class PotaninCompetitionsAdapter:
                 )
                 break
             try:
+                context.report_progress(
+                    f"каталог: загружается карточка {index}/{card_total}"
+                )
+                context.require_time_remaining()
+                request_count += 1
                 fetched = self.fetch(resource, context)
+            except AdapterRunTimeoutError as error:
+                issues.append(
+                    AdapterIssue(
+                        stage=AdapterStage.DISCOVER,
+                        severity="error",
+                        code="run_time_limit_reached",
+                        message=str(error),
+                        resource_key=resource.external_key,
+                    )
+                )
+                break
             except UrlAllowlistError as error:
                 issues.append(
                     AdapterIssue(
@@ -350,7 +392,6 @@ class PotaninCompetitionsAdapter:
                     )
                 )
                 continue
-            request_count += 1
             response_bytes += len(fetched.content)
             if response_bytes > context.limits.max_total_bytes:
                 issues.append(
@@ -396,10 +437,12 @@ class PotaninCompetitionsAdapter:
                 )
 
         queued_urls: deque[str] = deque(pending)
+        artifact_position = 0
         while queued_urls:
             url = queued_urls.popleft()
             pending_artifact = pending[url]
             resource = _artifact_resource(pending_artifact)
+            artifact_position += 1
             if request_count >= context.limits.max_requests:
                 deferred_urls.add(url)
                 deferred_urls.update(queued_urls)
@@ -417,7 +460,29 @@ class PotaninCompetitionsAdapter:
                 )
                 break
             try:
+                context.report_progress(
+                    "материалы: загружается "
+                    f"{artifact_position}/{artifact_position + len(queued_urls)}"
+                )
+                context.require_time_remaining()
+                request_count += 1
                 fetched = self.fetch(resource, context)
+            except AdapterRunTimeoutError as error:
+                deferred_urls.add(url)
+                deferred_urls.update(queued_urls)
+                issues.append(
+                    AdapterIssue(
+                        stage=AdapterStage.DISCOVER,
+                        severity="warning",
+                        code="artifact_time_limit_reached",
+                        message=(
+                            f"{error}; remaining linked artifacts were retained as "
+                            "references for a later run."
+                        ),
+                        resource_key=resource.external_key,
+                    )
+                )
+                break
             except Exception as error:
                 deferred_urls.add(url)
                 issues.append(
@@ -429,9 +494,7 @@ class PotaninCompetitionsAdapter:
                         resource_key=resource.external_key,
                     )
                 )
-                request_count += 1
                 continue
-            request_count += 1
             artifact_fetched += 1
             response_bytes += len(fetched.content)
             if response_bytes > context.limits.max_total_bytes:
@@ -487,6 +550,9 @@ class PotaninCompetitionsAdapter:
                     queued_urls.append(nested_url)
                 nested.parent_record_urls.update(pending_artifact.parent_record_urls)
 
+        context.report_progress(
+            f"сбор завершён: запросов {request_count}; материалов получено {artifact_fetched}"
+        )
         return DiscoveryResult(
             resources=(),
             captures=tuple(captures),
@@ -654,6 +720,11 @@ class PotaninCompetitionsAdapter:
                         "inspection": inspection.payload,
                     }
                 )
+                _append_result_funding_observations(
+                    payload,
+                    artifact=enriched_artifact,
+                    inspection=inspection.payload,
+                )
                 for issue in inspection.issues:
                     warnings.append(f"{issue.code}: {issue.message}")
                 captured_count += 1
@@ -687,6 +758,11 @@ class PotaninCompetitionsAdapter:
                         },
                         "inspection": inspection.payload,
                     }
+                    _append_result_funding_observations(
+                        payload,
+                        artifact=nested_artifact,
+                        inspection=inspection.payload,
+                    )
                     for issue in inspection.issues:
                         warnings.append(f"{issue.code}: {issue.message}")
                     enriched_artifacts.append(nested_artifact)

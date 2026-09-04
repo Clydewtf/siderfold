@@ -39,7 +39,7 @@ describe('format helpers', () => {
 
   it('formats deadlines and missing deadlines', () => {
     expect(formatDeadline('2026-07-20')).toBe('20 июля 2026');
-    expect(formatDeadline(null)).toBe('Без дедлайна');
+    expect(formatDeadline(null)).toBe('Срок не указан');
   });
 
   it('accepts only http and https external URLs', () => {

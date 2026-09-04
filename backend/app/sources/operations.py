@@ -12,7 +12,7 @@ from datetime import datetime, timedelta, timezone
 from hashlib import sha256
 from pathlib import Path
 import re
-from time import sleep
+from time import monotonic, sleep
 from typing import Any
 from uuid import UUID, uuid4
 
@@ -601,10 +601,12 @@ def run_managed_source(
     scheduled_for: datetime | None = None,
     now: datetime | None = None,
     sleeper: Callable[[float], None] = sleep,
+    progress_reporter: Callable[[str], None] | None = None,
 ) -> SourceExecutionResult:
     """Run one source under an advisory lock and append its operation journal."""
 
     resolved_now = _utc(now)
+    execution_clock_started_at = monotonic()
     resolved_registry_path = (
         settings.source_registry_path if registry_path is None else registry_path
     )
@@ -718,17 +720,22 @@ def run_managed_source(
             last_finished_at = resolved_now
             attempts_completed = 0
             for attempt_number in range(1, settings.scheduler_max_attempts + 1):
-                attempt_started_at = _utc()
+                attempt_started_at = resolved_now + timedelta(
+                    seconds=monotonic() - execution_clock_started_at
+                )
                 try:
                     report = run_registered_source(
                         source_key,
                         registry_path=resolved_registry_path,
                         engine=engine,
                         raw_capture_dir=settings.raw_capture_dir,
+                        progress_reporter=progress_reporter,
                     )
                 except Exception as error:
                     report = _failure_report(definition, error)
-                attempt_finished_at = _utc()
+                attempt_finished_at = resolved_now + timedelta(
+                    seconds=monotonic() - execution_clock_started_at
+                )
                 success = _is_success(report)
                 retry_class = _retry_class(report)
                 should_retry = (

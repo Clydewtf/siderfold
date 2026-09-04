@@ -26,7 +26,9 @@ from app.sources.adapters.potanin.adapter import (
 from app.sources.contract import AdapterContext, DiscoveredResource, FetchResult
 from app.sources.adapters.potanin.http import HttpResponse
 from app.sources.adapters.potanin.normalization import (
+    extract_application_dates,
     extract_per_program_funding,
+    extract_timeline_events,
     normalize_competition_url,
 )
 from app.sources.adapters.potanin.parsing import (
@@ -187,6 +189,156 @@ def test_competition_page_maps_source_fields_without_following_external_links() 
         "social-sport",
     }
     assert payload["taxonomy"]["geographies"] == [{"slug": "russia", "name": "Россия"}]
+
+
+def test_sectioned_competition_page_preserves_schedule_contacts_and_scoped_funding() -> None:
+    source_url = "https://fondpotanin.ru/competitions/sectioned-quality-reference/"
+    parsed = parse_competition_page(
+        _fixture_bytes("sectioned-competition.html"),
+        source_url=source_url,
+        sitemap_last_modified_at=None,
+    )
+
+    assert parsed.issues == ()
+    assert parsed.record_payload["deadline_on"] == "2023-09-20"
+    assert parsed.record_payload["funding"] == {
+        "value_kind": "maximum",
+        "currency_code": "RUB",
+        "max_amount": "15000000",
+    }
+    payload = parsed.record_payload["payload"]
+    assert payload["source_published_on"] == "2023-08-01"
+    assert payload["summary"] == (
+        "Поддержка российских организаций, которые систематизируют опыт "
+        "социальной поддержки."
+    )
+    assert payload["eligibility"]["access_mode"] == "invitation_only"
+    assert payload["taxonomy"]["geographies"] == [{"slug": "russia", "name": "Россия"}]
+    assert {item["slug"] for item in payload["taxonomy"]["themes"]} >= {
+        "social-support"
+    }
+    amounts_by_scope = {item["scope"]: item for item in payload["funding"]["amounts"]}
+    assert amounts_by_scope["announced_total"]["value"] == {
+        "value_kind": "exact",
+        "currency_code": "RUB",
+        "exact_amount": "150000000",
+    }
+    assert amounts_by_scope["per_recipient"]["value"] == {
+        "value_kind": "maximum",
+        "currency_code": "RUB",
+        "max_amount": "15000000",
+    }
+    assert [event["kind"] for event in payload["timeline"]] == [
+        "application",
+        "evaluation",
+        "results",
+        "contracting",
+    ]
+    assert payload["timeline"][0]["start_on"] == "2023-09-01"
+    assert payload["timeline"][0]["end_on"] == "2023-09-20"
+    assert payload["contacts"] == [
+        {
+            "name": "Юлия Лизичева",
+            "role": "Директор программ",
+            "email": "wecare@fondpotanin.ru",
+            "phone": "+74951493018",
+            "evidence": "Юлия Лизичева Директор программ +7 (495) 149-30-18 wecare@fondpotanin.ru",
+        }
+    ]
+    artifacts = {item["url"]: item for item in payload["artifacts"]}
+    assert artifacts["https://fondpotanin.ru/upload/documents/winners.pdf"]["kind"] == "result"
+    assert artifacts["https://fondpotanin.ru/upload/documents/rules.pdf"]["kind"] == "document"
+    assert artifacts["https://fondpotanin.ru/upload/documents/program.pdf"]["section_title"] == "Документы программы"
+    assert all("Новости" != block["heading"] for block in payload["content_inventory"]["blocks"])
+
+
+@pytest.mark.parametrize(
+    ("texts", "expected_start", "expected_end"),
+    (
+        (
+            (
+                "Прием заявок на конкурс 15 октября 2025 года – 17 ноября 2025 года",
+                "Экспертиза заявок первого этапа конкурса 18 ноября 2025 года – 16 декабря 2025 года",
+                "Экспертиза заявок второго этапа конкурса 26 января 2026 года – 10 февраля 2026 года",
+            ),
+            "2025-10-15",
+            "2025-11-17",
+        ),
+        (
+            (
+                "Прием заявок: 27 июля – 15 сентября 2026 г. "
+                "Экспертиза заявок: 16 сентября – 6 октября 2026 г. "
+                "Объявление результатов: не позднее 22 октября 2026 г. "
+                "Заключение договоров: 22 октября – 25 ноября 2026 г.",
+            ),
+            "2026-07-27",
+            "2026-09-15",
+        ),
+        (
+            (
+                "Прием заявок: с 13 сентября по 31 октября 2023 года "
+                "Экспертиза заявок: до 30 ноября 2023 года "
+                "Заключение договоров с победителями: с 10 января по 10 февраля 2024 года",
+            ),
+            "2023-09-13",
+            "2023-10-31",
+        ),
+        (
+            (
+                "Прием заявок на конкурс: 23 декабря 2025 года - 16 марта 2026 года "
+                "Экспертиза заявок: 17 марта 2026 года – 11 июня 2026 г. "
+                "Заключение договоров с победителями: 18 июня 2026 года - 17 августа 2026 года",
+            ),
+            "2025-12-23",
+            "2026-03-16",
+        ),
+    ),
+    ids=("staged-evaluation", "compound-schedule", "historic-schedule", "cross-year-schedule"),
+)
+def test_schedule_parser_does_not_treat_evaluation_as_an_application_window(
+    texts: tuple[str, ...],
+    expected_start: str,
+    expected_end: str,
+) -> None:
+    events = extract_timeline_events(texts)
+    application = extract_application_dates(events)
+
+    assert application.error is None
+    assert application.warning is None
+    assert application.start_on is not None
+    assert application.end_on is not None
+    assert application.start_on.isoformat() == expected_start
+    assert application.end_on.isoformat() == expected_end
+    assert [event.kind for event in events].count("application") == 1
+    assert any(event.kind == "evaluation" for event in events)
+
+
+def test_multi_cycle_schedule_preserves_every_application_window_without_a_fake_deadline() -> None:
+    source_url = "https://fondpotanin.ru/competitions/quality-reference-multiple-cycles/"
+    parsed = parse_competition_page(
+        _fixture_bytes("multi-cycle-schedule.html"),
+        source_url=source_url,
+        sitemap_last_modified_at=None,
+    )
+
+    assert parsed.issues == ()
+    assert parsed.record_payload["deadline_on"] is None
+    assert parsed.record_payload["warnings"] == ["multiple_application_windows"]
+    payload = parsed.record_payload["payload"]
+    assert payload["application"]["start_on"] is None
+    assert payload["application"]["end_on"] is None
+    assert payload["application"]["year_context"] == {
+        "year": 2026,
+        "evidence": "В течение 2026 года будут проведены четыре цикла конкурса с подведением итогов после каждого из них.",
+    }
+    application_events = [event for event in payload["timeline"] if event["kind"] == "application"]
+    assert [(event["start_on"], event["end_on"]) for event in application_events] == [
+        ("2026-01-30", "2026-03-02"),
+        ("2026-03-16", "2026-04-16"),
+        ("2026-05-18", "2026-06-18"),
+        ("2026-09-01", "2026-10-01"),
+    ]
+    assert all("цикл" in event["label"].casefold() for event in application_events)
 
 
 def test_page_normalizes_range_and_ambiguous_per_program_funding_without_guessing() -> None:
@@ -363,6 +515,32 @@ def test_duplicate_normalized_sitemap_url_stops_before_any_card_fetch() -> None:
     assert fetcher.calls == [POTANIN_SITEMAP_URL]
 
 
+def test_failed_card_fetch_consumes_the_request_budget() -> None:
+    adapter, fetcher = _adapter_with_catalog()
+    del fetcher.responses[OPEN_URL]
+    definition = _definition().model_copy(
+        update={
+            "limits": _definition().limits.model_copy(update={"max_requests": 2})
+        }
+    )
+
+    execution = execute_adapter(
+        definition,
+        adapter,
+        dry_run=True,
+        project_root=BACKEND_ROOT,
+        started_at=FIXTURE_CAPTURED_AT,
+    )
+
+    assert execution.package is None
+    assert execution.report.status == "failed"
+    assert fetcher.calls == [POTANIN_SITEMAP_URL, OPEN_URL]
+    assert {issue.code for issue in execution.report.issues} >= {
+        "competition_card_fetch_failed",
+        "card_request_limit_reached",
+    }
+
+
 def test_fixture_dry_run_has_complete_capture_trace_and_quality_metrics() -> None:
     adapter, fetcher = _adapter_with_catalog()
 
@@ -422,6 +600,26 @@ def test_fixture_dry_run_has_complete_capture_trace_and_quality_metrics() -> Non
         ARCHIVE_RULES_URL,
         WINNERS_URL,
     ]
+
+
+def test_fixture_dry_run_reports_catalog_and_artifact_progress() -> None:
+    adapter, _fetcher = _adapter_with_catalog()
+    progress: list[str] = []
+
+    execution = execute_adapter(
+        _definition(),
+        adapter,
+        dry_run=True,
+        project_root=BACKEND_ROOT,
+        started_at=FIXTURE_CAPTURED_AT,
+        progress_reporter=progress.append,
+    )
+
+    assert execution.report.status == "completed"
+    assert "каталог: найдено карточек 2" in progress
+    assert "каталог: загружается карточка 1/2" in progress
+    assert any(item.startswith("материалы: загружается 1/") for item in progress)
+    assert progress[-1].startswith("сбор завершён:")
 
 
 def test_linked_artifacts_are_captured_and_attached_to_their_candidate() -> None:

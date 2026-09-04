@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Callable
 import os
 import tempfile
 from dataclasses import dataclass
@@ -8,6 +9,7 @@ from hashlib import sha256
 from pathlib import Path
 from typing import Mapping, Protocol
 from urllib.error import HTTPError, URLError
+from urllib.parse import quote, urlsplit, urlunsplit
 from urllib.request import HTTPRedirectHandler, Request, build_opener
 
 from app.sources.contract import AdapterContext, DiscoveredResource, FetchResult
@@ -20,6 +22,21 @@ class SourceFetchError(RuntimeError):
     """A bounded HTTP request could not produce one usable source response."""
 
 
+def encode_request_url(url: str) -> str:
+    """Encode non-ASCII path and query characters for urllib transport only."""
+
+    parsed = urlsplit(url)
+    return urlunsplit(
+        (
+            parsed.scheme,
+            parsed.netloc,
+            quote(parsed.path, safe="/%:@-._~!$&'()*+,;=" + "%"),
+            quote(parsed.query, safe="%=&/:?@-._~!$'()*+,;"),
+            "",
+        )
+    )
+
+
 def _retry_after_seconds(headers: object) -> int | None:
     getter = getattr(headers, "get", None)
     value = getter("Retry-After") if callable(getter) else None
@@ -28,18 +45,25 @@ def _retry_after_seconds(headers: object) -> int | None:
     return int(value.strip())
 
 
-class _RejectRedirects(HTTPRedirectHandler):
-    """Keep a request on its originally allowlisted URL.
+class _ValidatedRedirects(HTTPRedirectHandler):
+    """Follow a redirect only after its destination passes the source allowlist."""
 
-    urllib follows redirects by default, which could make a request to an
-    unapproved host before the adapter gets a chance to inspect final_url.
-    The Potanin adapter uses canonical sitemap and card URLs, so failing
-    closed is preferable to following even a same-origin redirect implicitly.
-    """
+    def __init__(self, validator: Callable[[str], str] | None) -> None:
+        super().__init__()
+        self._validator = validator
 
     def redirect_request(self, request, fp, code, message, headers, newurl):  # type: ignore[no-untyped-def]
-        del request, fp, message, headers
-        raise SourceFetchError(f"redirect response {code} to {newurl} is not allowed")
+        if self._validator is None:
+            raise SourceFetchError(f"redirect response {code} to {newurl} is not allowed")
+        validated_url = self._validator(newurl)
+        return super().redirect_request(
+            request,
+            fp,
+            code,
+            message,
+            headers,
+            validated_url,
+        )
 
 
 @dataclass(frozen=True)
@@ -66,6 +90,9 @@ class ResponseFetcher(Protocol):
 class UrllibResponseFetcher:
     """Small standard-library transport with a strict response-size cap."""
 
+    def __init__(self, *, redirect_validator: Callable[[str], str] | None = None) -> None:
+        self._redirect_validator = redirect_validator
+
     def get(
         self,
         url: str,
@@ -74,7 +101,7 @@ class UrllibResponseFetcher:
         max_response_bytes: int,
     ) -> HttpResponse:
         request = Request(
-            url,
+            encode_request_url(url),
             headers={
                 "Accept": "application/xml,text/xml,text/html;q=0.9,*/*;q=0.1",
                 "Accept-Language": "ru",
@@ -82,7 +109,7 @@ class UrllibResponseFetcher:
             },
         )
         try:
-            with build_opener(_RejectRedirects()).open(
+            with build_opener(_ValidatedRedirects(self._redirect_validator)).open(
                 request, timeout=timeout_seconds
             ) as response:
                 content = response.read(max_response_bytes + 1)

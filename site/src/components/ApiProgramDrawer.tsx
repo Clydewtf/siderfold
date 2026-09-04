@@ -1,7 +1,7 @@
 import { ExternalLink, X } from 'lucide-react';
 import { useEffect, useRef, type KeyboardEvent } from 'react';
-import { formatDeadline, isValidExternalUrl } from '../lib/format';
-import type { PublicProgram } from '../data-access/catalogMapper';
+import { formatDateRange, formatDeadline, formatOptionalDate, isValidExternalUrl } from '../lib/format';
+import { fundingScopeLabel, type PublicProgram } from '../data-access/catalogMapper';
 import { FavoriteToggle } from './FavoriteToggle';
 import { EmptyState, Tag } from './ui';
 
@@ -18,6 +18,26 @@ function PublicDetail({ label, value }: { label: string; value: string }) {
       <p className="mt-2 break-words text-sm text-ink">{value}</p>
     </div>
   );
+}
+
+function sourceStatusLabel(status: PublicProgram['sourceStatus']): string {
+  const labels: Record<PublicProgram['sourceStatus'], string> = {
+    unknown: 'Не указан источником',
+    open: 'Приём открыт',
+    closed: 'Приём завершён',
+    completed: 'Завершён',
+    upcoming: 'Скоро начнётся'
+  };
+  return labels[status];
+}
+
+function accessModeLabel(mode: PublicProgram['accessMode']): string {
+  const labels: Record<PublicProgram['accessMode'], string> = {
+    unknown: 'Не указан источником',
+    open: 'Открытый конкурс',
+    invitation_only: 'Только по приглашению'
+  };
+  return labels[mode];
 }
 
 export function ApiProgramDrawer({
@@ -127,25 +147,105 @@ export function ApiProgramDrawer({
         {program && !loading && !error ? (
           <>
             <div className="mt-5 flex flex-wrap gap-2">
-              <Tag>Опубликована</Tag>
+              <Tag>Проверено в Siderfold</Tag>
               <Tag>{formatDeadline(program.deadline)}</Tag>
-              <Tag>{program.funding?.label ?? 'Сумма не указана'}</Tag>
+              <Tag>{program.funding ? `На программу: ${program.funding.label}` : 'Сумма не указана'}</Tag>
             </div>
 
-            <p className="mt-6 text-base leading-7 text-graphite">Описание не опубликовано через этот каталог.</p>
+            <p className="mt-6 text-base leading-7 text-graphite">
+              {program.summary ?? 'Краткое описание не извлечено; подробные условия доступны на первоисточнике.'}
+            </p>
 
             <section aria-labelledby="public-program-overview" className="mt-8 grid gap-4 sm:grid-cols-2">
               <h3 id="public-program-overview" className="sr-only">Основные параметры</h3>
-              <PublicDetail label="Обновлено" value={formatDeadline(program.updatedAt.slice(0, 10))} />
-              <PublicDetail label="Дата публикации" value={formatDeadline(program.publishedAt.slice(0, 10))} />
+              <PublicDetail label="Дата публикации на источнике" value={formatOptionalDate(program.sourcePublishedOn)} />
+              <PublicDetail label="Добавлено в Siderfold" value={formatOptionalDate(program.publishedAt.slice(0, 10))} />
+              <PublicDetail label="Статус конкурса" value={sourceStatusLabel(program.sourceStatus)} />
+              <PublicDetail label="Формат участия" value={accessModeLabel(program.accessMode)} />
+              <PublicDetail
+                label="Приём заявок"
+                value={formatDateRange(program.applicationStart, program.applicationEnd ?? program.deadline)}
+              />
               <PublicDetail label="Регионы" value={program.regions.length > 0 ? program.regions.join(', ') : 'Не указаны'} />
               <PublicDetail label="Тематики" value={program.themes.length > 0 ? program.themes.join(', ') : 'Не указаны'} />
             </section>
 
             <section className="mt-8">
               <h3 className="text-lg font-semibold">Финансирование</h3>
-              <p className="mt-3 text-sm text-graphite">{program.funding?.label ?? 'Сумма не указана'}</p>
+              {program.fundingAmounts.length > 0 ? (
+                <ul className="mt-3 space-y-2 text-sm text-graphite">
+                  {program.fundingAmounts.map((amount, index) => (
+                    <li key={`${amount.scope}:${amount.sourceLabel}:${index}`}>
+                      <span className="font-semibold text-ink">{fundingScopeLabel(amount.scope)}:</span>{' '}
+                      {amount.sourceLabel && amount.sourceLabel !== fundingScopeLabel(amount.scope)
+                        ? `${amount.sourceLabel} — `
+                        : ''}{amount.label}
+                    </li>
+                  ))}
+                </ul>
+              ) : (
+                <p className="mt-3 text-sm text-graphite">{program.funding?.label ?? 'Сумма не указана'}</p>
+              )}
             </section>
+
+            {program.eligibilitySummary ? (
+              <section className="mt-8">
+                <h3 className="text-lg font-semibold">Условия участия</h3>
+                <p className="mt-3 text-sm leading-6 text-graphite">{program.eligibilitySummary}</p>
+              </section>
+            ) : null}
+
+            {program.timeline.length > 0 ? (
+              <section className="mt-8">
+                <h3 className="text-lg font-semibold">График</h3>
+                <ul className="mt-3 space-y-3 text-sm text-graphite">
+                  {program.timeline.map((event, index) => (
+                    <li key={`${event.kind}:${event.label}:${index}`} className="rounded-lg border border-ink/10 bg-white/70 p-4">
+                      <p className="font-semibold text-ink">{event.label}</p>
+                      <p className="mt-1">{formatDateRange(event.start, event.end)}</p>
+                    </li>
+                  ))}
+                </ul>
+              </section>
+            ) : null}
+
+            {program.resources.length > 0 ? (
+              <section className="mt-8">
+                <h3 className="text-lg font-semibold">Документы и ссылки</h3>
+                <div className="mt-3 space-y-3">
+                  {program.resources.map((resource) => (
+                    <div key={resource.url} className="rounded-lg border border-ink/10 bg-white/70 p-4">
+                      <p className="font-semibold text-ink">{resource.title ?? resource.sourceSection ?? 'Материал источника'}</p>
+                      {resource.sourceSection ? <p className="mt-1 text-sm text-graphite">{resource.sourceSection}</p> : null}
+                      {isValidExternalUrl(resource.url) ? (
+                        <a
+                          href={resource.url}
+                          target="_blank"
+                          rel="noreferrer"
+                          className="mt-3 inline-flex items-center text-sm font-semibold text-cobalt"
+                        >
+                          Открыть материал <ExternalLink className="ml-2 h-4 w-4" aria-hidden="true" />
+                        </a>
+                      ) : null}
+                    </div>
+                  ))}
+                </div>
+              </section>
+            ) : null}
+
+            {program.contentSections.length > 0 ? (
+              <section className="mt-8">
+                <h3 className="text-lg font-semibold">Дополнительная информация</h3>
+                <div className="mt-3 space-y-4">
+                  {program.contentSections.map((section) => (
+                    <div key={`${section.category}:${section.heading}`} className="rounded-lg border border-ink/10 bg-white/70 p-4">
+                      <h4 className="font-semibold text-ink">{section.heading}</h4>
+                      <p className="mt-2 text-sm leading-6 text-graphite">{section.content}</p>
+                    </div>
+                  ))}
+                </div>
+              </section>
+            ) : null}
 
             <section className="mt-8">
               <h3 className="text-lg font-semibold">Источники</h3>

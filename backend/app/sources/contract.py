@@ -1,9 +1,11 @@
 from __future__ import annotations
 
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import datetime
+from math import ceil
 from pathlib import Path
+from time import monotonic
 from typing import Any, Literal, Protocol
 from uuid import UUID
 
@@ -31,6 +33,10 @@ class AdapterStage(str):
     RUN = "run"
 
 
+class AdapterRunTimeoutError(RuntimeError):
+    """Raised when an adapter exhausts its configured total runtime budget."""
+
+
 class AdapterIssue(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -55,6 +61,7 @@ class AdapterContext:
         started_at: datetime,
         run_id: UUID | None = None,
         raw_capture_dir: Path | None = None,
+        progress_reporter: Callable[[str], None] | None = None,
     ) -> None:
         self.source = source
         self.dry_run = dry_run
@@ -62,6 +69,8 @@ class AdapterContext:
         self.started_at = started_at
         self.run_id = run_id
         self.raw_capture_dir = raw_capture_dir
+        self._progress_reporter = progress_reporter
+        self._started_monotonic = monotonic()
 
     @property
     def limits(self) -> SourceLimits:
@@ -69,6 +78,29 @@ class AdapterContext:
 
     def require_allowed_url(self, url: str) -> str:
         return require_allowed_url(url, self.source)
+
+    @property
+    def remaining_run_seconds(self) -> float:
+        elapsed_seconds = monotonic() - self._started_monotonic
+        return max(0.0, self.limits.max_run_seconds - elapsed_seconds)
+
+    def require_time_remaining(self) -> float:
+        remaining_seconds = self.remaining_run_seconds
+        if remaining_seconds <= 0:
+            raise AdapterRunTimeoutError(
+                f"source run exceeded max_run_seconds ({self.limits.max_run_seconds})"
+            )
+        return remaining_seconds
+
+    def request_timeout_seconds(self) -> int:
+        return min(self.limits.timeout_seconds, max(1, ceil(self.require_time_remaining())))
+
+    def report_progress(self, message: str) -> None:
+        if self._progress_reporter is None:
+            return
+        normalized = " ".join(message.split())
+        if normalized:
+            self._progress_reporter(normalized)
 
 
 class DiscoveredResource(BaseModel):
@@ -295,12 +327,14 @@ def validation_issue_to_adapter_issue(
     issue: ValidationIssue,
     *,
     stage: str = AdapterStage.VALIDATE,
+    resource_key: str | None = None,
 ) -> AdapterIssue:
     return AdapterIssue(
         stage=stage,
         severity="error",
         code=issue.code,
         message=issue.message,
+        resource_key=resource_key,
         row_number=issue.row_number,
         field=issue.field,
     )

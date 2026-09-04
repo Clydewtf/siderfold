@@ -43,7 +43,7 @@ describe('ProgramDrawer', () => {
     });
 
     expect(screen.getByText('Источник не найден')).toBeInTheDocument();
-    expect(screen.getByText('Без дедлайна')).toBeInTheDocument();
+    expect(screen.getByText('Срок не указан')).toBeInTheDocument();
     expect(screen.getByText('Сумма не указана')).toBeInTheDocument();
     expect(screen.getByText('Данные источника недоступны в текущей базе.')).toBeInTheDocument();
   });

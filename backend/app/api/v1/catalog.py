@@ -20,26 +20,35 @@ from app.api.v1.schemas import (
     ApiErrorDetail,
     ApiErrorResponse,
     DeadlineBounds,
+    FundingAmountPublic,
     FilterOptions,
     FundingPublic,
     Page,
     ProgramDetail,
+    ProgramContentSectionPublic,
     ProgramListItem,
+    ProgramResourcePublic,
     SourceFilterOption,
     SourceLinkPublic,
     SourcePublic,
     SourceRef,
     TaxonomyOption,
+    TimelineEventPublic,
 )
 from app.domain.models import (
     FundingValueKind,
     Geography,
     Program,
+    ProgramContentSection,
     ProgramDeadline,
+    ProgramDetails,
     ProgramFunding,
+    ProgramFundingAmount,
     ProgramGeography,
+    ProgramResource,
     ProgramSource,
     ProgramTheme,
+    ProgramTimelineEvent,
     PublicationStatus,
     Source,
     Theme,
@@ -178,6 +187,8 @@ def _program_summary_select():
             Program.title,
             Program.published_at,
             Program.updated_at,
+            ProgramDetails.source_published_on,
+            ProgramDetails.summary,
             ProgramDeadline.deadline_on,
             ProgramFunding.value_kind.label("funding_kind"),
             ProgramFunding.currency_code.label("funding_currency"),
@@ -199,6 +210,7 @@ def _program_summary_select():
         .join(Source, Source.id == Program.primary_source_id)
         .outerjoin(ProgramDeadline, ProgramDeadline.program_id == Program.id)
         .outerjoin(ProgramFunding, ProgramFunding.program_id == Program.id)
+        .outerjoin(ProgramDetails, ProgramDetails.program_id == Program.id)
     )
 
 
@@ -453,6 +465,8 @@ def _program_list_item(row: Mapping[str, Any]) -> ProgramListItem:
         publication_status="published",
         published_at=row["published_at"],
         updated_at=row["updated_at"],
+        source_published_on=row["source_published_on"],
+        summary=row["summary"],
         deadline_on=row["deadline_on"],
         funding=_funding(row),
         primary_source=_source_link(row),
@@ -628,11 +642,123 @@ def get_program(
     ).mappings()
     themes = [TaxonomyOption(**theme_row) for theme_row in theme_rows]
 
+    details_row = connection.execute(
+        select(
+            ProgramDetails.summary,
+            ProgramDetails.eligibility_summary,
+            ProgramDetails.eligibility_geography_note,
+            ProgramDetails.source_status,
+            ProgramDetails.access_mode,
+            ProgramDetails.application_url,
+            ProgramDetails.application_start_on,
+            ProgramDetails.application_end_on,
+        ).where(ProgramDetails.program_id == program_id)
+    ).mappings().one_or_none()
+
+    funding_amount_rows = connection.execute(
+        select(
+            ProgramFundingAmount.scope,
+            ProgramFundingAmount.label,
+            ProgramFundingAmount.value_kind,
+            ProgramFundingAmount.currency_code,
+            ProgramFundingAmount.exact_amount,
+            ProgramFundingAmount.min_amount,
+            ProgramFundingAmount.max_amount,
+        )
+        .where(ProgramFundingAmount.program_id == program_id)
+        .order_by(asc(ProgramFundingAmount.position), asc(ProgramFundingAmount.id))
+    ).mappings()
+    funding_amounts = [
+        FundingAmountPublic(
+            scope=amount_row["scope"],
+            label=amount_row["label"],
+            value_kind=amount_row["value_kind"],
+            currency_code=amount_row["currency_code"],
+            exact_amount=amount_row["exact_amount"],
+            min_amount=amount_row["min_amount"],
+            max_amount=amount_row["max_amount"],
+        )
+        for amount_row in funding_amount_rows
+    ]
+
+    timeline_rows = connection.execute(
+        select(
+            ProgramTimelineEvent.event_kind,
+            ProgramTimelineEvent.label,
+            ProgramTimelineEvent.start_on,
+            ProgramTimelineEvent.end_on,
+        )
+        .where(ProgramTimelineEvent.program_id == program_id)
+        .order_by(asc(ProgramTimelineEvent.position), asc(ProgramTimelineEvent.id))
+    ).mappings()
+    timeline = [
+        TimelineEventPublic(
+            kind=timeline_row["event_kind"],
+            label=timeline_row["label"],
+            start_on=timeline_row["start_on"],
+            end_on=timeline_row["end_on"],
+        )
+        for timeline_row in timeline_rows
+    ]
+
+    resource_rows = connection.execute(
+        select(
+            ProgramResource.resource_kind,
+            ProgramResource.title,
+            ProgramResource.url,
+            ProgramResource.source_section,
+        )
+        .where(ProgramResource.program_id == program_id)
+        .order_by(asc(ProgramResource.position), asc(ProgramResource.id))
+    ).mappings()
+    resources = [
+        ProgramResourcePublic(
+            kind=resource_row["resource_kind"],
+            title=resource_row["title"],
+            url=resource_row["url"],
+            source_section=resource_row["source_section"],
+        )
+        for resource_row in resource_rows
+    ]
+
+    content_rows = connection.execute(
+        select(
+            ProgramContentSection.heading,
+            ProgramContentSection.category,
+            ProgramContentSection.content,
+        )
+        .where(
+            ProgramContentSection.program_id == program_id,
+            ProgramContentSection.is_public.is_(True),
+        )
+        .order_by(asc(ProgramContentSection.position), asc(ProgramContentSection.id))
+    ).mappings()
+    content_sections = [ProgramContentSectionPublic(**content_row) for content_row in content_rows]
+
+    detail_values: dict[str, Any] = {}
+    if details_row is not None:
+        detail_values = {
+            "summary": details_row["summary"],
+            "eligibility_summary": details_row["eligibility_summary"],
+            "eligibility_geography_note": details_row["eligibility_geography_note"],
+            "source_status": details_row["source_status"],
+            "access_mode": details_row["access_mode"],
+            "application_url": details_row["application_url"],
+            "application_start_on": details_row["application_start_on"],
+            "application_end_on": details_row["application_end_on"],
+        }
+
+    program_values = _program_list_item(row).model_dump()
+    program_values.update(detail_values)
     return ProgramDetail(
-        **_program_list_item(row).model_dump(),
+        **program_values,
         sources=sources,
         geographies=geographies,
         themes=themes,
+        funding_amounts=funding_amounts,
+        timeline=timeline,
+        resources=resources,
+        content_sections=content_sections,
     )
 
 

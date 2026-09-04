@@ -1,13 +1,19 @@
 import type {
   FiltersDto,
+  FundingAmountDto,
   FundingDto,
+  ProgramContentSectionDto,
   ProgramDetailDto,
   ProgramListItemDto,
+  ProgramResourceDto,
   PublicPageDto,
   SourceDto,
   SourceLinkDto,
   SourceRefDto,
-  TaxonomyDto
+  SourceStatus,
+  TaxonomyDto,
+  TimelineEventDto,
+  AccessMode
 } from './catalogApi';
 
 export type PublicFunding = {
@@ -17,6 +23,31 @@ export type PublicFunding = {
   minAmount: number | null;
   maxAmount: number | null;
   label: string;
+};
+
+export type PublicFundingAmount = PublicFunding & {
+  scope: FundingAmountDto['scope'];
+  sourceLabel: string | null;
+};
+
+export type PublicTimelineEvent = {
+  kind: TimelineEventDto['kind'];
+  label: string;
+  start: string | null;
+  end: string | null;
+};
+
+export type PublicProgramResource = {
+  kind: ProgramResourceDto['kind'];
+  title: string | null;
+  url: string;
+  sourceSection: string | null;
+};
+
+export type PublicProgramContentSection = {
+  heading: string;
+  category: string;
+  content: string;
 };
 
 export type PublicSource = {
@@ -38,12 +69,25 @@ export type PublicProgram = {
   publicationStatus: 'published';
   publishedAt: string;
   updatedAt: string;
+  sourcePublishedOn: string | null;
   deadline: string | null;
   funding: PublicFunding | null;
   primarySource: PublicSourceLink;
   sources: readonly PublicSourceLink[];
   regions: readonly string[];
   themes: readonly string[];
+  summary: string | null;
+  eligibilitySummary: string | null;
+  eligibilityGeographyNote: string | null;
+  sourceStatus: SourceStatus;
+  accessMode: AccessMode;
+  applicationUrl: string | null;
+  applicationStart: string | null;
+  applicationEnd: string | null;
+  fundingAmounts: readonly PublicFundingAmount[];
+  timeline: readonly PublicTimelineEvent[];
+  resources: readonly PublicProgramResource[];
+  contentSections: readonly PublicProgramContentSection[];
 };
 
 export type PublicCatalogFilters = {
@@ -90,6 +134,17 @@ export function fundingLabel(funding: FundingDto | null): string {
   throw new Error(`Funding values do not match ${funding.value_kind}.`);
 }
 
+export function fundingScopeLabel(scope: FundingAmountDto['scope']): string {
+  const labels: Record<FundingAmountDto['scope'], string> = {
+    announced_total: 'Фонд конкурса',
+    per_recipient: 'На одного получателя',
+    per_program: 'На одну программу',
+    awarded_total: 'Итог по результатам',
+    other: 'Финансирование'
+  };
+  return labels[scope];
+}
+
 function mapSource(source: SourceRefDto, publishedProgramCount: number | null = null): PublicSource {
   return {
     id: source.id,
@@ -123,6 +178,40 @@ function mapFunding(funding: FundingDto | null): PublicFunding | null {
   };
 }
 
+function mapFundingAmount(funding: FundingAmountDto): PublicFundingAmount {
+  return {
+    ...mapFunding(funding)!,
+    scope: funding.scope,
+    sourceLabel: funding.label
+  };
+}
+
+function mapTimelineEvent(event: TimelineEventDto): PublicTimelineEvent {
+  return {
+    kind: event.kind,
+    label: event.label,
+    start: event.start_on,
+    end: event.end_on
+  };
+}
+
+function mapResource(resource: ProgramResourceDto): PublicProgramResource {
+  return {
+    kind: resource.kind,
+    title: resource.title,
+    url: resource.url,
+    sourceSection: resource.source_section
+  };
+}
+
+function mapContentSection(section: ProgramContentSectionDto): PublicProgramContentSection {
+  return {
+    heading: section.heading,
+    category: section.category,
+    content: section.content
+  };
+}
+
 function mapProgramBase(program: ProgramListItemDto): PublicProgram {
   return {
     id: program.id,
@@ -130,12 +219,25 @@ function mapProgramBase(program: ProgramListItemDto): PublicProgram {
     publicationStatus: program.publication_status,
     publishedAt: program.published_at,
     updatedAt: program.updated_at,
+    sourcePublishedOn: program.source_published_on ?? null,
     deadline: program.deadline_on,
     funding: mapFunding(program.funding),
     primarySource: mapSourceLink(program.primary_source),
     sources: [mapSourceLink(program.primary_source)],
     regions: [],
-    themes: []
+    themes: [],
+    summary: program.summary ?? null,
+    eligibilitySummary: null,
+    eligibilityGeographyNote: null,
+    sourceStatus: 'unknown',
+    accessMode: 'unknown',
+    applicationUrl: null,
+    applicationStart: null,
+    applicationEnd: null,
+    fundingAmounts: [],
+    timeline: [],
+    resources: [],
+    contentSections: []
   };
 }
 
@@ -148,7 +250,19 @@ export function mapProgramDetail(program: ProgramDetailDto): PublicProgram {
     ...mapProgramBase(program),
     sources: program.sources.map(mapSourceLink),
     regions: program.geographies.map((item) => item.name),
-    themes: program.themes.map((item) => item.name)
+    themes: program.themes.map((item) => item.name),
+    summary: program.summary ?? null,
+    eligibilitySummary: program.eligibility_summary ?? null,
+    eligibilityGeographyNote: program.eligibility_geography_note ?? null,
+    sourceStatus: program.source_status ?? 'unknown',
+    accessMode: program.access_mode ?? 'unknown',
+    applicationUrl: program.application_url ?? null,
+    applicationStart: program.application_start_on ?? null,
+    applicationEnd: program.application_end_on ?? null,
+    fundingAmounts: (program.funding_amounts ?? []).map(mapFundingAmount),
+    timeline: (program.timeline ?? []).map(mapTimelineEvent),
+    resources: (program.resources ?? []).map(mapResource),
+    contentSections: (program.content_sections ?? []).map(mapContentSection)
   };
 }
 

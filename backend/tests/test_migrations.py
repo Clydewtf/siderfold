@@ -62,6 +62,15 @@ INTERNAL_MODERATION_TABLES = {
     "program_publication_actions",
 }
 
+PROGRAM_DETAIL_TABLES = {
+    "program_contacts",
+    "program_content_sections",
+    "program_details",
+    "program_funding_amounts",
+    "program_resources",
+    "program_timeline_events",
+}
+
 PUBLIC_CATALOG_INDEXES = {
     "programs": {
         "ix_programs_publication_status_updated_at_id",
@@ -85,6 +94,26 @@ INTERNAL_MODERATION_INDEXES = {
         "ix_program_publication_actions_program_created",
         "ix_program_publication_actions_review_case_created",
     },
+}
+
+PROGRAM_DETAIL_INDEXES = {
+    "program_timeline_events": {
+        "ix_program_timeline_events_kind_end",
+        "ix_program_timeline_events_program_position",
+    },
+    "program_funding_amounts": {
+        "ix_program_funding_amounts_program_position",
+        "ix_program_funding_amounts_scope_kind",
+    },
+    "program_resources": {
+        "ix_program_resources_kind",
+        "ix_program_resources_program_position",
+    },
+    "program_content_sections": {
+        "ix_program_content_sections_program_position",
+        "ix_program_content_sections_public_category",
+    },
+    "program_contacts": {"ix_program_contacts_program_position"},
 }
 
 
@@ -111,6 +140,7 @@ def test_provenance_migration_applies_to_a_clean_database_and_rolls_back(
             | OPERATIONAL_TABLES
             | ANALYTICS_TABLES
             | INTERNAL_MODERATION_TABLES
+            | PROGRAM_DETAIL_TABLES
         ).issubset(inspect(engine).get_table_names())
         for table_name, expected_indexes in PUBLIC_CATALOG_INDEXES.items():
             assert expected_indexes.issubset(_index_names(engine, table_name))
@@ -118,14 +148,24 @@ def test_provenance_migration_applies_to_a_clean_database_and_rolls_back(
             assert expected_indexes.issubset(_index_names(engine, table_name))
         for table_name, expected_indexes in INTERNAL_MODERATION_INDEXES.items():
             assert expected_indexes.issubset(_index_names(engine, table_name))
+        for table_name, expected_indexes in PROGRAM_DETAIL_INDEXES.items():
+            assert expected_indexes.issubset(_index_names(engine, table_name))
         with engine.connect() as connection:
             assert connection.scalar(text("SELECT version_num FROM alembic_version")) == (
-                "0012_catalog_search_and_archive"
+                "0013_program_details_resources"
             )
 
         with engine.connect() as connection:
             assert connection.scalar(
                 text("SELECT EXISTS (SELECT 1 FROM pg_extension WHERE extname = 'pg_trgm')")
+            )
+
+        command.downgrade(alembic_config, "0012_catalog_search_and_archive")
+
+        assert PROGRAM_DETAIL_TABLES.isdisjoint(inspect(engine).get_table_names())
+        with engine.connect() as connection:
+            assert connection.scalar(text("SELECT version_num FROM alembic_version")) == (
+                "0012_catalog_search_and_archive"
             )
 
         command.downgrade(alembic_config, "0011_internal_moderation")
@@ -141,8 +181,12 @@ def test_provenance_migration_applies_to_a_clean_database_and_rolls_back(
         assert "ix_programs_title_trigram" in _index_names(engine, "programs")
         with engine.connect() as connection:
             assert connection.scalar(text("SELECT version_num FROM alembic_version")) == (
-                "0012_catalog_search_and_archive"
+                "0013_program_details_resources"
             )
+
+        command.downgrade(alembic_config, "0012_catalog_search_and_archive")
+
+        assert PROGRAM_DETAIL_TABLES.isdisjoint(inspect(engine).get_table_names())
 
         command.downgrade(alembic_config, "0011_internal_moderation")
 

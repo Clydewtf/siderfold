@@ -5,11 +5,14 @@ from dataclasses import replace
 from datetime import datetime, timezone
 from pathlib import Path
 
+import pytest
+
 from app.sources.cli import main
-from app.sources.contract import AdapterReport
+from app.sources.contract import AdapterContext, AdapterReport, AdapterRunTimeoutError
 from app.sources.fixture_adapter import FixtureCatalogAdapter
 from app.sources.registry import DEFAULT_REGISTRY_PATH, SourceLimits, load_registry
-from app.sources.runner import execute_adapter
+from app.sources.runner import _row_issues, execute_adapter
+from app.import_bridge.contract import ParsedRow, ValidationIssue
 
 
 BACKEND_ROOT = Path(__file__).resolve().parents[1]
@@ -87,6 +90,35 @@ def test_runner_enforces_response_limits() -> None:
     assert execution.report.statistics.requests == 1
 
 
+def test_adapter_context_caps_transport_timeout_by_remaining_run_budget(monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    definition = _fixture_definition().model_copy(
+        update={"limits": SourceLimits(timeout_seconds=30, max_run_seconds=10)}
+    )
+    ticks = iter((100.0, 108.4))
+    monkeypatch.setattr("app.sources.contract.monotonic", lambda: next(ticks))
+
+    context = AdapterContext(
+        source=definition,
+        dry_run=True,
+        project_root=BACKEND_ROOT,
+        started_at=datetime(2026, 8, 30, 12, 0, tzinfo=timezone.utc),
+    )
+
+    assert context.request_timeout_seconds() == 2
+
+    ticks = iter((200.0, 210.0))
+    monkeypatch.setattr("app.sources.contract.monotonic", lambda: next(ticks))
+    expired_context = AdapterContext(
+        source=definition,
+        dry_run=True,
+        project_root=BACKEND_ROOT,
+        started_at=datetime(2026, 8, 30, 12, 0, tzinfo=timezone.utc),
+    )
+
+    with pytest.raises(AdapterRunTimeoutError):
+        expired_context.require_time_remaining()
+
+
 def test_dry_run_cli_prints_the_public_report(capsys) -> None:  # type: ignore[no-untyped-def]
     exit_code = main(
         [
@@ -97,8 +129,54 @@ def test_dry_run_cli_prints_the_public_report(capsys) -> None:  # type: ignore[n
         ]
     )
 
-    output = json.loads(capsys.readouterr().out)
+    captured = capsys.readouterr()
+    output = json.loads(captured.out)
     assert exit_code == 0
     assert output["status"] == "completed"
     assert output["dry_run"] is True
     assert AdapterReport.model_validate(output).statistics.extracted == 2
+    assert "dry run started" in captured.err
+    assert "finished: status=completed" in captured.err
+
+
+def test_dry_run_cli_exits_cleanly_when_interrupted(monkeypatch, capsys) -> None:  # type: ignore[no-untyped-def]
+    def interrupt(*args: object, **kwargs: object) -> AdapterReport:
+        raise KeyboardInterrupt
+
+    monkeypatch.setattr("app.sources.cli.run_registered_source", interrupt)
+
+    exit_code = main(
+        [
+            "--registry",
+            str(DEFAULT_REGISTRY_PATH),
+            "dry-run",
+            "fixture-catalog",
+        ]
+    )
+
+    captured = capsys.readouterr()
+    assert exit_code == 130
+    assert captured.out == ""
+    assert "Source command interrupted" in captured.err
+
+
+def test_validation_report_identifies_the_source_record_url() -> None:
+    record_url = "https://fixture.siderfold.test/catalog/invalid-record"
+    row = ParsedRow(
+        row_number=7,
+        record=None,
+        raw_payload={"record_url": record_url},
+        issues=(
+            ValidationIssue(
+                row_number=7,
+                field="application_dates",
+                code="application_period_conflict",
+                message="Conflicting application dates.",
+            ),
+        ),
+    )
+
+    issues = _row_issues((row,))
+
+    assert issues[0].resource_key == record_url
+    assert issues[0].row_number == 7

@@ -46,6 +46,8 @@ def test_potanin_registry_entry_bounds_discovery_and_card_requests() -> None:
     definition = load_registry(DEFAULT_REGISTRY_PATH).get("potanin-competitions")
 
     assert definition.access_method is SourceAccessMethod.HTTP
+    assert definition.limits.timeout_seconds == 45
+    assert definition.limits.max_run_seconds == 1800
     assert definition.secret_env_vars == ()
     assert definition.allowed_exact_urls == (
         "https://fondpotanin.ru/sitemap-iblock-competitions.xml",
@@ -78,6 +80,9 @@ def test_allowlist_matches_an_explicit_path_prefix_only() -> None:
 def test_registry_rejects_invalid_limits_schedule_and_fixture_configuration() -> None:
     with pytest.raises(ValidationError):
         SourceLimits(max_requests=0)
+
+    with pytest.raises(ValidationError):
+        SourceLimits(max_run_seconds=0)
 
     with pytest.raises(ValidationError):
         _definition(schedule="every day")

@@ -45,6 +45,48 @@ class FundingValueKind(StrEnum):
     NOT_STATED = "not_stated"
 
 
+class ProgramSourceStatus(StrEnum):
+    UNKNOWN = "unknown"
+    OPEN = "open"
+    CLOSED = "closed"
+    COMPLETED = "completed"
+    UPCOMING = "upcoming"
+
+
+class ProgramAccessMode(StrEnum):
+    UNKNOWN = "unknown"
+    OPEN = "open"
+    INVITATION_ONLY = "invitation_only"
+
+
+class ProgramTimelineEventKind(StrEnum):
+    APPLICATION = "application"
+    APPLICATION_OPEN = "application_open"
+    APPLICATION_CLOSE = "application_close"
+    EVALUATION = "evaluation"
+    RESULTS = "results"
+    CONTRACTING = "contracting"
+    IMPLEMENTATION = "implementation"
+    OTHER = "other"
+
+
+class ProgramFundingScope(StrEnum):
+    ANNOUNCED_TOTAL = "announced_total"
+    PER_RECIPIENT = "per_recipient"
+    PER_PROGRAM = "per_program"
+    AWARDED_TOTAL = "awarded_total"
+    OTHER = "other"
+
+
+class ProgramResourceKind(StrEnum):
+    APPLICATION = "application"
+    COMPETITION_DOCUMENT = "competition_document"
+    PROGRAM_DOCUMENT = "program_document"
+    RESULT = "result"
+    DETAIL = "detail"
+    REFERENCE = "reference"
+
+
 class IngestionRunStatus(StrEnum):
     RECEIVED = "received"
     PROCESSING = "processing"
@@ -148,6 +190,41 @@ publication_status_enum = Enum(
 funding_value_kind_enum = Enum(
     FundingValueKind,
     name="funding_value_kind",
+    native_enum=True,
+    values_callable=_enum_values,
+)
+
+program_source_status_enum = Enum(
+    ProgramSourceStatus,
+    name="program_source_status",
+    native_enum=True,
+    values_callable=_enum_values,
+)
+
+program_access_mode_enum = Enum(
+    ProgramAccessMode,
+    name="program_access_mode",
+    native_enum=True,
+    values_callable=_enum_values,
+)
+
+program_timeline_event_kind_enum = Enum(
+    ProgramTimelineEventKind,
+    name="program_timeline_event_kind",
+    native_enum=True,
+    values_callable=_enum_values,
+)
+
+program_funding_scope_enum = Enum(
+    ProgramFundingScope,
+    name="program_funding_scope",
+    native_enum=True,
+    values_callable=_enum_values,
+)
+
+program_resource_kind_enum = Enum(
+    ProgramResourceKind,
+    name="program_resource_kind",
     native_enum=True,
     values_callable=_enum_values,
 )
@@ -499,6 +576,263 @@ class ProgramFunding(Base):
             "currency_code",
         ),
         Index("ix_program_funding_value_kind_program_id", "value_kind", "program_id"),
+    )
+
+
+class ProgramDetails(Base):
+    """Approved source facts that do not fit the catalog's core filter tables."""
+
+    __tablename__ = "program_details"
+
+    program_id: Mapped[UUID] = mapped_column(
+        PostgreSQLUUID(as_uuid=True),
+        ForeignKey("programs.id", ondelete="CASCADE"),
+        primary_key=True,
+    )
+    summary: Mapped[str | None] = mapped_column(Text)
+    eligibility_summary: Mapped[str | None] = mapped_column(Text)
+    eligibility_geography_note: Mapped[str | None] = mapped_column(Text)
+    source_published_on: Mapped[date | None] = mapped_column(Date)
+    source_status: Mapped[ProgramSourceStatus] = mapped_column(
+        program_source_status_enum,
+        nullable=False,
+        default=ProgramSourceStatus.UNKNOWN,
+        server_default=ProgramSourceStatus.UNKNOWN.value,
+    )
+    access_mode: Mapped[ProgramAccessMode] = mapped_column(
+        program_access_mode_enum,
+        nullable=False,
+        default=ProgramAccessMode.UNKNOWN,
+        server_default=ProgramAccessMode.UNKNOWN.value,
+    )
+    application_url: Mapped[str | None] = mapped_column(String(2048))
+    application_start_on: Mapped[date | None] = mapped_column(Date)
+    application_end_on: Mapped[date | None] = mapped_column(Date)
+    source_metadata: Mapped[dict[str, Any]] = mapped_column(
+        JSONB,
+        nullable=False,
+        default=dict,
+        server_default=text("'{}'::jsonb"),
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=func.now(),
+    )
+
+    __table_args__ = (
+        CheckConstraint(
+            "application_start_on IS NULL OR application_end_on IS NULL "
+            "OR application_start_on <= application_end_on",
+            name="application_dates_in_order",
+        ),
+        CheckConstraint(
+            "application_url IS NULL OR length(btrim(application_url)) > 0",
+            name="application_url_not_blank",
+        ),
+        CheckConstraint(
+            "jsonb_typeof(source_metadata) = 'object'",
+            name="source_metadata_is_object",
+        ),
+    )
+
+
+class ProgramTimelineEvent(Base):
+    """One explicit date or date range announced for a published program."""
+
+    __tablename__ = "program_timeline_events"
+
+    id: Mapped[UUID] = mapped_column(PostgreSQLUUID(as_uuid=True), primary_key=True, default=uuid4)
+    program_id: Mapped[UUID] = mapped_column(
+        PostgreSQLUUID(as_uuid=True),
+        ForeignKey("programs.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    event_kind: Mapped[ProgramTimelineEventKind] = mapped_column(
+        program_timeline_event_kind_enum,
+        nullable=False,
+    )
+    label: Mapped[str] = mapped_column(String(500), nullable=False)
+    start_on: Mapped[date | None] = mapped_column(Date)
+    end_on: Mapped[date | None] = mapped_column(Date)
+    evidence: Mapped[str | None] = mapped_column(Text)
+    position: Mapped[int] = mapped_column(Integer, nullable=False)
+
+    __table_args__ = (
+        CheckConstraint("length(btrim(label)) > 0", name="label_not_blank"),
+        CheckConstraint("position >= 0", name="position_nonnegative"),
+        CheckConstraint(
+            "start_on IS NOT NULL OR end_on IS NOT NULL",
+            name="timeline_event_has_date",
+        ),
+        CheckConstraint(
+            "start_on IS NULL OR end_on IS NULL OR start_on <= end_on",
+            name="timeline_dates_in_order",
+        ),
+        UniqueConstraint("program_id", "position", name="uq_program_timeline_events_position"),
+        Index("ix_program_timeline_events_program_position", "program_id", "position"),
+        Index("ix_program_timeline_events_kind_end", "event_kind", "end_on"),
+    )
+
+
+class ProgramFundingAmount(Base):
+    """A scoped funding fact, preserving totals and recipient limits separately."""
+
+    __tablename__ = "program_funding_amounts"
+
+    id: Mapped[UUID] = mapped_column(PostgreSQLUUID(as_uuid=True), primary_key=True, default=uuid4)
+    program_id: Mapped[UUID] = mapped_column(
+        PostgreSQLUUID(as_uuid=True),
+        ForeignKey("programs.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    scope: Mapped[ProgramFundingScope] = mapped_column(
+        program_funding_scope_enum,
+        nullable=False,
+    )
+    label: Mapped[str | None] = mapped_column(String(500))
+    value_kind: Mapped[FundingValueKind] = mapped_column(funding_value_kind_enum, nullable=False)
+    currency_code: Mapped[str | None] = mapped_column(String(3))
+    exact_amount: Mapped[Decimal | None] = mapped_column(Numeric(14, 2))
+    min_amount: Mapped[Decimal | None] = mapped_column(Numeric(14, 2))
+    max_amount: Mapped[Decimal | None] = mapped_column(Numeric(14, 2))
+    evidence: Mapped[str | None] = mapped_column(Text)
+    position: Mapped[int] = mapped_column(Integer, nullable=False)
+
+    __table_args__ = (
+        CheckConstraint("position >= 0", name="position_nonnegative"),
+        CheckConstraint(
+            "label IS NULL OR length(btrim(label)) > 0",
+            name="label_not_blank",
+        ),
+        CheckConstraint(
+            "currency_code IS NULL OR currency_code ~ '^[A-Z]{3}$'",
+            name="currency_code_format",
+        ),
+        CheckConstraint(
+            "(value_kind = 'exact' AND currency_code IS NOT NULL "
+            "AND exact_amount IS NOT NULL AND exact_amount > 0 "
+            "AND min_amount IS NULL AND max_amount IS NULL) "
+            "OR (value_kind = 'minimum' AND currency_code IS NOT NULL "
+            "AND exact_amount IS NULL AND min_amount IS NOT NULL AND min_amount > 0 "
+            "AND max_amount IS NULL) "
+            "OR (value_kind = 'maximum' AND currency_code IS NOT NULL "
+            "AND exact_amount IS NULL AND min_amount IS NULL "
+            "AND max_amount IS NOT NULL AND max_amount > 0) "
+            "OR (value_kind = 'range' AND currency_code IS NOT NULL "
+            "AND exact_amount IS NULL AND min_amount IS NOT NULL AND min_amount > 0 "
+            "AND max_amount IS NOT NULL AND max_amount > 0 AND min_amount <= max_amount) "
+            "OR (value_kind IN ('unknown', 'not_stated') AND currency_code IS NULL "
+            "AND exact_amount IS NULL AND min_amount IS NULL AND max_amount IS NULL)",
+            name="values_match_kind",
+        ),
+        UniqueConstraint(
+            "program_id",
+            "scope",
+            "position",
+            name="uq_program_funding_amounts_scope_position",
+        ),
+        Index("ix_program_funding_amounts_program_position", "program_id", "position"),
+        Index("ix_program_funding_amounts_scope_kind", "scope", "value_kind"),
+    )
+
+
+class ProgramResource(Base):
+    """A public outbound resource approved with a canonical program."""
+
+    __tablename__ = "program_resources"
+
+    id: Mapped[UUID] = mapped_column(PostgreSQLUUID(as_uuid=True), primary_key=True, default=uuid4)
+    program_id: Mapped[UUID] = mapped_column(
+        PostgreSQLUUID(as_uuid=True),
+        ForeignKey("programs.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    resource_kind: Mapped[ProgramResourceKind] = mapped_column(
+        program_resource_kind_enum,
+        nullable=False,
+    )
+    title: Mapped[str | None] = mapped_column(String(500))
+    url: Mapped[str] = mapped_column(String(2048), nullable=False)
+    source_section: Mapped[str | None] = mapped_column(String(500))
+    content_format: Mapped[str | None] = mapped_column(String(100))
+    position: Mapped[int] = mapped_column(Integer, nullable=False)
+
+    __table_args__ = (
+        CheckConstraint("length(btrim(url)) > 0", name="url_not_blank"),
+        CheckConstraint("position >= 0", name="position_nonnegative"),
+        CheckConstraint(
+            "title IS NULL OR length(btrim(title)) > 0",
+            name="title_not_blank",
+        ),
+        UniqueConstraint("program_id", "url", name="uq_program_resources_url"),
+        Index("ix_program_resources_program_position", "program_id", "position"),
+        Index("ix_program_resources_kind", "resource_kind"),
+    )
+
+
+class ProgramContentSection(Base):
+    """Bounded, human-readable source sections retained after acceptance."""
+
+    __tablename__ = "program_content_sections"
+
+    id: Mapped[UUID] = mapped_column(PostgreSQLUUID(as_uuid=True), primary_key=True, default=uuid4)
+    program_id: Mapped[UUID] = mapped_column(
+        PostgreSQLUUID(as_uuid=True),
+        ForeignKey("programs.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    heading: Mapped[str] = mapped_column(String(500), nullable=False)
+    category: Mapped[str] = mapped_column(String(64), nullable=False)
+    content: Mapped[str] = mapped_column(Text, nullable=False)
+    is_public: Mapped[bool] = mapped_column(
+        Boolean,
+        nullable=False,
+        default=False,
+        server_default=text("false"),
+    )
+    position: Mapped[int] = mapped_column(Integer, nullable=False)
+
+    __table_args__ = (
+        CheckConstraint("length(btrim(heading)) > 0", name="heading_not_blank"),
+        CheckConstraint("length(btrim(category)) > 0", name="category_not_blank"),
+        CheckConstraint("length(btrim(content)) > 0", name="content_not_blank"),
+        CheckConstraint("position >= 0", name="position_nonnegative"),
+        UniqueConstraint("program_id", "position", name="uq_program_content_sections_position"),
+        Index("ix_program_content_sections_program_position", "program_id", "position"),
+        Index("ix_program_content_sections_public_category", "is_public", "category"),
+    )
+
+
+class ProgramContact(Base):
+    """Source contact data retained for review and intentionally hidden from public API."""
+
+    __tablename__ = "program_contacts"
+
+    id: Mapped[UUID] = mapped_column(PostgreSQLUUID(as_uuid=True), primary_key=True, default=uuid4)
+    program_id: Mapped[UUID] = mapped_column(
+        PostgreSQLUUID(as_uuid=True),
+        ForeignKey("programs.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    name: Mapped[str] = mapped_column(String(255), nullable=False)
+    role: Mapped[str | None] = mapped_column(String(255))
+    email: Mapped[str | None] = mapped_column(String(320))
+    phone: Mapped[str | None] = mapped_column(String(64))
+    source_evidence: Mapped[str | None] = mapped_column(Text)
+    position: Mapped[int] = mapped_column(Integer, nullable=False)
+    is_public: Mapped[bool] = mapped_column(
+        Boolean,
+        nullable=False,
+        default=False,
+        server_default=text("false"),
+    )
+
+    __table_args__ = (
+        CheckConstraint("length(btrim(name)) > 0", name="name_not_blank"),
+        CheckConstraint("position >= 0", name="position_nonnegative"),
+        UniqueConstraint("program_id", "position", name="uq_program_contacts_position"),
+        Index("ix_program_contacts_program_position", "program_id", "position"),
     )
 
 

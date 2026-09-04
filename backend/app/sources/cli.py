@@ -61,6 +61,11 @@ def _print_json(value: object) -> None:
     print(json.dumps(value, ensure_ascii=False, indent=2, default=str))
 
 
+def _print_progress(source_key: str, message: str) -> None:
+    sys.stderr.write(f"[sources:{source_key}] {message}\n")
+    sys.stderr.flush()
+
+
 def _parse_timestamp(value: str) -> datetime:
     normalized = value.replace("Z", "+00:00")
     try:
@@ -95,11 +100,23 @@ def main(argv: Sequence[str] | None = None) -> int:
             return 0
 
         if args.command == "dry-run":
+            _print_progress(args.source_key, "dry run started")
             report = run_registered_source(
                 args.source_key,
                 registry_path=registry_path,
                 dry_run=True,
                 raw_capture_dir=settings.raw_capture_dir,
+                progress_reporter=lambda message: _print_progress(
+                    args.source_key, message
+                ),
+            )
+            _print_progress(
+                args.source_key,
+                (
+                    f"finished: status={report.status}; "
+                    f"fetched={report.statistics.fetched}; "
+                    f"artifacts={report.statistics.artifact_fetched}"
+                ),
             )
             _print_json(report.model_dump(mode="json"))
             return 2 if report.status == "failed" or report.statistics.errors else 0
@@ -107,11 +124,22 @@ def main(argv: Sequence[str] | None = None) -> int:
         engine = create_db_engine(settings)
         try:
             if args.command == "run":
+                _print_progress(args.source_key, "managed run started")
                 result = run_managed_source(
                     args.source_key,
                     engine=engine,
                     settings=settings,
                     registry_path=registry_path,
+                    progress_reporter=lambda message: _print_progress(
+                        args.source_key, message
+                    ),
+                )
+                _print_progress(
+                    args.source_key,
+                    (
+                        f"finished: status={result.status.value}; "
+                        f"attempts={result.attempt_count}"
+                    ),
                 )
                 _print_json(result.model_dump(mode="json"))
                 _notify_failure(result)
@@ -161,6 +189,9 @@ def main(argv: Sequence[str] | None = None) -> int:
             raise RuntimeError(f"unsupported source command: {args.command}")
         finally:
             engine.dispose()
+    except KeyboardInterrupt:
+        sys.stderr.write("Source command interrupted; no further requests will be made.\n")
+        return 130
     except (RegistryValidationError, ValueError, SQLAlchemyError) as error:
         _print_json({"status": "failed", "error": str(error)})
         return 2

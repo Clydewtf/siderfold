@@ -14,6 +14,8 @@ from app.domain.models import (
     Program,
     ProgramDeadline,
     ProgramFunding,
+    ProgramFundingAmount,
+    ProgramFundingScope,
     ProgramGeography,
     ProgramTheme,
     PublicationStatus,
@@ -199,6 +201,88 @@ def test_funding_rejects_an_invalid_range(migrated_engine: Engine) -> None:
                     currency_code="RUB",
                     min_amount=Decimal("500000.00"),
                     max_amount=Decimal("100000.00"),
+                )
+            )
+
+
+def test_scoped_funding_keeps_totals_and_recipient_limits_separate(
+    migrated_engine: Engine,
+) -> None:
+    with migrated_engine.begin() as connection:
+        source_id = insert_source(connection)
+        program_id = insert_program_with_source(connection, source_id=source_id)
+        connection.execute(
+            insert(ProgramFundingAmount),
+            [
+                {
+                    "id": uuid4(),
+                    "program_id": program_id,
+                    "scope": ProgramFundingScope.ANNOUNCED_TOTAL,
+                    "label": "Фонд конкурса",
+                    "value_kind": FundingValueKind.EXACT,
+                    "currency_code": "RUB",
+                    "exact_amount": Decimal("150000000.00"),
+                    "min_amount": None,
+                    "max_amount": None,
+                    "position": 0,
+                },
+                {
+                    "id": uuid4(),
+                    "program_id": program_id,
+                    "scope": ProgramFundingScope.PER_RECIPIENT,
+                    "label": "На одного получателя",
+                    "value_kind": FundingValueKind.MAXIMUM,
+                    "currency_code": "RUB",
+                    "exact_amount": None,
+                    "min_amount": None,
+                    "max_amount": Decimal("15000000.00"),
+                    "position": 0,
+                },
+                {
+                    "id": uuid4(),
+                    "program_id": program_id,
+                    "scope": ProgramFundingScope.AWARDED_TOTAL,
+                    "label": "Итоговая сумма по результатам",
+                    "value_kind": FundingValueKind.UNKNOWN,
+                    "currency_code": None,
+                    "exact_amount": None,
+                    "min_amount": None,
+                    "max_amount": None,
+                    "position": 0,
+                },
+            ],
+        )
+
+    with migrated_engine.connect() as connection:
+        amounts = {
+            row.scope: row
+            for row in connection.execute(
+                select(
+                    ProgramFundingAmount.scope,
+                    ProgramFundingAmount.value_kind,
+                    ProgramFundingAmount.exact_amount,
+                    ProgramFundingAmount.max_amount,
+                ).where(ProgramFundingAmount.program_id == program_id)
+            )
+        }
+
+    assert amounts[ProgramFundingScope.ANNOUNCED_TOTAL].exact_amount == Decimal("150000000.00")
+    assert amounts[ProgramFundingScope.PER_RECIPIENT].max_amount == Decimal("15000000.00")
+    assert amounts[ProgramFundingScope.AWARDED_TOTAL].value_kind is FundingValueKind.UNKNOWN
+
+    with pytest.raises(IntegrityError):
+        with migrated_engine.begin() as connection:
+            connection.execute(
+                insert(ProgramFundingAmount).values(
+                    id=uuid4(),
+                    program_id=program_id,
+                    scope=ProgramFundingScope.OTHER,
+                    value_kind=FundingValueKind.RANGE,
+                    currency_code="RUB",
+                    exact_amount=None,
+                    min_amount=Decimal("2.00"),
+                    max_amount=Decimal("1.00"),
+                    position=0,
                 )
             )
 

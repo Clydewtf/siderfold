@@ -14,6 +14,7 @@ from pypdf import PdfReader
 from app.sources.adapters.potanin.normalization import (
     normalize_outbound_url,
     normalize_whitespace,
+    parse_rub_amounts,
 )
 
 
@@ -37,6 +38,7 @@ class ArtifactInspection:
 
 
 _RESULT_TERMS = re.compile(r"победител|итог|лауреат|результат", re.IGNORECASE)
+_RESULT_TOTAL_TERMS = re.compile(r"\b(?:итого|всего\s+выделено)\b", re.IGNORECASE)
 
 
 @contextmanager
@@ -70,6 +72,28 @@ def _result_fragments(value: str) -> list[str]:
         if len(fragments) >= 30:
             break
     return fragments
+
+
+def _result_funding_observations(value: str) -> list[dict[str, object]]:
+    observations: list[dict[str, object]] = []
+    for fragment in re.split(r"\n+|(?<=[.!?])\s+", value):
+        normalized = normalize_whitespace(fragment)
+        if not normalized or not _RESULT_TOTAL_TERMS.search(normalized):
+            continue
+        for amount in parse_rub_amounts(normalized):
+            observation = {
+                "scope": "awarded_total",
+                "value": {
+                    "value_kind": "exact",
+                    "currency_code": "RUB",
+                    "exact_amount": str(amount),
+                },
+                "label": "Итоговая сумма по результатам",
+                "evidence": normalized[:500],
+            }
+            if observation not in observations:
+                observations.append(observation)
+    return observations
 
 
 def _safe_link(base_url: str, href: str) -> str | None:
@@ -140,6 +164,7 @@ def _inspect_html(content: bytes, *, source_url: str) -> ArtifactInspection:
             "text_excerpt": text_excerpt,
             "text_truncated": text_truncated,
             "result_evidence": _result_fragments(text),
+            "funding_observations": _result_funding_observations(text),
             "list_entries": list_entries,
             "outbound_links": links,
         }
@@ -197,6 +222,7 @@ def _inspect_pdf(content: bytes) -> ArtifactInspection:
         "text_excerpt": text_excerpt,
         "text_truncated": text_truncated,
         "result_evidence": _result_fragments(text),
+        "funding_observations": _result_funding_observations(text),
     }
     if text_excerpt is not None:
         return ArtifactInspection(payload=payload)

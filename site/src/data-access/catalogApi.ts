@@ -7,7 +7,18 @@ export const fundingKinds = [
   'not_stated'
 ] as const;
 
+export const sourceStatuses = ['unknown', 'open', 'closed', 'completed', 'upcoming'] as const;
+export const accessModes = ['unknown', 'open', 'invitation_only'] as const;
+export const fundingScopes = ['announced_total', 'per_recipient', 'per_program', 'awarded_total', 'other'] as const;
+export const timelineEventKinds = ['application', 'application_open', 'application_close', 'evaluation', 'results', 'contracting', 'implementation', 'other'] as const;
+export const resourceKinds = ['application', 'competition_document', 'program_document', 'result', 'detail', 'reference'] as const;
+
 export type FundingKind = (typeof fundingKinds)[number];
+export type SourceStatus = (typeof sourceStatuses)[number];
+export type AccessMode = (typeof accessModes)[number];
+export type FundingScope = (typeof fundingScopes)[number];
+export type TimelineEventKind = (typeof timelineEventKinds)[number];
+export type ResourceKind = (typeof resourceKinds)[number];
 export type CatalogSort = 'published_at' | 'updated_at' | 'deadline' | 'title' | 'relevance';
 export type SortOrder = 'asc' | 'desc';
 
@@ -48,6 +59,31 @@ export type FundingDto = {
   max_amount: string | number | null;
 };
 
+export type FundingAmountDto = FundingDto & {
+  scope: FundingScope;
+  label: string | null;
+};
+
+export type TimelineEventDto = {
+  kind: TimelineEventKind;
+  label: string;
+  start_on: string | null;
+  end_on: string | null;
+};
+
+export type ProgramResourceDto = {
+  kind: ResourceKind;
+  title: string | null;
+  url: string;
+  source_section: string | null;
+};
+
+export type ProgramContentSectionDto = {
+  heading: string;
+  category: string;
+  content: string;
+};
+
 export type SourceRefDto = {
   id: string;
   name: string;
@@ -66,6 +102,8 @@ export type ProgramListItemDto = {
   publication_status: 'published';
   published_at: string;
   updated_at: string;
+  source_published_on?: string | null;
+  summary?: string | null;
   deadline_on: string | null;
   funding: FundingDto | null;
   primary_source: SourceLinkDto;
@@ -75,6 +113,18 @@ export type ProgramDetailDto = ProgramListItemDto & {
   sources: SourceLinkDto[];
   geographies: TaxonomyDto[];
   themes: TaxonomyDto[];
+  summary?: string | null;
+  eligibility_summary?: string | null;
+  eligibility_geography_note?: string | null;
+  source_status?: SourceStatus;
+  access_mode?: AccessMode;
+  application_url?: string | null;
+  application_start_on?: string | null;
+  application_end_on?: string | null;
+  funding_amounts?: FundingAmountDto[];
+  timeline?: TimelineEventDto[];
+  resources?: ProgramResourceDto[];
+  content_sections?: ProgramContentSectionDto[];
 };
 
 export type TaxonomyDto = {
@@ -144,6 +194,10 @@ function nullableString(value: unknown, field: string): string | null {
   return requiredString(value, field);
 }
 
+function optionalNullableString(value: unknown, field: string): string | null {
+  return value === undefined ? null : nullableString(value, field);
+}
+
 function numberValue(value: unknown, field: string): number {
   if (typeof value !== 'number' || !Number.isFinite(value)) {
     throw new CatalogApiError('invalid_response', `Invalid public API field: ${field}`);
@@ -156,6 +210,13 @@ function fundingKind(value: unknown, field: string): FundingKind {
     throw new CatalogApiError('invalid_response', `Invalid public API field: ${field}`);
   }
   return value as FundingKind;
+}
+
+function enumValue<T extends string>(value: unknown, values: readonly T[], field: string): T {
+  if (typeof value !== 'string' || !values.includes(value as T)) {
+    throw new CatalogApiError('invalid_response', `Invalid public API field: ${field}`);
+  }
+  return value as T;
 }
 
 function nullableAmount(value: unknown, field: string): string | number | null {
@@ -178,6 +239,53 @@ function parseFunding(value: unknown): FundingDto | null {
     exact_amount: nullableAmount(value.exact_amount, 'funding.exact_amount'),
     min_amount: nullableAmount(value.min_amount, 'funding.min_amount'),
     max_amount: nullableAmount(value.max_amount, 'funding.max_amount')
+  };
+}
+
+function parseFundingAmount(value: unknown, prefix: string): FundingAmountDto {
+  const funding = parseFunding(value);
+  if (!funding || !isRecord(value)) {
+    throw new CatalogApiError('invalid_response', `Invalid public API object: ${prefix}`);
+  }
+  return {
+    ...funding,
+    scope: enumValue(value.scope, fundingScopes, `${prefix}.scope`),
+    label: nullableString(value.label, `${prefix}.label`)
+  };
+}
+
+function parseTimelineEvent(value: unknown, prefix: string): TimelineEventDto {
+  if (!isRecord(value)) {
+    throw new CatalogApiError('invalid_response', `Invalid public API object: ${prefix}`);
+  }
+  return {
+    kind: enumValue(value.kind, timelineEventKinds, `${prefix}.kind`),
+    label: requiredString(value.label, `${prefix}.label`),
+    start_on: nullableString(value.start_on, `${prefix}.start_on`),
+    end_on: nullableString(value.end_on, `${prefix}.end_on`)
+  };
+}
+
+function parseResource(value: unknown, prefix: string): ProgramResourceDto {
+  if (!isRecord(value)) {
+    throw new CatalogApiError('invalid_response', `Invalid public API object: ${prefix}`);
+  }
+  return {
+    kind: enumValue(value.kind, resourceKinds, `${prefix}.kind`),
+    title: nullableString(value.title, `${prefix}.title`),
+    url: requiredString(value.url, `${prefix}.url`),
+    source_section: nullableString(value.source_section, `${prefix}.source_section`)
+  };
+}
+
+function parseContentSection(value: unknown, prefix: string): ProgramContentSectionDto {
+  if (!isRecord(value)) {
+    throw new CatalogApiError('invalid_response', `Invalid public API object: ${prefix}`);
+  }
+  return {
+    heading: requiredString(value.heading, `${prefix}.heading`),
+    category: requiredString(value.category, `${prefix}.category`),
+    content: requiredString(value.content, `${prefix}.content`)
   };
 }
 
@@ -226,6 +334,10 @@ function parseProgram(value: unknown, prefix: string): ProgramListItemDto {
     publication_status: 'published',
     published_at: requiredString(value.published_at, `${prefix}.published_at`),
     updated_at: requiredString(value.updated_at, `${prefix}.updated_at`),
+    source_published_on: value.source_published_on === undefined
+      ? null
+      : nullableString(value.source_published_on, `${prefix}.source_published_on`),
+    summary: optionalNullableString(value.summary, `${prefix}.summary`),
     deadline_on: nullableString(value.deadline_on, `${prefix}.deadline_on`),
     funding: parseFunding(value.funding),
     primary_source: parseSourceLink(value.primary_source, `${prefix}.primary_source`)
@@ -240,11 +352,34 @@ function parseDetail(value: unknown): ProgramDetailDto {
   if (!Array.isArray(value.sources) || !Array.isArray(value.geographies) || !Array.isArray(value.themes)) {
     throw new CatalogApiError('invalid_response', 'Invalid public API program detail collections.');
   }
+  const fundingAmounts = value.funding_amounts === undefined ? [] : value.funding_amounts;
+  const timeline = value.timeline === undefined ? [] : value.timeline;
+  const resources = value.resources === undefined ? [] : value.resources;
+  const contentSections = value.content_sections === undefined ? [] : value.content_sections;
+  if (!Array.isArray(fundingAmounts) || !Array.isArray(timeline) || !Array.isArray(resources) || !Array.isArray(contentSections)) {
+    throw new CatalogApiError('invalid_response', 'Invalid public API program detail collections.');
+  }
   return {
     ...base,
     sources: value.sources.map((item, index) => parseSourceLink(item, `program.sources[${index}]`)),
     geographies: value.geographies.map((item, index) => parseTaxonomy(item, `program.geographies[${index}]`)),
-    themes: value.themes.map((item, index) => parseTaxonomy(item, `program.themes[${index}]`))
+    themes: value.themes.map((item, index) => parseTaxonomy(item, `program.themes[${index}]`)),
+    summary: optionalNullableString(value.summary, 'program.summary'),
+    eligibility_summary: optionalNullableString(value.eligibility_summary, 'program.eligibility_summary'),
+    eligibility_geography_note: optionalNullableString(value.eligibility_geography_note, 'program.eligibility_geography_note'),
+    source_status: value.source_status === undefined
+      ? 'unknown'
+      : enumValue(value.source_status, sourceStatuses, 'program.source_status'),
+    access_mode: value.access_mode === undefined
+      ? 'unknown'
+      : enumValue(value.access_mode, accessModes, 'program.access_mode'),
+    application_url: optionalNullableString(value.application_url, 'program.application_url'),
+    application_start_on: optionalNullableString(value.application_start_on, 'program.application_start_on'),
+    application_end_on: optionalNullableString(value.application_end_on, 'program.application_end_on'),
+    funding_amounts: fundingAmounts.map((item, index) => parseFundingAmount(item, `program.funding_amounts[${index}]`)),
+    timeline: timeline.map((item, index) => parseTimelineEvent(item, `program.timeline[${index}]`)),
+    resources: resources.map((item, index) => parseResource(item, `program.resources[${index}]`)),
+    content_sections: contentSections.map((item, index) => parseContentSection(item, `program.content_sections[${index}]`))
   };
 }
 

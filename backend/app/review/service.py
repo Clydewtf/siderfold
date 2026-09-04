@@ -2,8 +2,10 @@ from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
+import re
 from typing import Any
+from urllib.parse import urlsplit
 from uuid import UUID, uuid4
 
 from sqlalchemy import insert, select, update
@@ -18,10 +20,24 @@ from app.domain.models import (
     DeduplicationMatchLevel,
     IngestionRun,
     IngestionRunStatus,
+    Geography,
     Program,
+    ProgramAccessMode,
+    ProgramContact,
+    ProgramContentSection,
     ProgramDeadline,
+    ProgramDetails,
     ProgramFunding,
+    ProgramFundingAmount,
+    ProgramFundingScope,
+    ProgramGeography,
+    ProgramResource,
+    ProgramResourceKind,
     ProgramSource,
+    ProgramSourceStatus,
+    ProgramTheme,
+    ProgramTimelineEvent,
+    ProgramTimelineEventKind,
     PublicationStatus,
     RawCapture,
     ReviewAction,
@@ -32,6 +48,7 @@ from app.domain.models import (
     ReviewDecisionOutcome,
     StagedRecord,
     StagedRecordState,
+    Theme,
 )
 from app.import_bridge.contract import FundingInput
 from app.review.deduplication import (
@@ -848,6 +865,432 @@ def _record_payload(candidate: StagedCandidate) -> Mapping[str, Any]:
     return record if isinstance(record, Mapping) else candidate.candidate_payload
 
 
+def _mapping(value: object) -> Mapping[str, Any]:
+    return value if isinstance(value, Mapping) else {}
+
+
+def _optional_text(value: object, *, maximum: int | None = None) -> str | None:
+    if not isinstance(value, str):
+        return None
+    normalized = value.strip()
+    if not normalized:
+        return None
+    return normalized[:maximum] if maximum is not None else normalized
+
+
+def _optional_date(value: object) -> date | None:
+    if not isinstance(value, str):
+        return None
+    try:
+        return date.fromisoformat(value)
+    except ValueError:
+        return None
+
+
+def _optional_http_url(value: object) -> str | None:
+    normalized = _optional_text(value, maximum=2_048)
+    if normalized is None:
+        return None
+    parsed = urlsplit(normalized)
+    if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+        return None
+    return normalized
+
+
+def _source_status(value: object) -> ProgramSourceStatus:
+    try:
+        return ProgramSourceStatus(value) if isinstance(value, str) else ProgramSourceStatus.UNKNOWN
+    except ValueError:
+        return ProgramSourceStatus.UNKNOWN
+
+
+def _access_mode(value: object) -> ProgramAccessMode:
+    try:
+        return ProgramAccessMode(value) if isinstance(value, str) else ProgramAccessMode.UNKNOWN
+    except ValueError:
+        return ProgramAccessMode.UNKNOWN
+
+
+def _timeline_kind(value: object) -> ProgramTimelineEventKind:
+    try:
+        return ProgramTimelineEventKind(value) if isinstance(value, str) else ProgramTimelineEventKind.OTHER
+    except ValueError:
+        return ProgramTimelineEventKind.OTHER
+
+
+def _funding_scope(value: object) -> ProgramFundingScope | None:
+    try:
+        return ProgramFundingScope(value) if isinstance(value, str) else None
+    except ValueError:
+        return None
+
+
+def _resource_kind(value: object, section: str | None) -> ProgramResourceKind | None:
+    if value == "application":
+        return ProgramResourceKind.APPLICATION
+    if value == "result":
+        return ProgramResourceKind.RESULT
+    if value == "detail":
+        return ProgramResourceKind.DETAIL
+    if value == "document":
+        if section is not None and "программ" in section.casefold():
+            return ProgramResourceKind.PROGRAM_DOCUMENT
+        return ProgramResourceKind.COMPETITION_DOCUMENT
+    if value == "reference":
+        return ProgramResourceKind.REFERENCE
+    return None
+
+
+def _insert_program_details(
+    connection: Connection,
+    *,
+    program_id: UUID,
+    payload: Mapping[str, Any],
+    now: datetime,
+) -> Mapping[str, Any]:
+    application = _mapping(payload.get("application"))
+    eligibility = _mapping(payload.get("eligibility"))
+    source_last_modified_at = _optional_text(payload.get("source_last_modified_at"), maximum=100)
+    content_inventory = _mapping(payload.get("content_inventory"))
+    blocks = content_inventory.get("blocks")
+    source_metadata: dict[str, Any] = {}
+    if source_last_modified_at is not None:
+        source_metadata["source_last_modified_at"] = source_last_modified_at
+    if isinstance(blocks, list):
+        source_metadata["content_block_count"] = len(blocks)
+    connection.execute(
+        insert(ProgramDetails).values(
+            program_id=program_id,
+            summary=_optional_text(payload.get("summary")),
+            eligibility_summary=_optional_text(eligibility.get("summary")),
+            eligibility_geography_note=_optional_text(eligibility.get("geography_note")),
+            source_published_on=_optional_date(payload.get("source_published_on")),
+            source_status=_source_status(payload.get("source_status")),
+            access_mode=_access_mode(eligibility.get("access_mode")),
+            application_url=_optional_http_url(application.get("url")),
+            application_start_on=_optional_date(application.get("start_on")),
+            application_end_on=_optional_date(application.get("end_on")),
+            source_metadata=source_metadata,
+            updated_at=now,
+        )
+    )
+    return application
+
+
+def _insert_timeline_events(
+    connection: Connection,
+    *,
+    program_id: UUID,
+    payload: Mapping[str, Any],
+    application: Mapping[str, Any],
+) -> None:
+    raw_events = payload.get("timeline")
+    position = 0
+    seen: set[tuple[str, date | None, date | None]] = set()
+    if isinstance(raw_events, list):
+        for raw_event in raw_events:
+            event = _mapping(raw_event)
+            label = _optional_text(event.get("label"), maximum=500)
+            start_on = _optional_date(event.get("start_on"))
+            end_on = _optional_date(event.get("end_on"))
+            if label is None or (start_on is None and end_on is None):
+                continue
+            if start_on is not None and end_on is not None and start_on > end_on:
+                continue
+            key = (label.casefold(), start_on, end_on)
+            if key in seen:
+                continue
+            seen.add(key)
+            connection.execute(
+                insert(ProgramTimelineEvent).values(
+                    id=uuid4(),
+                    program_id=program_id,
+                    event_kind=_timeline_kind(event.get("kind")),
+                    label=label,
+                    start_on=start_on,
+                    end_on=end_on,
+                    evidence=_optional_text(event.get("evidence"), maximum=2_000),
+                    position=position,
+                )
+            )
+            position += 1
+    if position:
+        return
+    start_on = _optional_date(application.get("start_on"))
+    end_on = _optional_date(application.get("end_on"))
+    if start_on is None and end_on is None:
+        return
+    connection.execute(
+        insert(ProgramTimelineEvent).values(
+            id=uuid4(),
+            program_id=program_id,
+            event_kind=ProgramTimelineEventKind.APPLICATION,
+            label="Приём заявок",
+            start_on=start_on,
+            end_on=end_on,
+            evidence=None,
+            position=0,
+        )
+    )
+
+
+def _insert_scoped_funding(
+    connection: Connection,
+    *,
+    program_id: UUID,
+    payload: Mapping[str, Any],
+    fallback_funding: FundingInput | None,
+) -> None:
+    funding_payload = _mapping(payload.get("funding"))
+    raw_amounts = funding_payload.get("amounts")
+    position = 0
+    seen: set[tuple[ProgramFundingScope, tuple[tuple[str, object], ...], str | None]] = set()
+    if isinstance(raw_amounts, list):
+        for raw_amount in raw_amounts:
+            amount = _mapping(raw_amount)
+            scope = _funding_scope(amount.get("scope"))
+            value = amount.get("value")
+            if scope is None or not isinstance(value, Mapping):
+                continue
+            try:
+                funding = FundingInput.model_validate(value)
+            except ValueError:
+                continue
+            label = _optional_text(amount.get("label"), maximum=500)
+            fingerprint = (
+                scope,
+                tuple(sorted(funding.model_dump(mode="json", exclude_none=True).items())),
+                label,
+            )
+            if fingerprint in seen:
+                continue
+            seen.add(fingerprint)
+            connection.execute(
+                insert(ProgramFundingAmount).values(
+                    id=uuid4(),
+                    program_id=program_id,
+                    scope=scope,
+                    label=label,
+                    **funding.model_dump(),
+                    evidence=_optional_text(amount.get("evidence"), maximum=2_000),
+                    position=position,
+                )
+            )
+            position += 1
+    if position or fallback_funding is None:
+        return
+    connection.execute(
+        insert(ProgramFundingAmount).values(
+            id=uuid4(),
+            program_id=program_id,
+            scope=ProgramFundingScope.PER_PROGRAM,
+            label="Финансирование программы",
+            **fallback_funding.model_dump(),
+            evidence=None,
+            position=0,
+        )
+    )
+
+
+def _taxonomy_entries(payload: Mapping[str, Any], key: str) -> list[tuple[str, str]]:
+    taxonomy = _mapping(payload.get("taxonomy"))
+    raw_values = taxonomy.get(key)
+    entries: list[tuple[str, str]] = []
+    if not isinstance(raw_values, list):
+        return entries
+    for raw_value in raw_values:
+        value = _mapping(raw_value)
+        slug = _optional_text(value.get("slug"), maximum=100)
+        name = _optional_text(value.get("name"), maximum=255)
+        if slug is None or name is None or not re.fullmatch(r"[a-z0-9][a-z0-9-]*", slug):
+            continue
+        entry = (slug, name)
+        if entry not in entries:
+            entries.append(entry)
+    return entries
+
+
+def _link_taxonomy(
+    connection: Connection,
+    *,
+    program_id: UUID,
+    payload: Mapping[str, Any],
+) -> None:
+    for slug, name in _taxonomy_entries(payload, "themes"):
+        connection.execute(
+            postgresql_insert(Theme)
+            .values(id=uuid4(), slug=slug, name=name)
+            .on_conflict_do_nothing(index_elements=("slug",))
+        )
+        theme_id = connection.scalar(select(Theme.id).where(Theme.slug == slug))
+        if theme_id is not None:
+            connection.execute(
+                postgresql_insert(ProgramTheme)
+                .values(program_id=program_id, theme_id=theme_id)
+                .on_conflict_do_nothing(index_elements=("program_id", "theme_id"))
+            )
+    for slug, name in _taxonomy_entries(payload, "geographies"):
+        connection.execute(
+            postgresql_insert(Geography)
+            .values(id=uuid4(), slug=slug, name=name)
+            .on_conflict_do_nothing(index_elements=("slug",))
+        )
+        geography_id = connection.scalar(select(Geography.id).where(Geography.slug == slug))
+        if geography_id is not None:
+            connection.execute(
+                postgresql_insert(ProgramGeography)
+                .values(program_id=program_id, geography_id=geography_id)
+                .on_conflict_do_nothing(index_elements=("program_id", "geography_id"))
+            )
+
+
+def _insert_resources(
+    connection: Connection,
+    *,
+    program_id: UUID,
+    payload: Mapping[str, Any],
+    application: Mapping[str, Any],
+) -> None:
+    raw_resources = payload.get("artifacts")
+    position = 0
+    seen_urls: set[str] = set()
+
+    def insert_resource(
+        *,
+        raw_kind: object,
+        url: object,
+        title: object,
+        section: object,
+        content_format: object,
+    ) -> None:
+        nonlocal position
+        source_section = _optional_text(section, maximum=500)
+        resource_kind = _resource_kind(raw_kind, source_section)
+        resource_url = _optional_http_url(url)
+        if resource_kind is None or resource_url is None or resource_url in seen_urls:
+            return
+        if raw_kind == "reference" and source_section is None:
+            return
+        seen_urls.add(resource_url)
+        connection.execute(
+            insert(ProgramResource).values(
+                id=uuid4(),
+                program_id=program_id,
+                resource_kind=resource_kind,
+                title=_optional_text(title, maximum=500),
+                url=resource_url,
+                source_section=source_section,
+                content_format=_optional_text(content_format, maximum=100),
+                position=position,
+            )
+        )
+        position += 1
+
+    if isinstance(raw_resources, list):
+        for raw_resource in raw_resources:
+            resource = _mapping(raw_resource)
+            capture = _mapping(resource.get("capture"))
+            insert_resource(
+                raw_kind=resource.get("kind"),
+                url=resource.get("url"),
+                title=resource.get("label"),
+                section=resource.get("section_title"),
+                content_format=capture.get("content_format"),
+            )
+    insert_resource(
+        raw_kind="application",
+        url=application.get("url"),
+        title="Подать заявку",
+        section="Подача заявки",
+        content_format=None,
+    )
+
+
+_PUBLIC_CONTENT_CATEGORIES = {
+    "goals",
+    "opportunities",
+    "criteria",
+    "application",
+    "eligibility",
+    "funding",
+    "schedule",
+    "taxonomy",
+    "unclassified",
+}
+_CONTACT_TEXT_PATTERN = re.compile(
+    r"[\w.+-]+@[\w.-]+\.[A-Za-zА-Яа-я]{2,}|(?:\+?\d[\d()\s-]{6,}\d)",
+    re.UNICODE,
+)
+
+
+def _insert_content_sections(
+    connection: Connection,
+    *,
+    program_id: UUID,
+    payload: Mapping[str, Any],
+) -> None:
+    content_inventory = _mapping(payload.get("content_inventory"))
+    raw_blocks = content_inventory.get("blocks")
+    if not isinstance(raw_blocks, list):
+        return
+    position = 0
+    for raw_block in raw_blocks:
+        block = _mapping(raw_block)
+        category = _optional_text(block.get("category"), maximum=64)
+        heading = _optional_text(block.get("heading"), maximum=500)
+        content = _optional_text(block.get("text"))
+        if (
+            category not in _PUBLIC_CONTENT_CATEGORIES
+            or heading is None
+            or content is None
+            or _CONTACT_TEXT_PATTERN.search(content)
+        ):
+            continue
+        connection.execute(
+            insert(ProgramContentSection).values(
+                id=uuid4(),
+                program_id=program_id,
+                heading=heading,
+                category=category,
+                content=content,
+                is_public=True,
+                position=position,
+            )
+        )
+        position += 1
+
+
+def _insert_private_contacts(
+    connection: Connection,
+    *,
+    program_id: UUID,
+    payload: Mapping[str, Any],
+) -> None:
+    raw_contacts = payload.get("contacts")
+    if not isinstance(raw_contacts, list):
+        return
+    position = 0
+    for raw_contact in raw_contacts:
+        contact = _mapping(raw_contact)
+        name = _optional_text(contact.get("name"), maximum=255)
+        if name is None:
+            continue
+        connection.execute(
+            insert(ProgramContact).values(
+                id=uuid4(),
+                program_id=program_id,
+                name=name,
+                role=_optional_text(contact.get("role"), maximum=255),
+                email=_optional_text(contact.get("email"), maximum=320),
+                phone=_optional_text(contact.get("phone"), maximum=64),
+                source_evidence=_optional_text(contact.get("evidence"), maximum=2_000),
+                position=position,
+                is_public=False,
+            )
+        )
+        position += 1
+
+
 def _create_draft_program_from_candidate(
     connection: Connection,
     *,
@@ -857,6 +1300,7 @@ def _create_draft_program_from_candidate(
     if candidate.ingestion_status is not IngestionRunStatus.COMPLETED:
         raise ReviewPolicyError("only candidates from a completed ingestion run can be accepted")
     record = _record_payload(candidate)
+    payload = _mapping(record.get("payload"))
     raw_title = record.get("title")
     if not isinstance(raw_title, str) or not raw_title.strip():
         raise ReviewPolicyError("accepted candidates require a title")
@@ -895,11 +1339,24 @@ def _create_draft_program_from_candidate(
             observed_at=candidate.received_at,
         )
     )
-    if candidate.fingerprint.deadline_on is not None:
+    application = _insert_program_details(
+        connection,
+        program_id=program_id,
+        payload=payload,
+        now=now,
+    )
+    _insert_timeline_events(
+        connection,
+        program_id=program_id,
+        payload=payload,
+        application=application,
+    )
+    deadline_on = candidate.fingerprint.deadline_on or _optional_date(application.get("end_on"))
+    if deadline_on is not None:
         connection.execute(
             insert(ProgramDeadline).values(
                 program_id=program_id,
-                deadline_on=candidate.fingerprint.deadline_on,
+                deadline_on=deadline_on,
             )
         )
     if funding is not None:
@@ -909,6 +1366,21 @@ def _create_draft_program_from_candidate(
                 **funding.model_dump(),
             )
         )
+    _insert_scoped_funding(
+        connection,
+        program_id=program_id,
+        payload=payload,
+        fallback_funding=funding,
+    )
+    _link_taxonomy(connection, program_id=program_id, payload=payload)
+    _insert_resources(
+        connection,
+        program_id=program_id,
+        payload=payload,
+        application=application,
+    )
+    _insert_content_sections(connection, program_id=program_id, payload=payload)
+    _insert_private_contacts(connection, program_id=program_id, payload=payload)
     return program_id
 
 

@@ -1,5 +1,5 @@
 import { ExternalLink } from 'lucide-react';
-import { formatDeadline, isValidExternalUrl } from '../lib/format';
+import { formatDeadline, formatOptionalDate, isValidExternalUrl } from '../lib/format';
 import type { PublicProgram } from '../data-access/catalogMapper';
 import { FavoriteToggle } from './FavoriteToggle';
 import { Tag } from './ui';
@@ -20,9 +20,9 @@ export function ApiProgramCard({ program, isFavorite, onToggleFavorite, onOpen }
       className="group min-w-0 overflow-hidden rounded-lg border border-ink/10 bg-white/80 p-5 shadow-sm transition hover:-translate-y-1"
     >
       <div className="flex flex-wrap items-center gap-2">
-        <Tag>Опубликована</Tag>
+        <Tag>Проверено в Siderfold</Tag>
         <Tag>{formatDeadline(program.deadline)}</Tag>
-        {program.funding ? <Tag>{program.funding.label}</Tag> : <Tag>Сумма не указана</Tag>}
+        {program.funding ? <Tag>На программу: {program.funding.label}</Tag> : <Tag>Сумма не указана</Tag>}
       </div>
       <div className="mt-5 flex items-start justify-between gap-3">
         <div className="min-w-0">
@@ -31,23 +31,25 @@ export function ApiProgramCard({ program, isFavorite, onToggleFavorite, onOpen }
         </div>
         <FavoriteToggle itemName={program.title} isFavorite={isFavorite} onToggle={onToggleFavorite} />
       </div>
-      <p className="mt-3 text-sm leading-6 text-graphite">Описание не опубликовано через этот каталог.</p>
+      <p className="mt-3 text-sm leading-6 text-graphite">
+        {program.summary ?? 'Краткое описание не извлечено; подробные условия доступны на первоисточнике.'}
+      </p>
       <dl className="mt-5 grid gap-3 text-sm text-graphite sm:grid-cols-2">
         <div className="sm:col-span-2">
           <dt className="text-xs font-medium uppercase tracking-[0.08em] text-graphite/65">Параметры</dt>
           <dd className="mt-1 font-semibold text-ink">
             {program.regions.length > 0 || program.themes.length > 0
               ? [...program.regions, ...program.themes].join(', ')
-              : 'Регионы и тематики доступны в карточке'}
+              : 'Подробные условия — в карточке и на первоисточнике'}
           </dd>
         </div>
         <div>
-          <dt className="text-xs font-medium uppercase tracking-[0.08em] text-graphite/65">Актуальность</dt>
-          <dd className="mt-1 font-semibold text-ink">Обновлено {formatDeadline(program.updatedAt.slice(0, 10))}</dd>
+          <dt className="text-xs font-medium uppercase tracking-[0.08em] text-graphite/65">Дата на источнике</dt>
+          <dd className="mt-1 font-semibold text-ink">{formatOptionalDate(program.sourcePublishedOn)}</dd>
         </div>
         <div>
-          <dt className="text-xs font-medium uppercase tracking-[0.08em] text-graphite/65">Наблюдение</dt>
-          <dd className="mt-1 font-semibold text-ink">{formatDeadline(program.primarySource.observedAt.slice(0, 10))}</dd>
+          <dt className="text-xs font-medium uppercase tracking-[0.08em] text-graphite/65">Добавлено в Siderfold</dt>
+          <dd className="mt-1 font-semibold text-ink">{formatOptionalDate(program.publishedAt.slice(0, 10))}</dd>
         </div>
       </dl>
       <div className="mt-5 flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-center">

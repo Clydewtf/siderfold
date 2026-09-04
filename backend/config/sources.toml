@@ -37,15 +37,16 @@ schedule = "manual"
 status = "active"
 responsible = "siderfold-data"
 adapter_name = "potanin-competitions"
-adapter_version = "1.1.0"
+adapter_version = "1.3.0"
 secret_env_vars = []
 
 [sources.potanin-competitions.limits]
-max_requests = 140
+max_requests = 320
 max_response_bytes = 8000000
-max_total_bytes = 100000000
+max_total_bytes = 200000000
 max_records = 200
-timeout_seconds = 20
+timeout_seconds = 45
+max_run_seconds = 1800
 min_run_interval_seconds = 300
 
 [sources.telegram-cptgrantov-discovery]

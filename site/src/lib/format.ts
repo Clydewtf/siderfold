@@ -27,8 +27,19 @@ export function formatActivePeriod(program: Pick<SupportProgram, 'activeFrom' | 
 }
 
 export function formatDeadline(value: string | null): string {
-  if (!value) return 'Без дедлайна';
+  if (!value) return 'Срок не указан';
   return formatDate(value);
+}
+
+export function formatOptionalDate(value: string | null, fallback = 'Не указано'): string {
+  return value ? formatDate(value) : fallback;
+}
+
+export function formatDateRange(start: string | null, end: string | null): string {
+  if (start && end) return `${formatDate(start)} — ${formatDate(end)}`;
+  if (start) return `с ${formatDate(start)}`;
+  if (end) return `до ${formatDate(end)}`;
+  return 'Срок не указан';
 }
 
 export function formatMoneyRub(value: number | null): string {

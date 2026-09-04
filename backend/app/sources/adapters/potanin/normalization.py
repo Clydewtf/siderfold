@@ -48,12 +48,38 @@ _PERIOD_RE = re.compile(
     rf"(?:по|до|[-–—])\s*(?P<end>{_DATE_TOKEN_PATTERN})",
     re.IGNORECASE,
 )
-_UNTIL_RE = re.compile(
-    r"(?:при[её]м\s+заявок|подать\s+заявку|заявк[аи])[^.!?]{0,160}?\bдо\s+"
-    rf"(?P<end>{_DATE_TOKEN_PATTERN})",
+_SHARED_MONTH_PERIOD_RE = re.compile(
+    rf"\bс\s+(?P<start_day>\d{{1,2}})\s*(?:по|до)\s*"
+    rf"(?P<end_day>\d{{1,2}})\s+(?P<month>{_MONTHS_PATTERN})"
+    rf"(?:\s+(?P<year>\d{{4}})(?:\s*г(?:ода?|\.)?)?)?",
     re.IGNORECASE,
 )
-_MONEY_NUMBER_PATTERN = r"\d{1,3}(?:[\s\u00a0]\d{3})+|\d+(?:[.,]\d+)?"
+_DATE_TOKEN_RE = re.compile(_DATE_TOKEN_PATTERN, re.IGNORECASE)
+_SCHEDULE_EVENT_LABEL_RE = re.compile(
+    r"(?P<cycle>\b(?:[IVXLCDM]+|\d+)\s+цикл\b\s*)?"
+    r"(?P<label>"
+    r"(?:начал\w*|открыти\w*)\s+(?:при[её]м\w*|подач\w*)\s+заяв\w*"
+    r"|(?:окончани\w*|завершени\w*)\s+(?:при[её]м\w*|подач\w*)\s+заяв\w*"
+    r"|при[её]м\w*\s+заяв\w*(?:\s+на\s+конкурс\w*)?"
+    r"|подач\w*\s+заяв\w*(?:\s+на\s+конкурс\w*)?"
+    r"|экспертиз\w*(?:\s+заяв\w*)?"
+    r"|(?:оценк\w*|рассмотрени\w*)(?:\s+заяв\w*)?"
+    r"|объявлен\w*(?:\s+(?:результат\w*|состав\w+\s+победител\w*))?"
+    r"|итог\w*(?:\s+конкурс\w*)?"
+    r"|вводн\w*\s+семинар\w*(?:\s+для\s+победител\w*)?"
+    r"|заключен\w*\s+договор\w*(?:\s+с\s+победител\w*)?"
+    r"|начал\w*\s+(?:проект\w*|программ\w*|реализац\w*|выплат\w*)"
+    r"|голосован\w*(?:\s+[«\"].+?[»\"])?"
+    r"|семинар\w*(?:\s+для\s+победител\w*)?"
+    r"|выбор\w*\s+лучших\s+реализован\w*\s+проект\w*"
+    r"|взнос\w*\s+в\s+целев\w*\s+капитал\w*"
+    r")",
+    re.IGNORECASE,
+)
+_CYCLE_PREFIX_RE = re.compile(r"^(?:[IVXLCDM]+|\d+)\s+цикл\b", re.IGNORECASE)
+_MONEY_NUMBER_PATTERN = (
+    r"\d{1,3}(?:[\s\u00a0,]\d{3})+(?:[.,]\d+)?|\d+(?:[.,]\d+)?"
+)
 _MONEY_UNIT_PATTERN = (
     r"тыс\.?|тысяч(?:а|и)?|млн\.?|миллион(?:а|ов)?|млрд\.?|"
     r"миллиард(?:а|ов)?|руб(?:ль|ля|лей)?\.?|₽"
@@ -165,13 +191,18 @@ def _explicit_year(value: str) -> int | None:
     return None
 
 
-def _parse_application_period(start_text: str, end_text: str) -> tuple[date, date] | None:
+def _parse_application_period(
+    start_text: str,
+    end_text: str,
+    *,
+    fallback_year: int | None = None,
+) -> tuple[date, date] | None:
     """Parse a date range only when a year can be inferred without guessing."""
 
     start_year = _explicit_year(start_text)
     end_year = _explicit_year(end_text)
-    start = _parse_date_token(start_text, fallback_year=end_year)
-    end = _parse_date_token(end_text, fallback_year=start_year)
+    start = _parse_date_token(start_text, fallback_year=end_year or fallback_year)
+    end = _parse_date_token(end_text, fallback_year=start_year or fallback_year)
     if start is None or end is None:
         return None
 
@@ -180,6 +211,8 @@ def _parse_application_period(start_text: str, end_text: str) -> tuple[date, dat
             start = _parse_date_token(start_text, fallback_year=end.year - 1)
         elif end_year is None and start_year is not None:
             end = _parse_date_token(end_text, fallback_year=start.year + 1)
+        elif start_year is None and end_year is None and fallback_year is not None:
+            end = _parse_date_token(end_text, fallback_year=fallback_year + 1)
     if start is None or end is None or start > end:
         return None
     return start, end
@@ -191,81 +224,328 @@ class ApplicationDates:
     end_on: date | None
     evidence: tuple[str, ...] = ()
     error: str | None = None
+    warning: str | None = None
 
 
-def extract_application_dates(texts: Iterable[str]) -> ApplicationDates:
-    """Extract explicit application dates, refusing contradictory evidence."""
+@dataclass(frozen=True)
+class TimelineEvent:
+    label: str
+    kind: str
+    start_on: date | None
+    end_on: date | None
+    evidence: str
+    date_parse_error: bool = False
 
-    period_candidates: list[tuple[date, date, str]] = []
-    until_candidates: list[tuple[date, str]] = []
-    for text in texts:
-        normalized = normalize_whitespace(text)
-        if not normalized:
+
+@dataclass(frozen=True)
+class _ScheduleSegment:
+    label: str
+    detail: str
+    evidence: str
+
+
+def _shared_month_period(
+    value: str,
+    *,
+    fallback_year: int | None = None,
+) -> tuple[date, date] | None:
+    match = _SHARED_MONTH_PERIOD_RE.search(value)
+    if match is None:
+        return None
+    raw_year = match.group("year")
+    if raw_year is None and fallback_year is None:
+        return None
+    try:
+        month = RUSSIAN_MONTHS[match.group("month").lower()]
+        year = int(raw_year) if raw_year is not None else fallback_year
+        if year is None:
+            return None
+        return (
+            date(year, month, int(match.group("start_day"))),
+            date(year, month, int(match.group("end_day"))),
+        )
+    except ValueError:
+        return None
+
+
+def extract_date_span(
+    value: str,
+    *,
+    fallback_year: int | None = None,
+) -> tuple[date | None, date | None]:
+    """Return explicit source dates, inferring a shared month/year only when written."""
+
+    normalized = normalize_whitespace(value)
+    if not normalized:
+        return None, None
+    shared_period = _shared_month_period(normalized, fallback_year=fallback_year)
+    if shared_period is not None:
+        return shared_period
+    for match in _PERIOD_RE.finditer(normalized):
+        period = _parse_application_period(
+            match.group("start"),
+            match.group("end"),
+            fallback_year=fallback_year,
+        )
+        if period is not None:
+            return period
+    for match in _DATE_TOKEN_RE.finditer(normalized):
+        parsed = _parse_date_token(match.group(), fallback_year=fallback_year)
+        if parsed is not None:
+            return None, parsed
+    return None, None
+
+
+def parse_source_date(value: str) -> date | None:
+    """Parse a labelled source date only when the page includes an explicit year."""
+
+    _start, end = extract_date_span(value)
+    return end
+
+
+def _timeline_kind(label: str) -> str:
+    normalized = normalize_heading(label)
+    if "экспертиз" in normalized or "оценк" in normalized or "рассмотрен" in normalized:
+        return "evaluation"
+    if "договор" in normalized or "контракт" in normalized:
+        return "contracting"
+    if "результат" in normalized or "победител" in normalized or "итог" in normalized:
+        return "results"
+    if (
+        "реализац" in normalized
+        or "исполнен" in normalized
+        or ("начал" in normalized and ("проект" in normalized or "выплат" in normalized))
+    ):
+        return "implementation"
+    if (
+        ("начал" in normalized or "открыти" in normalized)
+        and ("прием" in normalized or "приём" in normalized or "подач" in normalized)
+        and "заяв" in normalized
+    ):
+        return "application_open"
+    if (
+        ("окончани" in normalized or "завершени" in normalized)
+        and ("прием" in normalized or "приём" in normalized or "подач" in normalized)
+        and "заяв" in normalized
+    ):
+        return "application_close"
+    if "заяв" in normalized or "прием" in normalized or "приём" in normalized:
+        return "application"
+    return "other"
+
+
+def _segment_label_and_detail(value: str) -> tuple[str, str]:
+    label, separator, detail = value.partition(":")
+    if not separator:
+        date_match = _DATE_TOKEN_RE.search(value)
+        if date_match is not None:
+            label = value[: date_match.start()]
+            detail = value[date_match.start() :]
+        else:
+            label = value
+            detail = value
+    label = re.sub(r"\b(?:с|по|до|не\s+позднее)\s*$", "", label, flags=re.IGNORECASE)
+    return normalize_whitespace(label), normalize_whitespace(detail)
+
+
+def _schedule_segments(value: str) -> tuple[_ScheduleSegment, ...]:
+    normalized = normalize_whitespace(value)
+    if not normalized:
+        return ()
+    matches = tuple(_SCHEDULE_EVENT_LABEL_RE.finditer(normalized))
+    if not matches:
+        return ()
+
+    segments: list[_ScheduleSegment] = []
+    current_cycle: str | None = None
+    for index, match in enumerate(matches):
+        next_start = matches[index + 1].start() if index + 1 < len(matches) else len(normalized)
+        evidence = normalized[match.start() : next_start].strip(" ;")
+        if not evidence:
             continue
-        lower = normalized.lower()
-        if not any(token in lower for token in ("заяв", "подач", "прием", "приём")):
+        cycle = normalize_whitespace(match.group("cycle") or "")
+        if cycle:
+            current_cycle = cycle
+        label, detail = _segment_label_and_detail(evidence)
+        if not label:
             continue
+        if current_cycle and _CYCLE_PREFIX_RE.match(label) is None:
+            label = f"{current_cycle} — {label}"
+        segments.append(
+            _ScheduleSegment(
+                label=label[:500],
+                detail=detail,
+                evidence=evidence,
+            )
+        )
+    return tuple(segments)
 
-        for match in _PERIOD_RE.finditer(normalized):
-            period = _parse_application_period(match.group("start"), match.group("end"))
-            if period is None:
-                return ApplicationDates(
-                    start_on=None,
-                    end_on=None,
-                    evidence=(normalized,),
-                    error="application_period_invalid",
+
+def extract_timeline_events(
+    texts: Iterable[str],
+    *,
+    fallback_year: int | None = None,
+) -> tuple[TimelineEvent, ...]:
+    """Preserve labelled schedule events without treating evaluation as application."""
+
+    events: list[TimelineEvent] = []
+    seen: set[tuple[str, date | None, date | None]] = set()
+    for raw_text in texts:
+        for segment in _schedule_segments(raw_text):
+            start_on, end_on = extract_date_span(
+                segment.detail,
+                fallback_year=fallback_year,
+            )
+            date_parse_error = (
+                start_on is None
+                and end_on is None
+                and _DATE_TOKEN_RE.search(segment.detail) is not None
+            )
+            if start_on is None and end_on is None and not date_parse_error:
+                continue
+            key = (segment.label.casefold(), start_on, end_on)
+            if key in seen:
+                continue
+            seen.add(key)
+            events.append(
+                TimelineEvent(
+                    label=segment.label,
+                    kind=_timeline_kind(segment.label),
+                    start_on=start_on,
+                    end_on=end_on,
+                    evidence=segment.evidence,
+                    date_parse_error=date_parse_error,
                 )
-            period_candidates.append((*period, normalized))
+            )
+    return tuple(events)
 
-        for match in _UNTIL_RE.finditer(normalized):
-            end = _parse_date_token(match.group("end"))
-            if end is not None:
-                until_candidates.append((end, normalized))
 
-    unique_periods = {(start, end) for start, end, _evidence in period_candidates}
-    unique_untils = {end for end, _evidence in until_candidates}
-    if not unique_periods and not unique_untils:
+def _unique_evidence(events: Iterable[TimelineEvent]) -> tuple[str, ...]:
+    return tuple(dict.fromkeys(event.evidence for event in events if event.evidence))
+
+
+def _multiple_application_windows_are_explicit(events: Iterable[TimelineEvent]) -> bool:
+    event_list = tuple(events)
+    return bool(event_list) and all("цикл" in normalize_heading(event.label) for event in event_list)
+
+
+def extract_application_dates(events: Iterable[TimelineEvent]) -> ApplicationDates:
+    """Return one canonical application interval only when the source states one."""
+
+    application_events = tuple(
+        event
+        for event in events
+        if event.kind in {"application", "application_open", "application_close"}
+    )
+    if not application_events:
         return ApplicationDates(start_on=None, end_on=None)
-    if unique_periods:
-        period_ends = {end for _start, end in unique_periods}
-        if len(unique_periods) > 1 or (unique_untils and not unique_untils <= period_ends):
-            evidence = tuple(
-                evidence for _start, _end, evidence in period_candidates
-            ) + tuple(evidence for _end, evidence in until_candidates)
+    invalid_events = tuple(event for event in application_events if event.date_parse_error)
+    if invalid_events:
+        return ApplicationDates(
+            start_on=None,
+            end_on=None,
+            evidence=_unique_evidence(invalid_events),
+            error="application_period_invalid",
+        )
+
+    ranged_events = tuple(
+        event
+        for event in application_events
+        if event.kind == "application" and (event.start_on is not None or event.end_on is not None)
+    )
+    unique_ranges = tuple(
+        dict.fromkeys((event.start_on, event.end_on) for event in ranged_events)
+    )
+    if len(unique_ranges) == 1:
+        start_on, end_on = unique_ranges[0]
+        return ApplicationDates(
+            start_on=start_on,
+            end_on=end_on,
+            evidence=_unique_evidence(ranged_events),
+        )
+    if len(unique_ranges) > 1:
+        evidence = _unique_evidence(ranged_events)
+        if _multiple_application_windows_are_explicit(ranged_events):
             return ApplicationDates(
                 start_on=None,
                 end_on=None,
                 evidence=evidence,
-                error="application_period_conflict",
+                warning="multiple_application_windows",
             )
-        start, end = next(iter(unique_periods))
-        return ApplicationDates(
-            start_on=start,
-            end_on=end,
-            evidence=tuple(
-                evidence for _start, _end, evidence in period_candidates
-            ) + tuple(evidence for _end, evidence in until_candidates),
-        )
-
-    if len(unique_untils) > 1:
         return ApplicationDates(
             start_on=None,
             end_on=None,
-            evidence=tuple(evidence for _end, evidence in until_candidates),
+            evidence=evidence,
             error="application_period_conflict",
         )
-    end = next(iter(unique_untils))
+
+    opening_events = tuple(
+        event
+        for event in application_events
+        if event.kind == "application_open" and (event.start_on is not None or event.end_on is not None)
+    )
+    closing_events = tuple(
+        event
+        for event in application_events
+        if event.kind == "application_close" and (event.start_on is not None or event.end_on is not None)
+    )
+    if len(opening_events) <= 1 and len(closing_events) <= 1:
+        start_on = (
+            opening_events[0].start_on or opening_events[0].end_on
+            if opening_events
+            else None
+        )
+        end_on = (
+            closing_events[0].end_on or closing_events[0].start_on
+            if closing_events
+            else None
+        )
+        if start_on is None and end_on is None:
+            return ApplicationDates(start_on=None, end_on=None)
+        if start_on is not None and end_on is not None and start_on > end_on:
+            return ApplicationDates(
+                start_on=None,
+                end_on=None,
+                evidence=_unique_evidence((*opening_events, *closing_events)),
+                error="application_period_conflict",
+            )
+        return ApplicationDates(
+            start_on=start_on,
+            end_on=end_on,
+            evidence=_unique_evidence((*opening_events, *closing_events)),
+        )
+
     return ApplicationDates(
         start_on=None,
-        end_on=end,
-        evidence=tuple(evidence for _end, evidence in until_candidates),
+        end_on=None,
+        evidence=_unique_evidence(application_events),
+        error="application_period_conflict",
     )
 
 
 def _money_amount_from_parts(number: str, unit: str) -> Decimal | None:
     raw_number = number.replace("\u00a0", " ").replace(" ", "")
+    separators = [index for index, char in enumerate(raw_number) if char in {",", "."}]
+    if len(separators) > 1:
+        decimal_index = separators[-1]
+        decimal_digits = raw_number[decimal_index + 1 :]
+        if len(decimal_digits) in {1, 2}:
+            raw_number = (
+                raw_number[:decimal_index].replace(",", "").replace(".", "")
+                + "."
+                + decimal_digits
+            )
+        else:
+            raw_number = raw_number.replace(",", "").replace(".", "")
+    elif len(separators) == 1:
+        separator_index = separators[0]
+        fractional_digits = raw_number[separator_index + 1 :]
+        if len(fractional_digits) == 3:
+            raw_number = raw_number.replace(",", "").replace(".", "")
+        elif raw_number[separator_index] == ",":
+            raw_number = raw_number.replace(",", ".")
     try:
-        value = Decimal(raw_number.replace(",", "."))
+        value = Decimal(raw_number)
     except InvalidOperation:
         return None
     normalized_unit = unit.lower().rstrip(".")
@@ -328,7 +608,11 @@ def extract_total_grant_fund(
     matches: list[tuple[Decimal, str, bool, str | None]] = []
     for raw_value in texts:
         heading, text = _funding_text(raw_value)
-        heading_mentions_fund = "грантовый фонд" in normalize_heading(heading)
+        normalized_heading = normalize_heading(heading)
+        heading_mentions_fund = any(
+            marker in normalized_heading
+            for marker in ("грантовый фонд", "общий фонд", "фонд поддержки", "бюджет конкурса")
+        )
         for sentence in _funding_sentences(text):
             sentence_mentions_fund = bool(
                 re.search(r"(?:общий\s+)?грантовый\s+фонд", sentence, re.IGNORECASE)
@@ -537,6 +821,11 @@ _THEMES = (
     ("science", "Наука", re.compile(r"\bнаук", re.IGNORECASE)),
     ("culture", "Культура", re.compile(r"\bкультур", re.IGNORECASE)),
     ("social-sport", "Социальный спорт", re.compile(r"социальн\w*\s+спорт", re.IGNORECASE)),
+    (
+        "social-support",
+        "Социальная поддержка",
+        re.compile(r"социальн\w*\s+поддержк|уязвим\w*\s+социальн\w*\s+групп", re.IGNORECASE),
+    ),
     ("philanthropy", "Благотворительность", re.compile(r"благотвор", re.IGNORECASE)),
     ("civil-society", "Гражданское общество", re.compile(r"гражданск", re.IGNORECASE)),
 )
@@ -556,6 +845,12 @@ def normalize_geographies(texts: Iterable[str]) -> list[dict[str, str]]:
     if re.search(
         r"(?:все\s+регионы\s+россии|всех\s+регионах\s+россии|по\s+всей\s+россии|"
         r"на\s+всей\s+территории\s+россии|российск\w*\s+федерац)",
+        combined,
+        re.IGNORECASE,
+    ):
+        return [{"slug": "russia", "name": "Россия"}]
+    if re.search(
+        r"российск\w*\s+(?:организац|нко|юридическ\w*\s+лиц|участник)",
         combined,
         re.IGNORECASE,
     ):

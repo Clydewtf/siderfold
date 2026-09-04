@@ -13,6 +13,7 @@ from app.sources.adapters.potanin.normalization import (
     extract_application_dates,
     extract_per_program_funding,
     extract_total_grant_fund,
+    extract_timeline_events,
     funding_payload,
     normalize_competition_url,
     normalize_geographies,
@@ -22,6 +23,7 @@ from app.sources.adapters.potanin.normalization import (
     normalize_whitespace,
     parse_rub_amounts,
     parse_sitemap_lastmod,
+    parse_source_date,
 )
 
 
@@ -183,14 +185,16 @@ def parse_competitions_sitemap(content: bytes) -> SitemapParseResult:
 
 
 def _content_root(root: Any) -> Any:
+    candidates = root.xpath("(//main | //article)[1]")
+    if candidates:
+        return candidates[0]
     candidates = root.xpath(
         "//*[contains(concat(' ', normalize-space(@class), ' '), ' contest__info ') "
         "or @data-competition-content]"
     )
     if candidates:
         return candidates[0]
-    candidates = root.xpath("(//main | //article)[1]")
-    return candidates[0] if candidates else root
+    return root
 
 
 def _text_without_heading(container: Any, heading: Any) -> str:
@@ -211,6 +215,10 @@ def _text_without_heading(container: Any, heading: Any) -> str:
 
 
 _MAX_BLOCK_TEXT_CHARS = 10_000
+_SCHEDULE_YEAR_CONTEXT_RE = re.compile(
+    r"\b(?:в\s+течение|в|на)\s+(?P<year>20\d{2})\s+год(?:а|у)?\b",
+    re.IGNORECASE,
+)
 
 
 def _section_category(title: str) -> str:
@@ -226,7 +234,10 @@ def _section_category(title: str) -> str:
         ("criteria", ("критери", "оценк", "допуск")),
         ("application", ("заявк", "как участвовать", "подать")),
         ("eligibility", ("кто может", "требован", "участник", "условия участия")),
-        ("funding", ("грантовый фонд", "финансирован", "поддержк", "размер гранта")),
+        (
+            "funding",
+            ("грантовый фонд", "финансирован", "фонд поддержки", "поддержк", "размер гранта"),
+        ),
         ("documents", ("документ", "положени", "правил", "регламент")),
         ("taxonomy", ("направлен", "тем", "географ", "регион", "территор", "номинац")),
         ("contacts", ("контакт", "организатор")),
@@ -236,6 +247,31 @@ def _section_category(title: str) -> str:
         if any(term in heading for term in terms):
             return category
     return "unclassified"
+
+
+def _heading_category(heading: Any, title: str) -> str:
+    category = _section_category(title)
+    if category != "unclassified":
+        return category
+    parent = heading.getparent()
+    if parent is None:
+        return category
+    has_contact_link = bool(
+        parent.xpath(".//a[starts-with(@href, 'mailto:') or starts-with(@href, 'tel:')]")
+    )
+    return "contacts" if has_contact_link else category
+
+
+_CATALOG_TAIL_HEADINGS = {
+    "новости",
+    "события",
+    "истории",
+    "похожие материалы",
+}
+
+
+def _is_catalog_tail_heading(title: str) -> bool:
+    return normalize_heading(title) in _CATALOG_TAIL_HEADINGS
 
 
 def _bounded_text(value: str) -> tuple[str, bool]:
@@ -328,6 +364,8 @@ def _extract_content_blocks(scope: Any, source_url: str) -> list[dict[str, objec
         title = _node_text(heading)
         if not title:
             continue
+        if _is_catalog_tail_heading(title):
+            break
         fragments: list[str] = []
         related_nodes: list[Any] = [heading]
         sibling = heading.getnext()
@@ -348,8 +386,9 @@ def _extract_content_blocks(scope: Any, source_url: str) -> list[dict[str, objec
                     related_nodes = [parent]
                     value = _text_without_heading(parent, heading)
         text, text_truncated = _bounded_text(value)
-        category = _section_category(title)
+        category = _heading_category(heading, title)
         links: list[dict[str, object]] = []
+        items: list[str] = []
         for node in related_nodes:
             for link in _links_in_node(
                 node,
@@ -359,6 +398,13 @@ def _extract_content_blocks(scope: Any, source_url: str) -> list[dict[str, objec
             ):
                 if link not in links:
                     links.append(link)
+            list_nodes = node.xpath(".//li")
+            if _tag_name(node) == "li":
+                list_nodes.insert(0, node)
+            for list_node in list_nodes:
+                item = _node_text(list_node)
+                if item and item not in items:
+                    items.append(item)
         if not text and not links:
             continue
         blocks.append(
@@ -370,6 +416,7 @@ def _extract_content_blocks(scope: Any, source_url: str) -> list[dict[str, objec
                 "text": text or None,
                 "text_truncated": text_truncated,
                 "links": links,
+                "items": items,
             }
         )
     return blocks
@@ -388,7 +435,10 @@ def _extract_sections(blocks: Iterable[dict[str, object]]) -> dict[str, str]:
 
 def _is_total_fund_section(title: str) -> bool:
     heading = normalize_heading(title)
-    return "грантовый фонд" in heading or "общий фонд" in heading
+    return any(
+        marker in heading
+        for marker in ("грантовый фонд", "общий фонд", "фонд поддержки", "бюджет конкурса")
+    )
 
 
 def _per_program_funding_sections(
@@ -417,6 +467,234 @@ def _first_summary(scope: Any) -> str | None:
         if len(value) >= 20:
             return value
     return None
+
+
+def _summary_from_blocks(blocks: Iterable[dict[str, object]], scope: Any) -> str | None:
+    for category in ("goals", "opportunities", "eligibility"):
+        for block in blocks:
+            if block.get("category") != category:
+                continue
+            value = block.get("text")
+            if isinstance(value, str) and len(value) >= 20:
+                return value
+    return _first_summary(scope)
+
+
+def _first_category_text(
+    blocks: Iterable[dict[str, object]],
+    category: str,
+) -> str | None:
+    for block in blocks:
+        if block.get("category") != category:
+            continue
+        value = block.get("text")
+        if isinstance(value, str) and value:
+            return value
+    return None
+
+
+def _source_publication_date(root: Any) -> tuple[str | None, tuple[ParserIssue, ...]]:
+    values: list[str] = []
+    labels = root.xpath("//*[normalize-space()='Дата публикации']")
+    for label in labels:
+        sibling = label.getnext()
+        if sibling is not None:
+            parsed = parse_source_date(_node_text(sibling))
+            if parsed is not None:
+                values.append(parsed.isoformat())
+    unique_values = tuple(dict.fromkeys(values))
+    if len(unique_values) <= 1:
+        return (unique_values[0] if unique_values else None), ()
+    return (
+        None,
+        (
+            ParserIssue(
+                severity="error",
+                code="source_publication_date_conflict",
+                field="source_published_on",
+                message="The source exposes conflicting publication dates on one card.",
+            ),
+        ),
+    )
+
+
+def _access_mode(eligibility_text: str | None) -> str:
+    if not eligibility_text:
+        return "unknown"
+    if re.search(r"приглашени\w*\s+(?:от\s+)?фонд|по\s+приглашени", eligibility_text, re.IGNORECASE):
+        return "invitation_only"
+    if re.search(r"открыт\w*\s+для|все\s+желающ|любой\s+организац", eligibility_text, re.IGNORECASE):
+        return "open"
+    return "unknown"
+
+
+def _schedule_items(blocks: Iterable[dict[str, object]]) -> list[str]:
+    items: list[str] = []
+    for block in blocks:
+        if block.get("category") != "schedule":
+            continue
+        raw_items = block.get("items")
+        found_items = False
+        if isinstance(raw_items, list):
+            for item in raw_items:
+                if isinstance(item, str) and item and item not in items:
+                    items.append(item)
+                    found_items = True
+        if found_items:
+            continue
+        value = block.get("text")
+        if isinstance(value, str) and value and value not in items:
+            items.append(value)
+    return items
+
+
+def _schedule_year_context(blocks: Iterable[dict[str, object]]) -> tuple[int | None, str | None]:
+    contexts: list[tuple[int, str]] = []
+    for block in blocks:
+        if block.get("category") != "schedule":
+            continue
+        values: list[str] = []
+        text = block.get("text")
+        if isinstance(text, str):
+            values.append(text)
+        raw_items = block.get("items")
+        if isinstance(raw_items, list):
+            values.extend(item for item in raw_items if isinstance(item, str))
+        for value in values:
+            normalized = normalize_whitespace(value)
+            if "цикл" not in normalize_heading(normalized):
+                continue
+            for match in _SCHEDULE_YEAR_CONTEXT_RE.finditer(normalized):
+                candidate = (int(match.group("year")), normalized)
+                if candidate not in contexts:
+                    contexts.append(candidate)
+    years = tuple(dict.fromkeys(year for year, _evidence in contexts))
+    if len(years) != 1:
+        return None, None
+    year = years[0]
+    evidence = next(evidence for candidate, evidence in contexts if candidate == year)
+    return year, evidence
+
+
+def _contact_entries(scope: Any) -> tuple[list[dict[str, str]], tuple[ParserIssue, ...]]:
+    contacts: list[dict[str, str]] = []
+    issues: list[ParserIssue] = []
+    contact_headings = [
+        heading
+        for heading in scope.xpath(".//h2 | .//h3")
+        if _section_category(_node_text(heading)) == "contacts"
+    ]
+    for heading in contact_headings:
+        container = heading.getparent()
+        if container is None:
+            continue
+        people = container.xpath(".//h3")
+        for person in people:
+            name = _node_text(person)
+            if not name:
+                continue
+            person_parent = person.getparent()
+            person_container = person_parent if person_parent is not None else container
+            email_links = person_container.xpath(".//a[starts-with(@href, 'mailto:')]")
+            phone_links = person_container.xpath(".//a[starts-with(@href, 'tel:')]")
+            role_nodes = person_container.xpath(".//p")
+            role = next(
+                (
+                    value
+                    for node in role_nodes
+                    if (value := _node_text(node)) and value != name
+                ),
+                None,
+            )
+            email = (
+                (email_links[0].get("href") or "").removeprefix("mailto:").strip()
+                if email_links
+                else None
+            )
+            phone = (
+                (phone_links[0].get("href") or "").removeprefix("tel:").strip()
+                if phone_links
+                else None
+            )
+            evidence = _node_text(person_container)
+            entry = {
+                "name": name[:255],
+                "evidence": evidence[:2_000],
+            }
+            if role:
+                entry["role"] = role[:255]
+            if email:
+                entry["email"] = email[:320]
+            if phone:
+                entry["phone"] = phone[:64]
+            if entry not in contacts:
+                contacts.append(entry)
+        section_text = _node_text(container)
+        if not people and re.search(
+            r"[\w.+-]+@[\w.-]+\.[A-Za-zА-Яа-я]{2,}|(?:\+?\d[\d()\s-]{6,}\d)",
+            section_text,
+            re.UNICODE,
+        ):
+            issues.append(
+                ParserIssue(
+                    severity="warning",
+                    code="contacts_require_manual_review",
+                    field="contacts",
+                    message="A contact section was found but no structured contact card could be read.",
+                )
+            )
+    return contacts, tuple(issues)
+
+
+def _funding_amounts(
+    *,
+    total_fund: Any,
+    per_program_funding: Any,
+) -> list[dict[str, object]]:
+    amounts: list[dict[str, object]] = []
+
+    def append_observation(
+        observation: Any,
+        *,
+        scope: str,
+        fallback_label: str,
+    ) -> None:
+        breakdown = getattr(observation, "breakdown", ())
+        entries = breakdown or (
+            {
+                "value": observation.funding.model_dump(mode="json", exclude_none=True),
+                "evidence": " ".join(getattr(observation, "evidence", ())),
+                "label": fallback_label,
+            },
+        )
+        for entry in entries:
+            if not isinstance(entry, dict):
+                continue
+            value = entry.get("value")
+            if not isinstance(value, dict):
+                continue
+            if value.get("value_kind") == "not_stated" and not entry.get("evidence"):
+                continue
+            amount = {
+                "scope": scope,
+                "value": value,
+                "label": entry.get("label") or fallback_label,
+                "evidence": entry.get("evidence") or None,
+            }
+            if amount not in amounts:
+                amounts.append(amount)
+
+    append_observation(
+        total_fund,
+        scope="announced_total",
+        fallback_label="Фонд конкурса",
+    )
+    append_observation(
+        per_program_funding,
+        scope="per_recipient",
+        fallback_label="На одну программу или получателя",
+    )
+    return amounts
 
 
 _STATUS_PATTERNS = (
@@ -610,21 +888,40 @@ def parse_competition_page(
 
     content_blocks = _extract_content_blocks(scope, source_url)
     sections = _extract_sections(content_blocks)
+    competition_text = normalize_whitespace(
+        " ".join(
+            value
+            for block in content_blocks
+            if isinstance((value := block.get("text")), str)
+        )
+    ) or main_text
     source_status, status_issues = _source_status(scope)
     issues.extend(status_issues)
+    source_published_on, source_date_issues = _source_publication_date(root)
+    issues.extend(source_date_issues)
+    contacts, contact_issues = _contact_entries(scope)
+    issues.extend(contact_issues)
 
-    schedule_texts = _relevant_section_texts(
-        sections,
-        ("когда", "порядок", "график", "прием", "приём", "заяв"),
-    )
-    schedule_texts.extend(
-        _node_text(node)
-        for node in scope.xpath(".//*[contains(@class, 'schedule')]")
-        if _node_text(node)
-    )
+    schedule_texts = _schedule_items(content_blocks)
     if not schedule_texts:
-        schedule_texts.append(main_text)
-    dates = extract_application_dates(schedule_texts)
+        schedule_texts = _relevant_section_texts(
+            sections,
+            ("когда", "порядок", "график", "прием", "приём", "заяв"),
+        )
+    if not schedule_texts:
+        schedule_texts.extend(
+            _node_text(node)
+            for node in scope.xpath(".//*[contains(@class, 'schedule')]")
+            if _node_text(node)
+        )
+    if not schedule_texts:
+        schedule_texts.append(competition_text)
+    schedule_year, schedule_year_evidence = _schedule_year_context(content_blocks)
+    timeline_events = extract_timeline_events(
+        schedule_texts,
+        fallback_year=schedule_year,
+    )
+    dates = extract_application_dates(timeline_events)
     if dates.error:
         issues.append(
             ParserIssue(
@@ -642,7 +939,7 @@ def parse_competition_page(
         or "грантовый фонд" in normalize_heading(title)
     ]
     if not total_fund_texts:
-        total_fund_texts = [main_text]
+        total_fund_texts = [competition_text]
     total_fund = extract_total_grant_fund(total_fund_texts)
     if total_fund.error:
         issues.append(
@@ -662,9 +959,11 @@ def parse_competition_page(
         ("направлен", "тем", "географ", "регион", "территор"),
     )
     if not taxonomy_texts:
-        taxonomy_texts = [main_text]
+        taxonomy_texts = [competition_text]
     links, link_warnings = _collect_links(scope, content_blocks, source_url)
     warnings = list(link_warnings)
+    if dates.warning:
+        warnings.append(dates.warning)
     if per_program_funding.warning:
         warnings.append(per_program_funding.warning)
     if total_fund.warning:
@@ -680,6 +979,25 @@ def parse_competition_page(
         if isinstance(heading, str):
             warnings.append(f"unclassified_content_block: {heading}")
 
+    eligibility_summary = _first_category_text(content_blocks, "eligibility")
+
+    application_payload: dict[str, object] = {
+        "start_on": dates.start_on.isoformat() if dates.start_on is not None else None,
+        "end_on": dates.end_on.isoformat() if dates.end_on is not None else None,
+        "url": (
+            links["application_candidates"][0]
+            if len(links["application_candidates"]) == 1
+            else None
+        ),
+        "candidate_urls": links["application_candidates"],
+        "date_evidence": list(dates.evidence),
+    }
+    if schedule_year is not None and schedule_year_evidence is not None:
+        application_payload["year_context"] = {
+            "year": schedule_year,
+            "evidence": schedule_year_evidence,
+        }
+
     record = {
         "record_key": source_url,
         "title": title,
@@ -688,27 +1006,39 @@ def parse_competition_page(
         "funding": per_program_funding.funding.model_dump(mode="json", exclude_none=True),
         "payload": {
             "source_status": source_status or "unknown",
+            "source_published_on": source_published_on,
             "source_last_modified_at": sitemap_last_modified_at,
-            "application": {
-                "start_on": dates.start_on.isoformat() if dates.start_on is not None else None,
-                "end_on": dates.end_on.isoformat() if dates.end_on is not None else None,
-                "url": (
-                    links["application_candidates"][0]
-                    if len(links["application_candidates"]) == 1
-                    else None
-                ),
-                "candidate_urls": links["application_candidates"],
-                "date_evidence": list(dates.evidence),
-            },
+            "application": application_payload,
+            "timeline": [
+                {
+                    "kind": event.kind,
+                    "label": event.label,
+                    "start_on": event.start_on.isoformat() if event.start_on else None,
+                    "end_on": event.end_on.isoformat() if event.end_on else None,
+                    "evidence": event.evidence,
+                }
+                for event in timeline_events
+                if event.start_on is not None or event.end_on is not None
+            ],
             "funding": {
                 "total_grant_fund": funding_payload(total_fund),
                 "per_program": funding_payload(per_program_funding),
+                "amounts": _funding_amounts(
+                    total_fund=total_fund,
+                    per_program_funding=per_program_funding,
+                ),
             },
             "taxonomy": {
                 "themes": normalize_themes(taxonomy_texts),
                 "geographies": normalize_geographies(taxonomy_texts),
             },
-            "summary": _first_summary(scope),
+            "summary": _summary_from_blocks(content_blocks, scope),
+            "eligibility": {
+                "summary": eligibility_summary,
+                "geography_note": eligibility_summary,
+                "access_mode": _access_mode(eligibility_summary),
+            },
+            "contacts": contacts,
             "sections": sections,
             "content_inventory": {
                 "blocks": content_blocks,

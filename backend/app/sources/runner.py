@@ -31,6 +31,7 @@ from app.sources.contract import (
     AdapterIssue,
     AdapterQualityMetrics,
     AdapterReport,
+    AdapterRunTimeoutError,
     AdapterRunSummary,
     AdapterStage,
     DiscoveredResource,
@@ -123,8 +124,12 @@ def _failure_report(
 def _row_issues(rows: Sequence) -> tuple[AdapterIssue, ...]:
     issues: list[AdapterIssue] = []
     for row in rows:
+        record_url = row.raw_payload.get("record_url")
+        resource_key = record_url if isinstance(record_url, str) and len(record_url) <= 512 else None
         for issue in row.issues:
-            issues.append(validation_issue_to_adapter_issue(issue))
+            issues.append(
+                validation_issue_to_adapter_issue(issue, resource_key=resource_key)
+            )
     return tuple(issues)
 
 
@@ -332,6 +337,7 @@ def execute_adapter(
     project_root: Path,
     started_at: datetime | None = None,
     raw_capture_dir: Path | None = None,
+    progress_reporter: Callable[[str], None] | None = None,
 ) -> AdapterExecution:
     started = started_at or datetime.now(timezone.utc)
     context = AdapterContext(
@@ -340,6 +346,7 @@ def execute_adapter(
         project_root=project_root,
         started_at=started,
         raw_capture_dir=raw_capture_dir,
+        progress_reporter=progress_reporter,
     )
     pipeline_issues: list[AdapterIssue] = []
     fetched_results: list[FetchResult] = []
@@ -357,6 +364,16 @@ def execute_adapter(
 
     try:
         discovery = adapter.discover(context)
+    except AdapterRunTimeoutError as error:
+        pipeline_issues.append(
+            AdapterIssue(
+                stage=AdapterStage.DISCOVER,
+                severity="error",
+                code="run_time_limit_reached",
+                message=str(error),
+            )
+        )
+        discovery_issues: tuple[AdapterIssue, ...] = ()
     except Exception as error:
         pipeline_issues.append(
             AdapterIssue(
@@ -502,6 +519,7 @@ def execute_adapter(
 
         request_count += 1
         try:
+            context.require_time_remaining()
             context.require_allowed_url(resource.url)
             fetched = adapter.fetch(resource, context)
             context.require_allowed_url(fetched.final_url)
@@ -516,6 +534,17 @@ def execute_adapter(
                     "max_total_bytes limit "
                     f"({definition.limits.max_total_bytes}) was exceeded"
                 )
+        except AdapterRunTimeoutError as error:
+            pipeline_issues.append(
+                AdapterIssue(
+                    stage=AdapterStage.FETCH,
+                    severity="error",
+                    code="run_time_limit_reached",
+                    message=str(error),
+                    resource_key=resource.external_key,
+                )
+            )
+            break
         except UrlAllowlistError as error:
             pipeline_issues.append(
                 AdapterIssue(
@@ -800,6 +829,7 @@ def run_registered_source(
     dry_run: bool = False,
     project_root: Path | None = None,
     raw_capture_dir: Path | None = None,
+    progress_reporter: Callable[[str], None] | None = None,
 ) -> AdapterReport:
     resolved_registry_path = registry_path or DEFAULT_REGISTRY_PATH
     registry = load_registry(resolved_registry_path)
@@ -838,6 +868,7 @@ def run_registered_source(
             project_root=root,
             started_at=started_at,
             raw_capture_dir=raw_capture_dir,
+            progress_reporter=progress_reporter,
         )
     except Exception as error:
         report = _failure_report(
