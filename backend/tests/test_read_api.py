@@ -17,8 +17,10 @@ from app.domain.models import (
     Geography,
     Program,
     ProgramDeadline,
+    ProgramDetails,
     ProgramFunding,
     ProgramGeography,
+    ProgramSource,
     ProgramTheme,
     PublicationStatus,
     Source,
@@ -193,6 +195,58 @@ def test_program_list_is_published_only_and_supports_pagination_and_filters(
     assert filtered.status_code == 200
     assert filtered.json()["total"] == 1
     assert filtered.json()["items"][0]["id"] == str(ids["alpha_id"])
+
+
+def test_public_api_presents_a_known_source_label_without_mutating_provenance(
+    migrated_engine: Engine,
+) -> None:
+    with migrated_engine.begin() as connection:
+        source_id = _insert_named_source(connection, "Fond Potanin")
+        program_id = insert_program_with_source(
+            connection,
+            source_id=source_id,
+            title="#фондпотанина25",
+            publication_status=PublicationStatus.PUBLISHED,
+            published_at=PUBLISHED_AT,
+        )
+        connection.execute(
+            update(ProgramSource)
+            .where(ProgramSource.program_id == program_id)
+            .values(source_url="https://fondpotanin.ru/competitions/fondpotanina25")
+        )
+
+    client = TestClient(create_app(engine=migrated_engine))
+    listed = client.get("/api/v1/programs")
+    detail = client.get(f"/api/v1/programs/{program_id}")
+
+    assert listed.status_code == detail.status_code == 200
+    assert listed.json()["items"][0]["title"] == "Фонд Потанина 25"
+    assert detail.json()["title"] == "Фонд Потанина 25"
+
+
+def test_public_api_exposes_a_country_scope_fallback(
+    migrated_engine: Engine,
+) -> None:
+    with migrated_engine.begin() as connection:
+        source_id = _insert_named_source(connection, "Completion Source")
+        program_id = insert_program_with_source(
+            connection,
+            source_id=source_id,
+            title="Завершённый конкурс",
+            publication_status=PublicationStatus.PUBLISHED,
+            published_at=PUBLISHED_AT,
+        )
+        connection.execute(
+            insert(ProgramDetails).values(
+                program_id=program_id,
+                summary="Поддержка российских некоммерческих организаций.",
+            )
+        )
+    client = TestClient(create_app(engine=migrated_engine))
+    detail = client.get(f"/api/v1/programs/{program_id}")
+
+    assert detail.status_code == 200
+    assert detail.json()["geographies"] == [{"slug": "russia", "name": "Россия"}]
 
 
 def test_program_search_filter_and_empty_state_semantics_are_stable(

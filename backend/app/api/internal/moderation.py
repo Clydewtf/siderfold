@@ -169,12 +169,19 @@ def _reason_codes(opened_snapshot: object) -> list[str]:
 
 
 def _review_queue_item(row: Mapping[str, Any]) -> InternalReviewQueueItem:
+    candidate_payload = row.get("candidate_payload")
+    candidate = candidate_payload if isinstance(candidate_payload, Mapping) else {}
+    record = candidate.get("record") if isinstance(candidate.get("record"), Mapping) else candidate
+    title = record.get("title") if isinstance(record.get("title"), str) else None
+    source_url = record.get("record_url") or record.get("record_key")
     return InternalReviewQueueItem(
         review_case_id=row["id"],
         staged_record_id=row["staged_record_id"],
         status=row["status"],
         opened_at=row["opened_at"],
         reason_codes=_reason_codes(row["opened_snapshot"]),
+        title=title,
+        source_url=source_url if isinstance(source_url, str) else None,
     )
 
 
@@ -365,7 +372,10 @@ def list_internal_review_cases(
             ReviewCase.status,
             ReviewCase.opened_at,
             ReviewCase.opened_snapshot,
+            StagedRecord.candidate_payload,
         )
+        .select_from(ReviewCase)
+        .join(StagedRecord, StagedRecord.id == ReviewCase.staged_record_id)
         .where(
             ReviewCase.status.in_(
                 (ReviewCaseStatus.OPEN, ReviewCaseStatus.NEEDS_CLARIFICATION)
@@ -390,7 +400,11 @@ def get_internal_review_case(
             ReviewCase.status,
             ReviewCase.opened_at,
             ReviewCase.opened_snapshot,
-        ).where(ReviewCase.id == review_case_id)
+            StagedRecord.candidate_payload,
+        )
+        .select_from(ReviewCase)
+        .join(StagedRecord, StagedRecord.id == ReviewCase.staged_record_id)
+        .where(ReviewCase.id == review_case_id)
     ).mappings().one_or_none()
     if row is None:
         raise InternalApiError(

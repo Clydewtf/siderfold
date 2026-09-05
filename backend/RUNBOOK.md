@@ -101,14 +101,19 @@ $PYTHON_BIN -m app.sources.cli runs --source-key fixture-catalog
 
    ```bash
    curl -sS -H "Authorization: Bearer $INTERNAL_API_TOKEN" \
-     http://127.0.0.1:8000/api/internal/v1/ingestion-runs
+     http://127.0.0.1:8000/api/internal/v1/ingestion-runs | python3 -m json.tool
 
-   curl -sS -H "Authorization: Bearer $INTERNAL_API_TOKEN" \
-     http://127.0.0.1:8000/api/internal/v1/review/cases
+   $PYTHON_BIN -m app.review.cli list
 
-   curl -sS -H "Authorization: Bearer $INTERNAL_API_TOKEN" \
-     http://127.0.0.1:8000/api/internal/v1/review/cases/<review_case_id>
+   export REVIEW_CASE_ID='<review_case_id>'
+   $PYTHON_BIN -m app.review.cli show "$REVIEW_CASE_ID"
    ```
+
+   Команда `app.review.cli` использует тот же локальный токен и выводит только
+   краткую операторскую сводку: название, страницу источника, сроки,
+   финансирование, причины проверки и историю решений. Она не показывает
+   raw-capture, контакты или полный технический payload. Для редкой отладки
+   полного JSON можно оставить `curl`, но добавь к нему `| python3 -m json.tool`.
 
    Предупреждение означает, что поле неполное или требует оценки; оно не подменяется
    выдуманным значением. Ошибка блокирует принятие. Для решения нужно сверить
@@ -130,7 +135,7 @@ $PYTHON_BIN -m app.sources.cli runs --source-key fixture-catalog
      -H "Content-Type: application/json" \
      -H "Idempotency-Key: $IDEMPOTENCY_KEY" \
      -d '{"action":"accept","reason":"Данные сверены с официальной страницей источника."}' \
-     "http://127.0.0.1:8000/api/internal/v1/review/cases/$REVIEW_CASE_ID/actions"
+     "http://127.0.0.1:8000/api/internal/v1/review/cases/$REVIEW_CASE_ID/actions" | python3 -m json.tool
    ```
 
 7. Убедись, что опубликованная программа появилась в публичном API и в каталоге,

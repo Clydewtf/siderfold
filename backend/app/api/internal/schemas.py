@@ -45,6 +45,8 @@ class InternalReviewQueueItem(InternalSchema):
     status: ReviewCaseStatus
     opened_at: datetime
     reason_codes: list[str]
+    title: str | None = None
+    source_url: str | None = None
 
 
 class InternalQualityIssue(InternalSchema):

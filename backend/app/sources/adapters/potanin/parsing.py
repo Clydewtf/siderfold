@@ -8,8 +8,10 @@ from urllib.parse import urldefrag, urljoin, urlsplit
 
 from lxml import etree, html as lxml_html
 
+from app.domain.presentation import infer_access_mode, public_program_title
 from app.sources.adapters.potanin.normalization import (
     POTANIN_HOST,
+    extract_geography_note,
     extract_application_dates,
     extract_per_program_funding,
     extract_total_grant_fund,
@@ -519,13 +521,7 @@ def _source_publication_date(root: Any) -> tuple[str | None, tuple[ParserIssue, 
 
 
 def _access_mode(eligibility_text: str | None) -> str:
-    if not eligibility_text:
-        return "unknown"
-    if re.search(r"приглашени\w*\s+(?:от\s+)?фонд|по\s+приглашени", eligibility_text, re.IGNORECASE):
-        return "invitation_only"
-    if re.search(r"открыт\w*\s+для|все\s+желающ|любой\s+организац", eligibility_text, re.IGNORECASE):
-        return "open"
-    return "unknown"
+    return infer_access_mode((eligibility_text,)).value
 
 
 def _schedule_items(blocks: Iterable[dict[str, object]]) -> list[str]:
@@ -824,6 +820,20 @@ def _relevant_section_texts(sections: dict[str, str], keywords: Iterable[str]) -
     return values
 
 
+def _category_texts(
+    blocks: Iterable[dict[str, object]],
+    categories: Iterable[str],
+) -> list[str]:
+    allowed = set(categories)
+    return [
+        text
+        for block in blocks
+        if block.get("category") in allowed
+        and isinstance((text := block.get("text")), str)
+        and text
+    ]
+
+
 def _decode_html(content: bytes) -> str:
     """Decode the public page before parsing so UTF-8 without a meta tag stays UTF-8."""
 
@@ -864,8 +874,8 @@ def parse_competition_page(
 
     scope = _content_root(root)
     title_nodes = scope.xpath(".//h1") or root.xpath("//h1")
-    title = _node_text(title_nodes[0]) if title_nodes else ""
-    if not title:
+    source_title = _node_text(title_nodes[0]) if title_nodes else ""
+    if not source_title:
         issues.append(
             ParserIssue(
                 severity="error",
@@ -954,12 +964,14 @@ def parse_competition_page(
         _per_program_funding_sections(content_blocks) or [main_text]
     )
 
-    taxonomy_texts = _relevant_section_texts(
-        sections,
-        ("направлен", "тем", "географ", "регион", "территор"),
+    theme_texts = _category_texts(
+        content_blocks,
+        ("taxonomy", "goals", "opportunities"),
     )
-    if not taxonomy_texts:
-        taxonomy_texts = [competition_text]
+    geography_texts = _category_texts(
+        content_blocks,
+        ("taxonomy", "eligibility"),
+    )
     links, link_warnings = _collect_links(scope, content_blocks, source_url)
     warnings = list(link_warnings)
     if dates.warning:
@@ -1000,12 +1012,13 @@ def parse_competition_page(
 
     record = {
         "record_key": source_url,
-        "title": title,
+        "title": public_program_title(source_title, source_url=source_url),
         "record_url": source_url,
         "deadline_on": dates.end_on.isoformat() if dates.end_on is not None else None,
         "funding": per_program_funding.funding.model_dump(mode="json", exclude_none=True),
         "payload": {
             "source_status": source_status or "unknown",
+            "source_title": source_title or None,
             "source_published_on": source_published_on,
             "source_last_modified_at": sitemap_last_modified_at,
             "application": application_payload,
@@ -1029,13 +1042,13 @@ def parse_competition_page(
                 ),
             },
             "taxonomy": {
-                "themes": normalize_themes(taxonomy_texts),
-                "geographies": normalize_geographies(taxonomy_texts),
+                "themes": normalize_themes(theme_texts),
+                "geographies": normalize_geographies(geography_texts),
             },
             "summary": _summary_from_blocks(content_blocks, scope),
             "eligibility": {
                 "summary": eligibility_summary,
-                "geography_note": eligibility_summary,
+                "geography_note": extract_geography_note(eligibility_summary),
                 "access_mode": _access_mode(eligibility_summary),
             },
             "contacts": contacts,

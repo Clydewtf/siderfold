@@ -8,6 +8,7 @@ from typing import Iterable
 from urllib.parse import parse_qsl, unquote, urlencode, urlsplit, urlunsplit
 
 from app.domain.models import FundingValueKind
+from app.domain.presentation import has_russia_scope
 from app.import_bridge.contract import FundingInput
 from app.sources.registry import normalize_url
 
@@ -841,21 +842,30 @@ def normalize_themes(texts: Iterable[str]) -> list[dict[str, str]]:
 
 
 def normalize_geographies(texts: Iterable[str]) -> list[dict[str, str]]:
-    combined = " ".join(normalize_whitespace(text) for text in texts)
-    if re.search(
-        r"(?:все\s+регионы\s+россии|всех\s+регионах\s+россии|по\s+всей\s+россии|"
-        r"на\s+всей\s+территории\s+россии|российск\w*\s+федерац)",
-        combined,
-        re.IGNORECASE,
-    ):
-        return [{"slug": "russia", "name": "Россия"}]
-    if re.search(
-        r"российск\w*\s+(?:организац|нко|юридическ\w*\s+лиц|участник)",
-        combined,
-        re.IGNORECASE,
-    ):
+    if has_russia_scope(texts):
         return [{"slug": "russia", "name": "Россия"}]
     return []
+
+
+def extract_geography_note(value: str | None) -> str | None:
+    """Return only an explicit geographic eligibility condition, when present."""
+
+    if value is None:
+        return None
+    normalized = normalize_whitespace(value)
+    if not normalized:
+        return None
+    sentences = re.split(r"(?<=[.!?])\s+", normalized)
+    relevant = [
+        sentence
+        for sentence in sentences
+        if re.search(
+            r"росси|регион|территор|субъект\w*\s+федерац|федеральн",
+            sentence,
+            re.IGNORECASE,
+        )
+    ]
+    return normalize_whitespace(" ".join(relevant)) or None
 
 
 def parse_sitemap_lastmod(value: str | None) -> str | None:

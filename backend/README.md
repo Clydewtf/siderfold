@@ -211,7 +211,15 @@ internal endpoint-ом.
 
 ```bash
 curl -sS -H "Authorization: Bearer $INTERNAL_API_TOKEN" \
-  http://127.0.0.1:8000/api/internal/v1/ingestion-runs
+  http://127.0.0.1:8000/api/internal/v1/ingestion-runs | python3 -m json.tool
+```
+
+Очередь и один кейс удобнее смотреть через краткое read-only представление в
+терминале. Оно использует только локальный backend и тот же `INTERNAL_API_TOKEN`:
+
+```bash
+python -m app.review.cli list
+python -m app.review.cli show <review_case_id>
 ```
 
 Пошаговый операторский порядок — от dry-run источника до проверки публикации в

@@ -46,12 +46,21 @@ from app.domain.models import (
     ProgramFundingAmount,
     ProgramGeography,
     ProgramResource,
+    ProgramResourceKind,
+    ProgramSourceStatus,
     ProgramSource,
     ProgramTheme,
     ProgramTimelineEvent,
     PublicationStatus,
     Source,
     Theme,
+)
+from app.domain.presentation import (
+    has_russia_scope,
+    resolved_access_mode,
+    is_public_content_section,
+    is_public_resource,
+    public_program_title,
 )
 
 
@@ -189,6 +198,7 @@ def _program_summary_select():
             Program.updated_at,
             ProgramDetails.source_published_on,
             ProgramDetails.summary,
+            ProgramDetails.source_status,
             ProgramDeadline.deadline_on,
             ProgramFunding.value_kind.label("funding_kind"),
             ProgramFunding.currency_code.label("funding_currency"),
@@ -461,12 +471,16 @@ def _funding(row: Mapping[str, Any]) -> FundingPublic | None:
 def _program_list_item(row: Mapping[str, Any]) -> ProgramListItem:
     return ProgramListItem(
         id=row["program_id"],
-        title=row["title"],
+        title=public_program_title(
+            row["title"],
+            source_url=row["primary_source_program_url"],
+        ),
         publication_status="published",
         published_at=row["published_at"],
         updated_at=row["updated_at"],
         source_published_on=row["source_published_on"],
         summary=row["summary"],
+        source_status=row["source_status"] or ProgramSourceStatus.UNKNOWN,
         deadline_on=row["deadline_on"],
         funding=_funding(row),
         primary_source=_source_link(row),
@@ -719,6 +733,11 @@ def get_program(
             source_section=resource_row["source_section"],
         )
         for resource_row in resource_rows
+        if is_public_resource(
+            kind=ProgramResourceKind(resource_row["resource_kind"]),
+            title=resource_row["title"],
+            source_section=resource_row["source_section"],
+        )
     ]
 
     content_rows = connection.execute(
@@ -733,20 +752,45 @@ def get_program(
         )
         .order_by(asc(ProgramContentSection.position), asc(ProgramContentSection.id))
     ).mappings()
-    content_sections = [ProgramContentSectionPublic(**content_row) for content_row in content_rows]
+    content_sections = [
+        ProgramContentSectionPublic(**content_row)
+        for content_row in content_rows
+        if is_public_content_section(
+            category=content_row["category"],
+            heading=content_row["heading"],
+            content=content_row["content"],
+        )
+    ]
 
     detail_values: dict[str, Any] = {}
     if details_row is not None:
+        access_mode = resolved_access_mode(
+            details_row["access_mode"],
+            (
+                details_row["summary"],
+                details_row["eligibility_summary"],
+                details_row["eligibility_geography_note"],
+                *(section.content for section in content_sections),
+            ),
+        )
         detail_values = {
             "summary": details_row["summary"],
             "eligibility_summary": details_row["eligibility_summary"],
             "eligibility_geography_note": details_row["eligibility_geography_note"],
             "source_status": details_row["source_status"],
-            "access_mode": details_row["access_mode"],
+            "access_mode": access_mode,
             "application_url": details_row["application_url"],
             "application_start_on": details_row["application_start_on"],
             "application_end_on": details_row["application_end_on"],
         }
+        if not geographies and has_russia_scope(
+            (
+                details_row["summary"],
+                details_row["eligibility_summary"],
+                details_row["eligibility_geography_note"],
+            )
+        ):
+            geographies = [TaxonomyOption(slug="russia", name="Россия")]
 
     program_values = _program_list_item(row).model_dump()
     program_values.update(detail_values)

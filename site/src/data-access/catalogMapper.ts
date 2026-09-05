@@ -229,7 +229,7 @@ function mapProgramBase(program: ProgramListItemDto): PublicProgram {
     summary: program.summary ?? null,
     eligibilitySummary: null,
     eligibilityGeographyNote: null,
-    sourceStatus: 'unknown',
+    sourceStatus: program.source_status ?? 'unknown',
     accessMode: 'unknown',
     applicationUrl: null,
     applicationStart: null,

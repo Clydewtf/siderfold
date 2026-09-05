@@ -18,6 +18,7 @@ from app.domain.models import (
     ProgramFunding,
     ProgramFundingAmount,
     ProgramResource,
+    ProgramResourceKind,
     ProgramTimelineEvent,
     StagedRecord,
     StagedRecordState,
@@ -182,6 +183,31 @@ def test_review_acceptance_preserves_rich_source_data_without_exposing_contacts(
     assert contacts == [("Юлия Лизичева", "wecare@fondpotanin.ru", False)]
     assert all("wecare@fondpotanin.ru" not in section for section in public_sections)
 
+    with migrated_engine.begin() as connection:
+        connection.execute(
+            insert(ProgramResource).values(
+                id=uuid4(),
+                program_id=program_id,
+                resource_kind=ProgramResourceKind.REFERENCE,
+                title="Назад",
+                url="https://fondpotanin.ru/back/",
+                source_section="Документы конкурса",
+                content_format=None,
+                position=99,
+            )
+        )
+        connection.execute(
+            insert(ProgramContentSection).values(
+                id=uuid4(),
+                program_id=program_id,
+                heading="Поделиться:",
+                category="unclassified",
+                content="Ссылка для социальных сетей.",
+                is_public=True,
+                position=99,
+            )
+        )
+
     client = TestClient(create_app(engine=migrated_engine))
     response = client.get(f"/api/v1/programs/{program_id}")
 
@@ -198,6 +224,8 @@ def test_review_acceptance_preserves_rich_source_data_without_exposing_contacts(
     }
     assert len(detail.timeline) == 4
     assert any(resource.url.endswith("winners.pdf") for resource in detail.resources)
+    assert all(resource.title != "Назад" for resource in detail.resources)
+    assert all(section.heading != "Поделиться:" for section in detail.content_sections)
 
     response_text = json.dumps(response.json())
     for private_or_internal_field in (

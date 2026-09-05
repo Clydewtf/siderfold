@@ -1,6 +1,7 @@
 import { ExternalLink } from 'lucide-react';
 import { formatDeadline, formatOptionalDate, isValidExternalUrl } from '../lib/format';
 import type { PublicProgram } from '../data-access/catalogMapper';
+import { ApplicationStatusTag } from './ApplicationStatusTag';
 import { FavoriteToggle } from './FavoriteToggle';
 import { Tag } from './ui';
 
@@ -20,9 +21,9 @@ export function ApiProgramCard({ program, isFavorite, onToggleFavorite, onOpen }
       className="group min-w-0 overflow-hidden rounded-lg border border-ink/10 bg-white/80 p-5 shadow-sm transition hover:-translate-y-1"
     >
       <div className="flex flex-wrap items-center gap-2">
-        <Tag>Проверено в Siderfold</Tag>
-        <Tag>{formatDeadline(program.deadline)}</Tag>
-        {program.funding ? <Tag>На программу: {program.funding.label}</Tag> : <Tag>Сумма не указана</Tag>}
+        <ApplicationStatusTag program={program} />
+        {program.deadline ? <Tag>Приём до {formatDeadline(program.deadline)}</Tag> : null}
+        {program.funding ? <Tag>Финансирование: {program.funding.label}</Tag> : <Tag>Сумма не указана</Tag>}
       </div>
       <div className="mt-5 flex items-start justify-between gap-3">
         <div className="min-w-0">

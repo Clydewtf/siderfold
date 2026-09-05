@@ -156,9 +156,12 @@ def test_internal_accept_is_idempotent_and_public_api_sees_only_the_published_re
     queue = client.get("/api/internal/v1/review/cases", headers=AUTHORIZATION)
     assert queue.status_code == 200
     assert queue.json()[0]["review_case_id"] == str(review_case_id)
+    assert queue.json()[0]["title"] == "Конкурс для региональных инициатив"
+    assert queue.json()[0]["source_url"].endswith("/internal-accept")
     detail = client.get(f"/api/internal/v1/review/cases/{review_case_id}", headers=AUTHORIZATION)
     assert detail.status_code == 200
     assert detail.json()["staged_record_id"] == str(staged_record_id)
+    assert detail.json()["title"] == "Конкурс для региональных инициатив"
     assert "s3://" not in detail.text
 
     request = {

@@ -106,6 +106,7 @@ class ProgramListItem(PublicSchema):
     updated_at: datetime
     source_published_on: date | None = None
     summary: str | None = None
+    source_status: ProgramSourceStatus = ProgramSourceStatus.UNKNOWN
     deadline_on: date | None = None
     funding: FundingPublic | None = None
     primary_source: SourceLinkPublic

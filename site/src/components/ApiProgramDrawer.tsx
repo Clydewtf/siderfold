@@ -2,6 +2,8 @@ import { ExternalLink, X } from 'lucide-react';
 import { useEffect, useRef, type KeyboardEvent } from 'react';
 import { formatDateRange, formatDeadline, formatOptionalDate, isValidExternalUrl } from '../lib/format';
 import { fundingScopeLabel, type PublicProgram } from '../data-access/catalogMapper';
+import { applicationStatus } from '../lib/applicationStatus';
+import { ApplicationStatusTag } from './ApplicationStatusTag';
 import { FavoriteToggle } from './FavoriteToggle';
 import { EmptyState, Tag } from './ui';
 
@@ -20,24 +22,21 @@ function PublicDetail({ label, value }: { label: string; value: string }) {
   );
 }
 
-function sourceStatusLabel(status: PublicProgram['sourceStatus']): string {
-  const labels: Record<PublicProgram['sourceStatus'], string> = {
-    unknown: 'Не указан источником',
-    open: 'Приём открыт',
-    closed: 'Приём завершён',
-    completed: 'Завершён',
-    upcoming: 'Скоро начнётся'
-  };
-  return labels[status];
-}
-
-function accessModeLabel(mode: PublicProgram['accessMode']): string {
+function applicationAccessLabel(mode: PublicProgram['accessMode']): string {
   const labels: Record<PublicProgram['accessMode'], string> = {
     unknown: 'Не указан источником',
     open: 'Открытый конкурс',
     invitation_only: 'Только по приглашению'
   };
   return labels[mode];
+}
+
+function fundingDetailLabel(amount: PublicProgram['fundingAmounts'][number]): string {
+  const sourceLabel = amount.sourceLabel?.trim();
+  if (!sourceLabel || /на\s+одн\w+\s+(?:программ\w*|получател\w*)/i.test(sourceLabel)) {
+    return amount.label;
+  }
+  return `${sourceLabel} — ${amount.label}`;
 }
 
 export function ApiProgramDrawer({
@@ -60,6 +59,7 @@ export function ApiProgramDrawer({
   const dialogRef = useRef<HTMLElement>(null);
   const closeButtonRef = useRef<HTMLButtonElement>(null);
   const openerRef = useRef<HTMLElement | null>(null);
+  const status = program ? applicationStatus(program) : null;
 
   useEffect(() => {
     openerRef.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
@@ -147,9 +147,9 @@ export function ApiProgramDrawer({
         {program && !loading && !error ? (
           <>
             <div className="mt-5 flex flex-wrap gap-2">
-              <Tag>Проверено в Siderfold</Tag>
-              <Tag>{formatDeadline(program.deadline)}</Tag>
-              <Tag>{program.funding ? `На программу: ${program.funding.label}` : 'Сумма не указана'}</Tag>
+              <ApplicationStatusTag program={program} />
+              {program.deadline ? <Tag>Приём до {formatDeadline(program.deadline)}</Tag> : null}
+              <Tag>{program.funding ? `Финансирование: ${program.funding.label}` : 'Сумма не указана'}</Tag>
             </div>
 
             <p className="mt-6 text-base leading-7 text-graphite">
@@ -160,8 +160,13 @@ export function ApiProgramDrawer({
               <h3 id="public-program-overview" className="sr-only">Основные параметры</h3>
               <PublicDetail label="Дата публикации на источнике" value={formatOptionalDate(program.sourcePublishedOn)} />
               <PublicDetail label="Добавлено в Siderfold" value={formatOptionalDate(program.publishedAt.slice(0, 10))} />
-              <PublicDetail label="Статус конкурса" value={sourceStatusLabel(program.sourceStatus)} />
-              <PublicDetail label="Формат участия" value={accessModeLabel(program.accessMode)} />
+              <PublicDetail
+                label="Статус конкурса"
+                value={status?.label ?? 'Статус конкурса не указан'}
+              />
+              {program.accessMode !== 'unknown' ? (
+                <PublicDetail label="Условия подачи" value={applicationAccessLabel(program.accessMode)} />
+              ) : null}
               <PublicDetail
                 label="Приём заявок"
                 value={formatDateRange(program.applicationStart, program.applicationEnd ?? program.deadline)}
@@ -177,9 +182,7 @@ export function ApiProgramDrawer({
                   {program.fundingAmounts.map((amount, index) => (
                     <li key={`${amount.scope}:${amount.sourceLabel}:${index}`}>
                       <span className="font-semibold text-ink">{fundingScopeLabel(amount.scope)}:</span>{' '}
-                      {amount.sourceLabel && amount.sourceLabel !== fundingScopeLabel(amount.scope)
-                        ? `${amount.sourceLabel} — `
-                        : ''}{amount.label}
+                      {fundingDetailLabel(amount)}
                     </li>
                   ))}
                 </ul>

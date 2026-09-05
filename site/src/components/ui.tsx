@@ -2,9 +2,9 @@ import type { ButtonHTMLAttributes, ReactNode } from 'react';
 
 type VisibleButtonChildren = Exclude<ReactNode, boolean | null | undefined>;
 
-export function Tag({ children }: { children: ReactNode }) {
+export function Tag({ children, className = '' }: { children: ReactNode; className?: string }) {
   return (
-    <span className="inline-flex items-center rounded-full border border-ink/10 bg-white/55 px-3 py-1 text-xs font-medium text-graphite">
+    <span className={`inline-flex items-center rounded-full border border-ink/10 bg-white/55 px-3 py-1 text-xs font-medium text-graphite ${className}`}>
       {children}
     </span>
   );

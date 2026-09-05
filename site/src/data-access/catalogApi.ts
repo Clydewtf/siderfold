@@ -104,6 +104,7 @@ export type ProgramListItemDto = {
   updated_at: string;
   source_published_on?: string | null;
   summary?: string | null;
+  source_status?: SourceStatus;
   deadline_on: string | null;
   funding: FundingDto | null;
   primary_source: SourceLinkDto;
@@ -338,6 +339,9 @@ function parseProgram(value: unknown, prefix: string): ProgramListItemDto {
       ? null
       : nullableString(value.source_published_on, `${prefix}.source_published_on`),
     summary: optionalNullableString(value.summary, `${prefix}.summary`),
+    source_status: value.source_status === undefined
+      ? 'unknown'
+      : enumValue(value.source_status, sourceStatuses, `${prefix}.source_status`),
     deadline_on: nullableString(value.deadline_on, `${prefix}.deadline_on`),
     funding: parseFunding(value.funding),
     primary_source: parseSourceLink(value.primary_source, `${prefix}.primary_source`)

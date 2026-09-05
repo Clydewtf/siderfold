@@ -50,6 +50,11 @@ from app.domain.models import (
     StagedRecordState,
     Theme,
 )
+from app.domain.presentation import (
+    is_public_content_section,
+    is_public_resource,
+    public_program_title,
+)
 from app.import_bridge.contract import FundingInput
 from app.review.deduplication import (
     CandidateFingerprint,
@@ -951,11 +956,14 @@ def _insert_program_details(
     application = _mapping(payload.get("application"))
     eligibility = _mapping(payload.get("eligibility"))
     source_last_modified_at = _optional_text(payload.get("source_last_modified_at"), maximum=100)
+    source_title = _optional_text(payload.get("source_title"), maximum=500)
     content_inventory = _mapping(payload.get("content_inventory"))
     blocks = content_inventory.get("blocks")
     source_metadata: dict[str, Any] = {}
     if source_last_modified_at is not None:
         source_metadata["source_last_modified_at"] = source_last_modified_at
+    if source_title is not None:
+        source_metadata["source_title"] = source_title
     if isinstance(blocks, list):
         source_metadata["content_block_count"] = len(blocks)
     connection.execute(
@@ -1169,7 +1177,13 @@ def _insert_resources(
         resource_url = _optional_http_url(url)
         if resource_kind is None or resource_url is None or resource_url in seen_urls:
             return
-        if raw_kind == "reference" and source_section is None:
+        resource_title = _optional_text(title, maximum=500)
+        if not is_public_resource(
+            kind=resource_kind,
+            title=resource_title,
+            source_section=source_section,
+            section_category=_optional_text(resource.get("section_category"), maximum=64),
+        ):
             return
         seen_urls.add(resource_url)
         connection.execute(
@@ -1177,7 +1191,7 @@ def _insert_resources(
                 id=uuid4(),
                 program_id=program_id,
                 resource_kind=resource_kind,
-                title=_optional_text(title, maximum=500),
+                title=resource_title,
                 url=resource_url,
                 source_section=source_section,
                 content_format=_optional_text(content_format, maximum=100),
@@ -1206,17 +1220,6 @@ def _insert_resources(
     )
 
 
-_PUBLIC_CONTENT_CATEGORIES = {
-    "goals",
-    "opportunities",
-    "criteria",
-    "application",
-    "eligibility",
-    "funding",
-    "schedule",
-    "taxonomy",
-    "unclassified",
-}
 _CONTACT_TEXT_PATTERN = re.compile(
     r"[\w.+-]+@[\w.-]+\.[A-Za-zА-Яа-я]{2,}|(?:\+?\d[\d()\s-]{6,}\d)",
     re.UNICODE,
@@ -1240,10 +1243,15 @@ def _insert_content_sections(
         heading = _optional_text(block.get("heading"), maximum=500)
         content = _optional_text(block.get("text"))
         if (
-            category not in _PUBLIC_CONTENT_CATEGORIES
+            category is None
             or heading is None
             or content is None
             or _CONTACT_TEXT_PATTERN.search(content)
+            or not is_public_content_section(
+                category=category,
+                heading=heading,
+                content=content,
+            )
         ):
             continue
         connection.execute(
@@ -1307,6 +1315,7 @@ def _create_draft_program_from_candidate(
     source_url = candidate.fingerprint.source_url
     if source_url is None:
         raise ReviewPolicyError("accepted candidates require a valid canonical source URL")
+    title = public_program_title(raw_title, source_url=source_url)
 
     funding: FundingInput | None = None
     raw_funding = record.get("funding")
@@ -1322,7 +1331,7 @@ def _create_draft_program_from_candidate(
     connection.execute(
         insert(Program).values(
             id=program_id,
-            title=raw_title.strip(),
+            title=title,
             publication_status=PublicationStatus.DRAFT,
             published_at=None,
             publication_review_decision_id=None,

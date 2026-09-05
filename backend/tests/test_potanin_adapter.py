@@ -213,6 +213,10 @@ def test_sectioned_competition_page_preserves_schedule_contacts_and_scoped_fundi
         "социальной поддержки."
     )
     assert payload["eligibility"]["access_mode"] == "invitation_only"
+    assert payload["eligibility"]["geography_note"] == (
+        "В конкурсе могут принимать участие российские организации, "
+        "получившие приглашение от Фонда."
+    )
     assert payload["taxonomy"]["geographies"] == [{"slug": "russia", "name": "Россия"}]
     assert {item["slug"] for item in payload["taxonomy"]["themes"]} >= {
         "social-support"
