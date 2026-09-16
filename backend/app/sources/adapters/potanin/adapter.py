@@ -48,7 +48,7 @@ from app.sources.registry import UrlAllowlistError
 
 
 POTANIN_ADAPTER_NAME = "potanin-competitions"
-POTANIN_ADAPTER_VERSION = "1.3.0"
+POTANIN_ADAPTER_VERSION = "1.4.0"
 POTANIN_SITEMAP_URL = "https://fondpotanin.ru/sitemap-iblock-competitions.xml"
 _SITEMAP_RESOURCE_KEY = "potanin:sitemap:competitions"
 _PARSER_ISSUES_KEY = "_parser_issues"

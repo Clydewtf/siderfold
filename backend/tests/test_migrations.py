@@ -71,6 +71,11 @@ PROGRAM_DETAIL_TABLES = {
     "program_timeline_events",
 }
 
+REVIEW_REVISION_TABLES = {
+    "review_issue_resolutions",
+    "review_revisions",
+}
+
 PUBLIC_CATALOG_INDEXES = {
     "programs": {
         "ix_programs_publication_status_updated_at_id",
@@ -116,6 +121,19 @@ PROGRAM_DETAIL_INDEXES = {
     "program_contacts": {"ix_program_contacts_program_position"},
 }
 
+REVIEW_REVISION_INDEXES = {
+    "review_revisions": {
+        "ix_review_revisions_case_created",
+        "ix_review_revisions_staged_record",
+    },
+    "review_issue_resolutions": {"ix_review_issue_resolutions_revision"},
+}
+
+TAXONOMY_INDEXES = {
+    "themes": {"uq_themes_normalized_name"},
+    "geographies": {"uq_geographies_normalized_name"},
+}
+
 
 def _index_names(engine: object, table_name: str) -> set[str]:
     return {index["name"] for index in inspect(engine).get_indexes(table_name)}
@@ -141,6 +159,7 @@ def test_provenance_migration_applies_to_a_clean_database_and_rolls_back(
             | ANALYTICS_TABLES
             | INTERNAL_MODERATION_TABLES
             | PROGRAM_DETAIL_TABLES
+            | REVIEW_REVISION_TABLES
         ).issubset(inspect(engine).get_table_names())
         for table_name, expected_indexes in PUBLIC_CATALOG_INDEXES.items():
             assert expected_indexes.issubset(_index_names(engine, table_name))
@@ -150,14 +169,26 @@ def test_provenance_migration_applies_to_a_clean_database_and_rolls_back(
             assert expected_indexes.issubset(_index_names(engine, table_name))
         for table_name, expected_indexes in PROGRAM_DETAIL_INDEXES.items():
             assert expected_indexes.issubset(_index_names(engine, table_name))
+        for table_name, expected_indexes in REVIEW_REVISION_INDEXES.items():
+            assert expected_indexes.issubset(_index_names(engine, table_name))
+        for table_name, expected_indexes in TAXONOMY_INDEXES.items():
+            assert expected_indexes.issubset(_index_names(engine, table_name))
         with engine.connect() as connection:
             assert connection.scalar(text("SELECT version_num FROM alembic_version")) == (
-                "0013_program_details_resources"
+                "0015_taxonomy_name_uniqueness"
             )
 
         with engine.connect() as connection:
             assert connection.scalar(
                 text("SELECT EXISTS (SELECT 1 FROM pg_extension WHERE extname = 'pg_trgm')")
+            )
+
+        command.downgrade(alembic_config, "0013_program_details_resources")
+
+        assert REVIEW_REVISION_TABLES.isdisjoint(inspect(engine).get_table_names())
+        with engine.connect() as connection:
+            assert connection.scalar(text("SELECT version_num FROM alembic_version")) == (
+                "0013_program_details_resources"
             )
 
         command.downgrade(alembic_config, "0012_catalog_search_and_archive")
@@ -181,8 +212,10 @@ def test_provenance_migration_applies_to_a_clean_database_and_rolls_back(
         assert "ix_programs_title_trigram" in _index_names(engine, "programs")
         with engine.connect() as connection:
             assert connection.scalar(text("SELECT version_num FROM alembic_version")) == (
-                "0013_program_details_resources"
+                "0015_taxonomy_name_uniqueness"
             )
+
+        command.downgrade(alembic_config, "0013_program_details_resources")
 
         command.downgrade(alembic_config, "0012_catalog_search_and_archive")
 

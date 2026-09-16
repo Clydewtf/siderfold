@@ -36,7 +36,8 @@ function localDateKey(now: Date): string {
 function dateStatus(start: string | null, end: string | null, today: string): SourceStatus | null {
   if (start && start > today) return 'upcoming';
   if (end && end < today) return 'closed';
-  if (start && start <= today && (!end || end >= today)) return 'open';
+  if (end && end >= today && (!start || start <= today)) return 'open';
+  if (start && start <= today) return 'open';
   return null;
 }
 
@@ -50,6 +51,24 @@ function latestKnownLifecycleDate(program: ApplicationStatusInput): string | nul
   const dates = [program.deadline, program.applicationEnd, ...program.timeline.flatMap((event) => [event.start, event.end])]
     .filter((value): value is string => value !== null);
   return dates.length > 0 ? dates.reduce((latest, value) => value > latest ? value : latest) : null;
+}
+
+function activeLifecycleLabel(program: ApplicationStatusInput, today: string): string | null {
+  const activeEvent = program.timeline.find((event) =>
+    event.kind !== 'application'
+    && event.start !== null
+    && event.start <= today
+    && (event.end === null || event.end >= today)
+  );
+  if (!activeEvent) return null;
+
+  const labels: Partial<Record<TimelineEventKind, string>> = {
+    evaluation: 'Идёт экспертиза заявок',
+    results: 'Подводятся итоги конкурса',
+    contracting: 'Идёт заключение договоров',
+    implementation: 'Идёт реализация проектов'
+  };
+  return labels[activeEvent.kind] ?? null;
 }
 
 export function applicationStatus(
@@ -89,7 +108,9 @@ export function applicationStatus(
   if (derived !== null) {
     return {
       value: derived,
-      label: sourceLabels[derived],
+      label: derived === 'closed'
+        ? activeLifecycleLabel(program, today) ?? sourceLabels.closed
+        : sourceLabels[derived],
       derived: true
     };
   }

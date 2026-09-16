@@ -26,6 +26,8 @@ from app.domain.models import (
     ReviewAction,
     ReviewCase,
     ReviewCaseStatus,
+    ReviewIssueResolution,
+    ReviewRevision,
     SourceExecutionRun,
     SourceExecutionStatus,
     SourceExecutionTrigger,
@@ -33,6 +35,7 @@ from app.domain.models import (
     StagedRecordState,
     TelegramDiscoveryRoute,
     TelegramDiscoveryUrl,
+    Theme,
 )
 from app.main import create_app
 from app.review.service import evaluate_staged_record
@@ -138,6 +141,31 @@ def test_internal_routes_require_a_configured_token_and_stay_out_of_public_opena
         "page_size": 20,
         "total": 0,
     }
+
+
+def test_internal_queue_uses_a_reader_friendly_title_without_mutating_source_data(
+    migrated_engine: Engine,
+) -> None:
+    with migrated_engine.begin() as connection:
+        source_id = insert_source(connection)
+        _, review_case_id = _review_case(
+            connection,
+            source_id=source_id,
+            record_key="quoted-title",
+            external_id="quoted-title-2026",
+            title="«Креативный музей»",
+        )
+
+    client = _client(migrated_engine)
+    queue = client.get("/api/internal/v1/review/cases", headers=AUTHORIZATION)
+    assert queue.status_code == 200
+    assert queue.json()[0]["review_case_id"] == str(review_case_id)
+    assert queue.json()[0]["title"] == "Креативный музей"
+
+    detail = client.get(f"/api/internal/v1/review/cases/{review_case_id}", headers=AUTHORIZATION)
+    assert detail.status_code == 200
+    assert detail.json()["source_record"]["title"] == "«Креативный музей»"
+    assert detail.json()["public_preview"]["title"] == "Креативный музей"
 
 
 def test_internal_accept_is_idempotent_and_public_api_sees_only_the_published_result(
@@ -300,6 +328,160 @@ def test_internal_actions_enforce_transition_rules_without_partial_writes(
         assert connection.scalar(
             select(StagedRecord.state).where(StagedRecord.id == reject_staged_id)
         ) is StagedRecordState.REJECTED
+
+
+def test_internal_revisions_preserve_source_data_and_require_explicit_quality_resolution(
+    migrated_engine: Engine,
+) -> None:
+    with migrated_engine.begin() as connection:
+        source_id = insert_source(connection)
+        connection.execute(
+            insert(Theme).values(
+                id=uuid4(),
+                slug="culture",
+                name="Культура",
+            )
+        )
+        staged_record_id, review_case_id = _review_case(
+            connection,
+            source_id=source_id,
+            record_key="operator-correction",
+            external_id="operator-correction-2026",
+        )
+        issue_id = uuid4()
+        connection.execute(
+            insert(DataQualityIssue).values(
+                id=issue_id,
+                staged_record_id=staged_record_id,
+                severity=DataQualitySeverity.ERROR,
+                code="missing_verified_summary",
+                message="Нужно сверить описание программы.",
+            )
+        )
+
+    client = _client(migrated_engine)
+    initial = client.get(
+        f"/api/internal/v1/review/cases/{review_case_id}",
+        headers=AUTHORIZATION,
+    )
+    assert initial.status_code == 200
+    assert initial.json()["source_record"]["title"] == "Конкурс для региональных инициатив"
+    assert initial.json()["effective_record"] == initial.json()["source_record"]
+    assert initial.json()["public_preview"]["title"] == "Конкурс для региональных инициатив"
+    assert "external_content_uri" not in initial.text
+    assert "s3://" not in initial.text
+
+    revision_request = {
+        "reason": "Сверено с официальной страницей конкурса.",
+        "patch": {
+            "title": "Уточнённый конкурс для региональных инициатив",
+            "summary": "Поддержка инициатив региональных организаций.",
+            "source_published_on": "2026-09-01",
+            "source_status": "open",
+            "deadline_on": "2026-12-01",
+            "funding": {
+                "value_kind": "exact",
+                "currency_code": "RUB",
+                "exact_amount": "750000",
+            },
+            "application": {
+                "url": "https://source.example.test/apply/operator-correction",
+                "start_on": "2026-10-01",
+                "end_on": "2026-12-01",
+            },
+            "eligibility": {
+                "summary": "Участвуют некоммерческие организации России.",
+                "geography_note": "Российская Федерация",
+                "access_mode": "open",
+            },
+            "taxonomy": {
+                "themes": [{"name": "Культура"}],
+                "geographies": [{"slug": "russia", "name": "Россия"}],
+            },
+        },
+        "resolve_issue_ids": [str(issue_id)],
+    }
+    first = client.post(
+        f"/api/internal/v1/review/cases/{review_case_id}/revisions",
+        headers=_request_headers("correction-once"),
+        json=revision_request,
+    )
+    replay = client.post(
+        f"/api/internal/v1/review/cases/{review_case_id}/revisions",
+        headers=_request_headers("correction-once"),
+        json=revision_request,
+    )
+    assert first.status_code == replay.status_code == 200
+    assert first.json()["replayed"] is False
+    assert replay.json()["replayed"] is True
+    assert first.json()["review_revision_id"] == replay.json()["review_revision_id"]
+
+    corrected = client.get(
+        f"/api/internal/v1/review/cases/{review_case_id}",
+        headers=AUTHORIZATION,
+    )
+    assert corrected.status_code == 200
+    assert corrected.json()["source_record"]["title"] == "Конкурс для региональных инициатив"
+    assert corrected.json()["effective_record"]["title"] == (
+        "Уточнённый конкурс для региональных инициатив"
+    )
+    assert corrected.json()["public_preview"]["summary"] == (
+        "Поддержка инициатив региональных организаций."
+    )
+    assert corrected.json()["public_preview"]["geographies"] == [
+        {"slug": "russia", "name": "Россия"}
+    ]
+    assert corrected.json()["effective_record"]["payload"]["taxonomy"]["themes"] == [
+        {"slug": "culture", "name": "Культура"}
+    ]
+    assert corrected.json()["quality_issues"][0]["resolution"]["review_revision_id"] == first.json()[
+        "review_revision_id"
+    ]
+
+    revision_id = UUID(first.json()["review_revision_id"])
+    with migrated_engine.connect() as connection:
+        assert connection.scalar(
+            select(StagedRecord.candidate_payload).where(StagedRecord.id == staged_record_id)
+        )["record"]["title"] == "Конкурс для региональных инициатив"
+        assert connection.scalar(
+            select(func.count()).select_from(ReviewRevision).where(
+                ReviewRevision.review_case_id == review_case_id
+            )
+        ) == 1
+        assert connection.scalar(
+            select(func.count()).select_from(ReviewIssueResolution).where(
+                ReviewIssueResolution.data_quality_issue_id == issue_id
+            )
+        ) == 1
+
+    with pytest.raises(IntegrityError):
+        with migrated_engine.begin() as connection:
+            connection.execute(
+                update(StagedRecord)
+                .where(StagedRecord.id == staged_record_id)
+                .values(candidate_payload={"record": {"title": "Нельзя изменить"}})
+            )
+    with pytest.raises(IntegrityError):
+        with migrated_engine.begin() as connection:
+            connection.execute(
+                update(ReviewRevision)
+                .where(ReviewRevision.id == revision_id)
+                .values(reason="Нельзя изменить")
+            )
+
+    accepted = client.post(
+        f"/api/internal/v1/review/cases/{review_case_id}/actions",
+        headers=_request_headers("correction-accept"),
+        json={"action": "accept", "reason": "Исправленная версия проверена."},
+    )
+    assert accepted.status_code == 200
+    program_id = accepted.json()["program_id"]
+    assert program_id is not None
+    public = client.get(f"/api/v1/programs/{program_id}")
+    assert public.status_code == 200
+    assert public.json()["title"] == "Уточнённый конкурс для региональных инициатив"
+    assert public.json()["summary"] == "Поддержка инициатив региональных организаций."
+    assert public.json()["geographies"] == [{"slug": "russia", "name": "Россия"}]
 
 
 def test_internal_merge_rejects_a_candidate_without_deleting_match_history(
@@ -514,6 +696,18 @@ def test_internal_discovery_actions_and_operational_reads_are_audited(
     assert client.get("/api/internal/v1/sources", headers=AUTHORIZATION).json()[0]["id"] == str(
         source_id
     )
+    registered_sources = client.get(
+        "/api/internal/v1/source-definitions",
+        headers=AUTHORIZATION,
+    )
+    assert registered_sources.status_code == 200
+    fixture_definition = next(
+        item
+        for item in registered_sources.json()
+        if item["source_key"] == "fixture-catalog"
+    )
+    assert fixture_definition["adapter_name"] == "fixture-catalog"
+    assert "secret_env_vars" not in fixture_definition
     runs = client.get("/api/internal/v1/runs", headers=AUTHORIZATION)
     assert runs.status_code == 200
     assert runs.json()[0]["source_key"] == "fixture-catalog"

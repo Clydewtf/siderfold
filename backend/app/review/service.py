@@ -1,14 +1,17 @@
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass
+from copy import deepcopy
+from dataclasses import dataclass, replace
 from datetime import date, datetime, timezone
+from hashlib import sha256
 import re
 from typing import Any
+from unicodedata import normalize as unicode_normalize
 from urllib.parse import urlsplit
 from uuid import UUID, uuid4
 
-from sqlalchemy import insert, select, update
+from sqlalchemy import func, insert, select, update
 from sqlalchemy.dialects.postgresql import insert as postgresql_insert
 from sqlalchemy.engine import Connection
 
@@ -46,14 +49,22 @@ from app.domain.models import (
     ReviewCaseStatus,
     ReviewDecision,
     ReviewDecisionOutcome,
+    ReviewIssueResolution,
+    ReviewRevision,
+    Source,
     StagedRecord,
     StagedRecordState,
     Theme,
 )
 from app.domain.presentation import (
+    has_russia_scope,
     is_public_content_section,
     is_public_resource,
+    is_winner_resource,
+    public_resource_kind,
     public_program_title,
+    resolved_access_mode,
+    winner_resource_group_key,
 )
 from app.import_bridge.contract import FundingInput
 from app.review.deduplication import (
@@ -141,6 +152,16 @@ class ReviewActionResult:
     staged_record_id: UUID
     program_id: UUID | None = None
     review_decision_id: UUID | None = None
+
+
+@dataclass(frozen=True)
+class ReviewRevisionResult:
+    review_case_id: UUID
+    staged_record_id: UUID
+    review_revision_id: UUID
+    revision_number: int
+    changed_fields: tuple[str, ...]
+    resolved_issue_ids: tuple[UUID, ...]
 
 
 @dataclass(frozen=True)
@@ -870,6 +891,515 @@ def _record_payload(candidate: StagedCandidate) -> Mapping[str, Any]:
     return record if isinstance(record, Mapping) else candidate.candidate_payload
 
 
+def _json_object(value: object, *, field: str) -> dict[str, Any]:
+    if not isinstance(value, Mapping):
+        raise ReviewPolicyError(f"{field} must be an object")
+    return deepcopy(dict(value))
+
+
+def _latest_review_revision_record(
+    connection: Connection,
+    review_case_id: UUID,
+) -> dict[str, Any] | None:
+    row = connection.execute(
+        select(ReviewRevision.effective_record)
+        .where(ReviewRevision.review_case_id == review_case_id)
+        .order_by(ReviewRevision.revision_number.desc(), ReviewRevision.id.desc())
+        .limit(1)
+    ).one_or_none()
+    if row is None:
+        return None
+    return _json_object(row.effective_record, field="review revision effective_record")
+
+
+def review_effective_record(
+    connection: Connection,
+    review_case_id: UUID,
+    *,
+    candidate: StagedCandidate | None = None,
+) -> dict[str, Any]:
+    """Return the immutable source record with the latest audited correction applied."""
+
+    revised = _latest_review_revision_record(connection, review_case_id)
+    if revised is not None:
+        return revised
+    if candidate is None:
+        staged_record_id = connection.scalar(
+            select(ReviewCase.staged_record_id).where(ReviewCase.id == review_case_id)
+        )
+        if staged_record_id is None:
+            raise ReviewPolicyError(f"unknown review case: {review_case_id}")
+        candidate = _load_staged_candidate(connection, staged_record_id)
+    return _json_object(_record_payload(candidate), field="staged candidate record")
+
+
+def _candidate_with_record(
+    candidate: StagedCandidate,
+    record: Mapping[str, Any],
+) -> StagedCandidate:
+    payload = {"record": deepcopy(dict(record))}
+    return replace(
+        candidate,
+        candidate_payload=payload,
+        fingerprint=staged_fingerprint(
+            source_id=candidate.source_id,
+            record_key=candidate.record_key,
+            candidate_payload=payload,
+        ),
+    )
+
+
+def _unresolved_quality_summary(connection: Connection, staged_record_id: UUID) -> QualitySummary:
+    rows = connection.execute(
+        select(DataQualityIssue.severity, DataQualityIssue.code)
+        .outerjoin(
+            ReviewIssueResolution,
+            ReviewIssueResolution.data_quality_issue_id == DataQualityIssue.id,
+        )
+        .where(
+            DataQualityIssue.staged_record_id == staged_record_id,
+            ReviewIssueResolution.id.is_(None),
+        )
+        .order_by(DataQualityIssue.created_at, DataQualityIssue.id)
+    )
+    warnings: list[str] = []
+    errors: list[str] = []
+    for severity, code in rows:
+        if severity is DataQualitySeverity.ERROR:
+            errors.append(code)
+        else:
+            warnings.append(code)
+    return QualitySummary(tuple(warnings), tuple(errors))
+
+
+def _changed_record_paths(
+    previous: object,
+    current: object,
+    *,
+    prefix: str = "",
+    limit: int = 100,
+) -> list[str]:
+    """Produce stable, bounded paths for the audit history without storing a second diff."""
+
+    if previous == current:
+        return []
+    if isinstance(previous, Mapping) and isinstance(current, Mapping):
+        paths: list[str] = []
+        for key in sorted(set(previous) | set(current)):
+            if len(paths) >= limit:
+                break
+            next_prefix = f"{prefix}.{key}" if prefix else str(key)
+            if key not in previous or key not in current:
+                paths.append(next_prefix)
+                continue
+            paths.extend(
+                _changed_record_paths(
+                    previous[key],
+                    current[key],
+                    prefix=next_prefix,
+                    limit=limit - len(paths),
+                )
+            )
+        return paths[:limit]
+    return [prefix or "record"]
+
+
+def _manual_taxonomy_slug(*, namespace: str, name: str) -> str:
+    digest = sha256(f"{namespace}\x00{name.casefold()}".encode("utf-8")).hexdigest()
+    return f"manual-{digest[:16]}"
+
+
+def _taxonomy_name_key(value: str) -> str:
+    """Return a stable comparison key for human-entered taxonomy labels."""
+
+    return re.sub(r"\s+", " ", unicode_normalize("NFKC", value)).strip().casefold()
+
+
+def _taxonomy_entry_preference(entry: tuple[str, str]) -> tuple[bool, str, str]:
+    """Prefer a named taxonomy slug over a fallback created by an operator."""
+
+    slug, name = entry
+    return (slug.startswith("manual-"), slug, name)
+
+
+def _taxonomy_model(namespace: str) -> type[Theme] | type[Geography]:
+    if namespace == "themes":
+        return Theme
+    if namespace == "geographies":
+        return Geography
+    raise ReviewPolicyError(f"unsupported taxonomy namespace: {namespace}")
+
+
+def _existing_taxonomy_by_name(
+    connection: Connection,
+    *,
+    namespace: str,
+) -> dict[str, tuple[str, str]]:
+    """Find the canonical stored entry for each normalized display name."""
+
+    model = _taxonomy_model(namespace)
+    entries: dict[str, tuple[str, str]] = {}
+    for slug, name in connection.execute(select(model.slug, model.name)).all():
+        key = _taxonomy_name_key(name)
+        candidate = (slug, name)
+        current = entries.get(key)
+        if current is None or _taxonomy_entry_preference(candidate) < _taxonomy_entry_preference(
+            current
+        ):
+            entries[key] = candidate
+    return entries
+
+
+def _normalized_taxonomy_patch(
+    connection: Connection,
+    values: object,
+    *,
+    namespace: str,
+) -> list[dict[str, str]]:
+    if not isinstance(values, list):
+        raise ReviewPolicyError(f"{namespace} taxonomy must be a list")
+    normalized: list[dict[str, str]] = []
+    seen: set[str] = set()
+    existing_by_name = _existing_taxonomy_by_name(connection, namespace=namespace)
+    for raw_value in values:
+        value = _mapping(raw_value)
+        name = _optional_text(value.get("name"), maximum=255)
+        slug = _optional_text(value.get("slug"), maximum=100)
+        if name is None:
+            raise ReviewPolicyError(f"{namespace} taxonomy entries require a name")
+        if slug is not None and not re.fullmatch(r"[a-z0-9][a-z0-9-]*", slug):
+            raise ReviewPolicyError(f"{namespace} taxonomy slug is invalid")
+        canonical = existing_by_name.get(_taxonomy_name_key(name))
+        if canonical is not None:
+            slug, name = canonical
+        elif slug is None:
+            slug = _manual_taxonomy_slug(namespace=namespace, name=name)
+        if slug not in seen:
+            normalized.append({"slug": slug, "name": name})
+            seen.add(slug)
+    return normalized
+
+
+def _merge_mapping_patch(
+    target: dict[str, Any],
+    key: str,
+    value: object,
+) -> None:
+    if value is None:
+        target[key] = {}
+        return
+    if not isinstance(value, Mapping):
+        raise ReviewPolicyError(f"{key} patch must be an object")
+    merged = dict(_mapping(target.get(key)))
+    merged.update(deepcopy(dict(value)))
+    target[key] = merged
+
+
+def _apply_review_record_patch(
+    connection: Connection,
+    previous_record: Mapping[str, Any],
+    patch: Mapping[str, Any],
+) -> dict[str, Any]:
+    """Apply only the bounded, public-canonical correction surface to a source record."""
+
+    record = _json_object(previous_record, field="review record")
+    for field in ("title", "deadline_on", "funding"):
+        if field in patch:
+            record[field] = deepcopy(patch[field])
+
+    payload = dict(_mapping(record.get("payload")))
+    for field in ("summary", "source_published_on", "source_status"):
+        if field in patch:
+            payload[field] = deepcopy(patch[field])
+
+    for field in ("application", "eligibility"):
+        if field in patch:
+            _merge_mapping_patch(payload, field, patch[field])
+
+    if "taxonomy" in patch:
+        taxonomy_patch = patch["taxonomy"]
+        if taxonomy_patch is None:
+            payload["taxonomy"] = {"themes": [], "geographies": []}
+        elif isinstance(taxonomy_patch, Mapping):
+            taxonomy = dict(_mapping(payload.get("taxonomy")))
+            for key in ("themes", "geographies"):
+                if key in taxonomy_patch:
+                    taxonomy[key] = _normalized_taxonomy_patch(
+                        connection,
+                        taxonomy_patch[key],
+                        namespace=key,
+                    )
+            payload["taxonomy"] = taxonomy
+        else:
+            raise ReviewPolicyError("taxonomy patch must be an object")
+
+    if "funding_amounts" in patch:
+        funding = dict(_mapping(payload.get("funding")))
+        raw_amounts = patch["funding_amounts"]
+        if raw_amounts is None:
+            funding["amounts"] = []
+        elif isinstance(raw_amounts, list):
+            amounts: list[dict[str, Any]] = []
+            for raw_amount in raw_amounts:
+                amount = _mapping(raw_amount)
+                scope = _funding_scope(amount.get("scope"))
+                value = amount.get("value")
+                if scope is None or not isinstance(value, Mapping):
+                    raise ReviewPolicyError("funding amount must include a valid scope and value")
+                try:
+                    funding_value = FundingInput.model_validate(value)
+                except ValueError as error:
+                    raise ReviewPolicyError("funding amount values are invalid") from error
+                amounts.append(
+                    {
+                        "scope": scope.value,
+                        "label": _optional_text(amount.get("label"), maximum=500),
+                        "value": funding_value.model_dump(mode="json", exclude_none=True),
+                        "evidence": _optional_text(amount.get("evidence"), maximum=2_000),
+                    }
+                )
+            funding["amounts"] = amounts
+        else:
+            raise ReviewPolicyError("funding_amounts patch must be a list")
+        payload["funding"] = funding
+
+    if "timeline" in patch:
+        raw_timeline = patch["timeline"]
+        if raw_timeline is None:
+            payload["timeline"] = []
+        elif isinstance(raw_timeline, list):
+            events: list[dict[str, Any]] = []
+            for raw_event in raw_timeline:
+                event = _mapping(raw_event)
+                label = _optional_text(event.get("label"), maximum=500)
+                start_on = _optional_date(event.get("start_on"))
+                end_on = _optional_date(event.get("end_on"))
+                if label is None or (start_on is None and end_on is None):
+                    raise ReviewPolicyError("timeline events require a label and at least one date")
+                if start_on is not None and end_on is not None and start_on > end_on:
+                    raise ReviewPolicyError("timeline event dates are out of order")
+                events.append(
+                    {
+                        "kind": _timeline_kind(event.get("kind")).value,
+                        "label": label,
+                        "start_on": start_on.isoformat() if start_on is not None else None,
+                        "end_on": end_on.isoformat() if end_on is not None else None,
+                        "evidence": _optional_text(event.get("evidence"), maximum=2_000),
+                    }
+                )
+            payload["timeline"] = events
+        else:
+            raise ReviewPolicyError("timeline patch must be a list")
+
+    if "resources" in patch:
+        raw_resources = patch["resources"]
+        if raw_resources is None:
+            payload["artifacts"] = []
+        elif isinstance(raw_resources, list):
+            resources: list[dict[str, Any]] = []
+            for raw_resource in raw_resources:
+                resource = _mapping(raw_resource)
+                resource_url = _optional_http_url(resource.get("url"))
+                kind = _optional_text(resource.get("kind"), maximum=32)
+                if resource_url is None or kind is None:
+                    raise ReviewPolicyError("resources require a valid URL and kind")
+                resources.append(
+                    {
+                        "kind": kind,
+                        "url": resource_url,
+                        "label": _optional_text(resource.get("label"), maximum=500),
+                        "section_title": _optional_text(resource.get("section_title"), maximum=500),
+                        "section_category": _optional_text(
+                            resource.get("section_category"),
+                            maximum=64,
+                        ),
+                        "capture": {
+                            "content_format": _optional_text(
+                                resource.get("content_format"),
+                                maximum=100,
+                            )
+                        },
+                    }
+                )
+            payload["artifacts"] = resources
+        else:
+            raise ReviewPolicyError("resources patch must be a list")
+
+    if "content_blocks" in patch:
+        raw_blocks = patch["content_blocks"]
+        if raw_blocks is None:
+            blocks: list[dict[str, Any]] = []
+        elif isinstance(raw_blocks, list):
+            blocks = []
+            for raw_block in raw_blocks:
+                block = _mapping(raw_block)
+                heading = _optional_text(block.get("heading"), maximum=500)
+                category = _optional_text(block.get("category"), maximum=64)
+                content = _optional_text(block.get("text"))
+                if heading is None or category is None or content is None:
+                    raise ReviewPolicyError("content blocks require heading, category, and text")
+                blocks.append(
+                    {
+                        "heading": heading,
+                        "category": category,
+                        "text": content,
+                        "links": [],
+                    }
+                )
+        else:
+            raise ReviewPolicyError("content_blocks patch must be a list")
+        inventory = dict(_mapping(payload.get("content_inventory")))
+        inventory["blocks"] = blocks
+        inventory["unclassified_block_count"] = sum(
+            block["category"] == "unclassified" for block in blocks
+        )
+        payload["content_inventory"] = inventory
+        payload["sections"] = {block["heading"]: block["text"] for block in blocks}
+
+    application = _mapping(payload.get("application"))
+    start_on = _optional_date(application.get("start_on"))
+    end_on = _optional_date(application.get("end_on"))
+    if start_on is not None and end_on is not None and start_on > end_on:
+        raise ReviewPolicyError("application dates are out of order")
+    if "application" in patch and isinstance(patch["application"], Mapping):
+        application_patch = patch["application"]
+        if "end_on" in application_patch and "deadline_on" not in patch:
+            record["deadline_on"] = application.get("end_on")
+
+    record["payload"] = payload
+    return record
+
+
+def _deduplication_snapshot(
+    connection: Connection,
+    candidate: StagedCandidate,
+) -> dict[str, Any]:
+    observations = _find_matches(connection, candidate)
+    return {
+        "match_count": len(observations),
+        "matches": [
+            {
+                "target_staged_record_id": str(observation.target_staged_record_id)
+                if observation.target_staged_record_id is not None
+                else None,
+                "target_program_id": str(observation.target_program_id)
+                if observation.target_program_id is not None
+                else None,
+                "match_level": observation.level.value,
+                "conflicting_fields": list(observation.conflicts),
+            }
+            for observation in observations
+        ],
+    }
+
+
+def save_review_revision(
+    connection: Connection,
+    review_case_id: UUID,
+    *,
+    patch: Mapping[str, Any],
+    resolved_issue_ids: Sequence[UUID],
+    reason: str,
+    actor: str,
+) -> ReviewRevisionResult:
+    """Save an operator correction without mutating the staged source record."""
+
+    with connection.begin_nested():
+        case_status, candidate = _lock_review_case(connection, review_case_id)
+        normalized_reason = _nonblank(reason, field="reason")
+        normalized_actor = _nonblank(actor, field="actor")
+        previous_record = review_effective_record(
+            connection,
+            review_case_id,
+            candidate=candidate,
+        )
+        effective_record = _apply_review_record_patch(connection, previous_record, patch)
+        changed_fields = tuple(_changed_record_paths(previous_record, effective_record))
+        requested_issue_ids = tuple(dict.fromkeys(resolved_issue_ids))
+        if not changed_fields and not requested_issue_ids:
+            raise ReviewPolicyError("a correction must change a field or resolve a quality issue")
+
+        if requested_issue_ids:
+            issue_rows = connection.execute(
+                select(
+                    DataQualityIssue.id,
+                    ReviewIssueResolution.id.label("resolution_id"),
+                )
+                .outerjoin(
+                    ReviewIssueResolution,
+                    ReviewIssueResolution.data_quality_issue_id == DataQualityIssue.id,
+                )
+                .where(
+                    DataQualityIssue.staged_record_id == candidate.id,
+                    DataQualityIssue.id.in_(requested_issue_ids),
+                )
+            ).mappings().all()
+            found_ids = {row["id"] for row in issue_rows}
+            if found_ids != set(requested_issue_ids):
+                raise ReviewPolicyError("quality issues must belong to this review case")
+            if any(row["resolution_id"] is not None for row in issue_rows):
+                raise ReviewPolicyError("a selected quality issue is already resolved")
+
+        now = _now()
+        revision_number = (
+            connection.scalar(
+                select(func.coalesce(func.max(ReviewRevision.revision_number), 0) + 1).where(
+                    ReviewRevision.review_case_id == review_case_id
+                )
+            )
+            or 1
+        )
+        revision_id = uuid4()
+        revised_candidate = _candidate_with_record(candidate, effective_record)
+        deduplication_snapshot = _deduplication_snapshot(connection, revised_candidate)
+        connection.execute(
+            insert(ReviewRevision).values(
+                id=revision_id,
+                review_case_id=review_case_id,
+                staged_record_id=candidate.id,
+                revision_number=revision_number,
+                effective_record=effective_record,
+                changed_fields=list(changed_fields),
+                deduplication_snapshot=deduplication_snapshot,
+                reason=normalized_reason,
+                actor=normalized_actor,
+                created_at=now,
+            )
+        )
+        for issue_id in requested_issue_ids:
+            connection.execute(
+                insert(ReviewIssueResolution).values(
+                    id=uuid4(),
+                    review_revision_id=revision_id,
+                    data_quality_issue_id=issue_id,
+                    reason=normalized_reason,
+                    actor=normalized_actor,
+                    created_at=now,
+                )
+            )
+        if case_status is ReviewCaseStatus.NEEDS_CLARIFICATION:
+            _set_case_status(
+                connection,
+                review_case_id=review_case_id,
+                status=ReviewCaseStatus.OPEN,
+                now=now,
+            )
+        else:
+            connection.execute(
+                update(ReviewCase)
+                .where(ReviewCase.id == review_case_id)
+                .values(updated_at=now)
+            )
+        return ReviewRevisionResult(
+            review_case_id=review_case_id,
+            staged_record_id=candidate.id,
+            review_revision_id=revision_id,
+            revision_number=revision_number,
+            changed_fields=changed_fields,
+            resolved_issue_ids=requested_issue_ids,
+        )
+
+
 def _mapping(value: object) -> Mapping[str, Any]:
     return value if isinstance(value, Mapping) else {}
 
@@ -944,6 +1474,25 @@ def _resource_kind(value: object, section: str | None) -> ProgramResourceKind | 
     if value == "reference":
         return ProgramResourceKind.REFERENCE
     return None
+
+
+def _artifact_winner_group_keys(raw_resources: object) -> frozenset[str]:
+    if not isinstance(raw_resources, list):
+        return frozenset()
+    keys: set[str] = set()
+    for raw_resource in raw_resources:
+        resource = _mapping(raw_resource)
+        title = _optional_text(resource.get("label"), maximum=500)
+        group_key = winner_resource_group_key(title)
+        if group_key is None:
+            continue
+        if is_winner_resource(
+            title=title,
+            source_section=_optional_text(resource.get("section_title"), maximum=500),
+            url=_optional_http_url(resource.get("url")),
+        ):
+            keys.add(group_key)
+    return frozenset(keys)
 
 
 def _insert_program_details(
@@ -1118,32 +1667,98 @@ def _taxonomy_entries(payload: Mapping[str, Any], key: str) -> list[tuple[str, s
     return entries
 
 
+def _canonical_taxonomy_entries(
+    connection: Connection,
+    *,
+    namespace: str,
+    entries: Sequence[tuple[str, str]],
+) -> list[tuple[str, str]]:
+    """Resolve matching source labels to the one public taxonomy entry."""
+
+    existing_by_name = _existing_taxonomy_by_name(connection, namespace=namespace)
+    selected_by_name: dict[str, tuple[str, str]] = {}
+    for entry in entries:
+        key = _taxonomy_name_key(entry[1])
+        current = selected_by_name.get(key)
+        if current is None or _taxonomy_entry_preference(entry) < _taxonomy_entry_preference(
+            current
+        ):
+            selected_by_name[key] = entry
+
+    canonical: list[tuple[str, str]] = []
+    seen_slugs: set[str] = set()
+    for key, entry in selected_by_name.items():
+        resolved = existing_by_name.get(key, entry)
+        if resolved[0] not in seen_slugs:
+            canonical.append(resolved)
+            seen_slugs.add(resolved[0])
+    return canonical
+
+
+def _taxonomy_id_by_name(
+    connection: Connection,
+    *,
+    namespace: str,
+    slug: str,
+    name: str,
+) -> UUID | None:
+    """Resolve a row after an insert race or a normalized-name conflict."""
+
+    model = _taxonomy_model(namespace)
+    identifier = connection.scalar(select(model.id).where(model.slug == slug))
+    if identifier is not None:
+        return identifier
+    name_key = _taxonomy_name_key(name)
+    for identifier, stored_name in connection.execute(select(model.id, model.name)).all():
+        if _taxonomy_name_key(stored_name) == name_key:
+            return identifier
+    return None
+
+
 def _link_taxonomy(
     connection: Connection,
     *,
     program_id: UUID,
     payload: Mapping[str, Any],
 ) -> None:
-    for slug, name in _taxonomy_entries(payload, "themes"):
+    for slug, name in _canonical_taxonomy_entries(
+        connection,
+        namespace="themes",
+        entries=_taxonomy_entries(payload, "themes"),
+    ):
         connection.execute(
             postgresql_insert(Theme)
             .values(id=uuid4(), slug=slug, name=name)
-            .on_conflict_do_nothing(index_elements=("slug",))
+            .on_conflict_do_nothing()
         )
-        theme_id = connection.scalar(select(Theme.id).where(Theme.slug == slug))
+        theme_id = _taxonomy_id_by_name(
+            connection,
+            namespace="themes",
+            slug=slug,
+            name=name,
+        )
         if theme_id is not None:
             connection.execute(
                 postgresql_insert(ProgramTheme)
                 .values(program_id=program_id, theme_id=theme_id)
                 .on_conflict_do_nothing(index_elements=("program_id", "theme_id"))
             )
-    for slug, name in _taxonomy_entries(payload, "geographies"):
+    for slug, name in _canonical_taxonomy_entries(
+        connection,
+        namespace="geographies",
+        entries=_taxonomy_entries(payload, "geographies"),
+    ):
         connection.execute(
             postgresql_insert(Geography)
             .values(id=uuid4(), slug=slug, name=name)
-            .on_conflict_do_nothing(index_elements=("slug",))
+            .on_conflict_do_nothing()
         )
-        geography_id = connection.scalar(select(Geography.id).where(Geography.slug == slug))
+        geography_id = _taxonomy_id_by_name(
+            connection,
+            namespace="geographies",
+            slug=slug,
+            name=name,
+        )
         if geography_id is not None:
             connection.execute(
                 postgresql_insert(ProgramGeography)
@@ -1160,6 +1775,7 @@ def _insert_resources(
     application: Mapping[str, Any],
 ) -> None:
     raw_resources = payload.get("artifacts")
+    winner_group_keys = _artifact_winner_group_keys(raw_resources)
     position = 0
     seen_urls: set[str] = set()
 
@@ -1170,6 +1786,7 @@ def _insert_resources(
         title: object,
         section: object,
         content_format: object,
+        section_category: object = None,
     ) -> None:
         nonlocal position
         source_section = _optional_text(section, maximum=500)
@@ -1178,11 +1795,21 @@ def _insert_resources(
         if resource_kind is None or resource_url is None or resource_url in seen_urls:
             return
         resource_title = _optional_text(title, maximum=500)
+        group_has_winner_evidence = winner_resource_group_key(resource_title) in winner_group_keys
+        resource_kind = public_resource_kind(
+            resource_kind,
+            title=resource_title,
+            source_section=source_section,
+            url=resource_url,
+            group_has_winner_evidence=group_has_winner_evidence,
+        )
         if not is_public_resource(
             kind=resource_kind,
             title=resource_title,
             source_section=source_section,
-            section_category=_optional_text(resource.get("section_category"), maximum=64),
+            section_category=_optional_text(section_category, maximum=64),
+            url=resource_url,
+            group_has_winner_evidence=group_has_winner_evidence,
         ):
             return
         seen_urls.add(resource_url)
@@ -1210,6 +1837,7 @@ def _insert_resources(
                 title=resource.get("label"),
                 section=resource.get("section_title"),
                 content_format=capture.get("content_format"),
+                section_category=resource.get("section_category"),
             )
     insert_resource(
         raw_kind="application",
@@ -1217,6 +1845,7 @@ def _insert_resources(
         title="Подать заявку",
         section="Подача заявки",
         content_format=None,
+        section_category="application",
     )
 
 
@@ -1297,6 +1926,286 @@ def _insert_private_contacts(
             )
         )
         position += 1
+
+
+def _preview_funding(value: object) -> FundingInput | None:
+    if not isinstance(value, Mapping):
+        return None
+    try:
+        return FundingInput.model_validate(value)
+    except ValueError:
+        return None
+
+
+def _preview_timeline(
+    payload: Mapping[str, Any],
+    application: Mapping[str, Any],
+) -> list[dict[str, Any]]:
+    events: list[dict[str, Any]] = []
+    seen: set[tuple[str, date | None, date | None]] = set()
+    raw_events = payload.get("timeline")
+    if isinstance(raw_events, list):
+        for raw_event in raw_events:
+            event = _mapping(raw_event)
+            label = _optional_text(event.get("label"), maximum=500)
+            start_on = _optional_date(event.get("start_on"))
+            end_on = _optional_date(event.get("end_on"))
+            if label is None or (start_on is None and end_on is None):
+                continue
+            if start_on is not None and end_on is not None and start_on > end_on:
+                continue
+            key = (label.casefold(), start_on, end_on)
+            if key in seen:
+                continue
+            seen.add(key)
+            events.append(
+                {
+                    "kind": _timeline_kind(event.get("kind")).value,
+                    "label": label,
+                    "start_on": start_on,
+                    "end_on": end_on,
+                }
+            )
+    if events:
+        return events
+    start_on = _optional_date(application.get("start_on"))
+    end_on = _optional_date(application.get("end_on"))
+    if start_on is None and end_on is None:
+        return []
+    return [
+        {
+            "kind": ProgramTimelineEventKind.APPLICATION.value,
+            "label": "Приём заявок",
+            "start_on": start_on,
+            "end_on": end_on,
+        }
+    ]
+
+
+def _preview_funding_amounts(
+    payload: Mapping[str, Any],
+    fallback_funding: FundingInput | None,
+) -> list[dict[str, Any]]:
+    funding_payload = _mapping(payload.get("funding"))
+    raw_amounts = funding_payload.get("amounts")
+    amounts: list[dict[str, Any]] = []
+    seen: set[tuple[str, tuple[tuple[str, object], ...], str | None]] = set()
+    if isinstance(raw_amounts, list):
+        for raw_amount in raw_amounts:
+            amount = _mapping(raw_amount)
+            scope = _funding_scope(amount.get("scope"))
+            value = _preview_funding(amount.get("value"))
+            if scope is None or value is None:
+                continue
+            label = _optional_text(amount.get("label"), maximum=500)
+            fingerprint = (
+                scope.value,
+                tuple(sorted(value.model_dump(mode="json", exclude_none=True).items())),
+                label,
+            )
+            if fingerprint in seen:
+                continue
+            seen.add(fingerprint)
+            amounts.append(
+                {
+                    "scope": scope.value,
+                    "label": label,
+                    **value.model_dump(mode="json"),
+                }
+            )
+    if amounts or fallback_funding is None:
+        return amounts
+    return [
+        {
+            "scope": ProgramFundingScope.PER_PROGRAM.value,
+            "label": "Финансирование программы",
+            **fallback_funding.model_dump(mode="json"),
+        }
+    ]
+
+
+def _preview_resources(
+    payload: Mapping[str, Any],
+    application: Mapping[str, Any],
+) -> list[dict[str, Any]]:
+    resources: list[dict[str, Any]] = []
+    seen_urls: set[str] = set()
+    raw_resources = payload.get("artifacts")
+    winner_group_keys = _artifact_winner_group_keys(raw_resources)
+
+    def append_resource(
+        *,
+        raw_kind: object,
+        url: object,
+        title: object,
+        section: object,
+        content_format: object,
+        section_category: object = None,
+    ) -> None:
+        resource_kind = _resource_kind(raw_kind, _optional_text(section, maximum=500))
+        resource_url = _optional_http_url(url)
+        resource_title = _optional_text(title, maximum=500)
+        source_section = _optional_text(section, maximum=500)
+        if resource_kind is None or resource_url is None or resource_url in seen_urls:
+            return
+        group_has_winner_evidence = winner_resource_group_key(resource_title) in winner_group_keys
+        resource_kind = public_resource_kind(
+            resource_kind,
+            title=resource_title,
+            source_section=source_section,
+            url=resource_url,
+            group_has_winner_evidence=group_has_winner_evidence,
+        )
+        if not is_public_resource(
+            kind=resource_kind,
+            title=resource_title,
+            source_section=source_section,
+            section_category=_optional_text(section_category, maximum=64),
+            url=resource_url,
+            group_has_winner_evidence=group_has_winner_evidence,
+        ):
+            return
+        seen_urls.add(resource_url)
+        resources.append(
+            {
+                "kind": resource_kind.value,
+                "title": resource_title,
+                "url": resource_url,
+                "source_section": source_section,
+            }
+        )
+
+    if isinstance(raw_resources, list):
+        for raw_resource in raw_resources:
+            resource = _mapping(raw_resource)
+            capture = _mapping(resource.get("capture"))
+            append_resource(
+                raw_kind=resource.get("kind"),
+                url=resource.get("url"),
+                title=resource.get("label"),
+                section=resource.get("section_title"),
+                content_format=capture.get("content_format"),
+                section_category=resource.get("section_category"),
+            )
+    append_resource(
+        raw_kind="application",
+        url=application.get("url"),
+        title="Подать заявку",
+        section="Подача заявки",
+        content_format=None,
+        section_category="application",
+    )
+    return resources
+
+
+def _preview_content_sections(payload: Mapping[str, Any]) -> list[dict[str, str]]:
+    inventory = _mapping(payload.get("content_inventory"))
+    raw_blocks = inventory.get("blocks")
+    if not isinstance(raw_blocks, list):
+        return []
+    sections: list[dict[str, str]] = []
+    for raw_block in raw_blocks:
+        block = _mapping(raw_block)
+        category = _optional_text(block.get("category"), maximum=64)
+        heading = _optional_text(block.get("heading"), maximum=500)
+        content = _optional_text(block.get("text"))
+        if (
+            category is None
+            or heading is None
+            or content is None
+            or _CONTACT_TEXT_PATTERN.search(content)
+            or not is_public_content_section(category=category, heading=heading, content=content)
+        ):
+            continue
+        sections.append({"heading": heading, "category": category, "content": content})
+    return sections
+
+
+def review_public_preview(
+    connection: Connection,
+    review_case_id: UUID,
+) -> dict[str, Any]:
+    """Project the current effective record through the same public acceptance rules."""
+
+    row = connection.execute(
+        select(ReviewCase.staged_record_id)
+        .where(ReviewCase.id == review_case_id)
+    ).one_or_none()
+    if row is None:
+        raise ReviewPolicyError(f"unknown review case: {review_case_id}")
+    candidate = _load_staged_candidate(connection, row.staged_record_id)
+    record = review_effective_record(connection, review_case_id, candidate=candidate)
+    effective_candidate = _candidate_with_record(candidate, record)
+    payload = _mapping(record.get("payload"))
+    application = _mapping(payload.get("application"))
+    eligibility = _mapping(payload.get("eligibility"))
+    source_url = effective_candidate.fingerprint.source_url
+    if source_url is None:
+        raise ReviewPolicyError("review preview requires a valid canonical source URL")
+    source = connection.execute(
+        select(Source.id, Source.name, Source.canonical_url).where(Source.id == candidate.source_id)
+    ).mappings().one_or_none()
+    if source is None:
+        raise ReviewPolicyError("review preview source is missing")
+
+    raw_title = _optional_text(record.get("title"), maximum=500)
+    title = public_program_title(raw_title or "Кандидат без названия", source_url=source_url)
+    funding = _preview_funding(record.get("funding"))
+    content_sections = _preview_content_sections(payload)
+    access_mode = resolved_access_mode(
+        _access_mode(eligibility.get("access_mode")),
+        (
+            _optional_text(payload.get("summary")),
+            _optional_text(eligibility.get("summary")),
+            _optional_text(eligibility.get("geography_note")),
+            *(section["content"] for section in content_sections),
+        ),
+    )
+    geographies = [
+        {"slug": slug, "name": name}
+        for slug, name in _taxonomy_entries(payload, "geographies")
+    ]
+    if not geographies and has_russia_scope(
+        (
+            _optional_text(payload.get("summary")),
+            _optional_text(eligibility.get("summary")),
+            _optional_text(eligibility.get("geography_note")),
+        )
+    ):
+        geographies = [{"slug": "russia", "name": "Россия"}]
+    deadline_on = effective_candidate.fingerprint.deadline_on or _optional_date(
+        application.get("end_on")
+    )
+    return {
+        "title": title,
+        "source": {
+            "id": source["id"],
+            "name": source["name"],
+            "canonical_url": source["canonical_url"],
+        },
+        "source_url": source_url,
+        "observed_at": candidate.received_at,
+        "source_published_on": _optional_date(payload.get("source_published_on")),
+        "summary": _optional_text(payload.get("summary")),
+        "source_status": _source_status(payload.get("source_status")),
+        "deadline_on": deadline_on,
+        "funding": funding.model_dump(mode="json") if funding is not None else None,
+        "geographies": geographies,
+        "themes": [
+            {"slug": slug, "name": name}
+            for slug, name in _taxonomy_entries(payload, "themes")
+        ],
+        "eligibility_summary": _optional_text(eligibility.get("summary")),
+        "eligibility_geography_note": _optional_text(eligibility.get("geography_note")),
+        "access_mode": access_mode,
+        "application_url": _optional_http_url(application.get("url")),
+        "application_start_on": _optional_date(application.get("start_on")),
+        "application_end_on": _optional_date(application.get("end_on")),
+        "funding_amounts": _preview_funding_amounts(payload, funding),
+        "timeline": _preview_timeline(payload, application),
+        "resources": _preview_resources(payload, application),
+        "content_sections": content_sections,
+    }
 
 
 def _create_draft_program_from_candidate(
@@ -1404,7 +2313,13 @@ def accept_review_case(
 
     with connection.begin_nested():
         status, candidate = _lock_review_case(connection, review_case_id)
-        if candidate.quality.blocks_publication:
+        effective_record = review_effective_record(
+            connection,
+            review_case_id,
+            candidate=candidate,
+        )
+        candidate = _candidate_with_record(candidate, effective_record)
+        if _unresolved_quality_summary(connection, candidate.id).blocks_publication:
             raise ReviewPolicyError("quality errors must be resolved before acceptance")
         now = _now()
         decision_id = uuid4()

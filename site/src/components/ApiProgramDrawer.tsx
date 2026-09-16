@@ -3,6 +3,7 @@ import { useEffect, useRef, type KeyboardEvent } from 'react';
 import { formatDateRange, formatDeadline, formatOptionalDate, isValidExternalUrl } from '../lib/format';
 import { fundingScopeLabel, type PublicProgram } from '../data-access/catalogMapper';
 import { applicationStatus } from '../lib/applicationStatus';
+import { useCurrentDate } from '../lib/useCurrentDate';
 import { ApplicationStatusTag } from './ApplicationStatusTag';
 import { FavoriteToggle } from './FavoriteToggle';
 import { EmptyState, Tag } from './ui';
@@ -39,6 +40,114 @@ function fundingDetailLabel(amount: PublicProgram['fundingAmounts'][number]): st
   return `${sourceLabel} — ${amount.label}`;
 }
 
+function isSocialResource(url: string): boolean {
+  try {
+    const hostname = new URL(url).hostname.toLocaleLowerCase('en').replace(/^www\./, '');
+    return ['t.me', 'telegram.me', 'vk.com', 'vkontakte.ru'].some(
+      (host) => hostname === host || hostname.endsWith(`.${host}`)
+    );
+  } catch {
+    return false;
+  }
+}
+
+function socialResourceLabel(url: string): string {
+  try {
+    const hostname = new URL(url).hostname.toLocaleLowerCase('en').replace(/^www\./, '');
+    if (hostname === 't.me' || hostname.endsWith('.t.me') || hostname === 'telegram.me' || hostname.endsWith('.telegram.me')) {
+      return 'Telegram';
+    }
+    if (hostname === 'vk.com' || hostname.endsWith('.vk.com') || hostname === 'vkontakte.ru' || hostname.endsWith('.vkontakte.ru')) {
+      return 'ВКонтакте';
+    }
+  } catch {
+    return 'Официальный канал';
+  }
+  return 'Официальный канал';
+}
+
+function isWinnerResource(resource: PublicProgram['resources'][number]): boolean {
+  if (isSocialResource(resource.url)) return false;
+  if (resource.kind === 'result') return true;
+  return isWinnerText(`${resource.title ?? ''} ${resource.sourceSection ?? ''} ${decodedUrlPath(resource.url)}`);
+}
+
+function decodedUrlPath(url: string): string {
+  try {
+    return decodeURIComponent(new URL(url).pathname);
+  } catch {
+    return url;
+  }
+}
+
+function isWinnerText(value: string): boolean {
+  return /(?:победител|лауреат|(?:итог|результат)[\p{L}\p{N}_]*\s+(?:конкурс|отбор|программ))/iu.test(value);
+}
+
+function isScheduleMilestone(value: string): boolean {
+  return /(?:объявлен[\p{L}\p{N}_]*\s+(?:результат|победител|итог)|подведен[\p{L}\p{N}_]*\s+(?:итог|результат)|(?:вводн[\p{L}\p{N}_]*\s+)?семинар[\p{L}\p{N}_]*\s+(?:для\s+)?победител|заключен[\p{L}\p{N}_]*\s+договор[\p{L}\p{N}_]*\s+(?:с\s+)?победител)/iu.test(value);
+}
+
+function isWinnerSection(section: PublicProgram['contentSections'][number]): boolean {
+  return isWinnerText(section.heading) && !isScheduleMilestone(section.heading);
+}
+
+type WinnerResource = PublicProgram['resources'][number];
+
+function winnerYear(resource: WinnerResource): string | null {
+  const sourceSection = resource.sourceSection?.trim();
+  if (!sourceSection) return null;
+  const match = /(?:^|·)\s*(20\d{2}\s+год(?:а)?)\s*$/iu.exec(sourceSection);
+  return match?.[1] ?? null;
+}
+
+function groupWinnerResources(resources: WinnerResource[]): Array<{ year: string | null; resources: WinnerResource[] }> {
+  const groups: Array<{ year: string | null; resources: WinnerResource[] }> = [];
+  for (const resource of resources) {
+    const year = winnerYear(resource);
+    const previous = groups[groups.length - 1];
+    if (previous && previous.year === year) {
+      previous.resources.push(resource);
+      continue;
+    }
+    groups.push({ year, resources: [resource] });
+  }
+  return groups;
+}
+
+function ResourceCard({
+  resource,
+  winner = false,
+  channel = false
+}: {
+  resource: PublicProgram['resources'][number];
+  winner?: boolean;
+  channel?: boolean;
+}) {
+  const title = channel
+    ? socialResourceLabel(resource.url)
+    : resource.title ?? (winner ? 'Список победителей' : resource.sourceSection ?? 'Материал источника');
+  const action = winner ? 'Открыть список победителей' : channel ? 'Открыть канал' : 'Открыть материал';
+
+  return (
+    <div className="rounded-lg border border-ink/10 bg-white/70 p-4">
+      <p className="font-semibold text-ink">{title}</p>
+      {channel ? <p className="mt-1 text-sm text-graphite">Официальный канал конкурса</p> : null}
+      {!winner && !channel && resource.sourceSection ? <p className="mt-1 text-sm text-graphite">{resource.sourceSection}</p> : null}
+      {isValidExternalUrl(resource.url) ? (
+        <a
+          href={resource.url}
+          target="_blank"
+          rel="noreferrer"
+          className="mt-3 inline-flex items-center text-sm font-semibold text-cobalt"
+        >
+          {action} <ExternalLink className="ml-2 h-4 w-4" aria-hidden="true" />
+        </a>
+      ) : null}
+    </div>
+  );
+}
+
 export function ApiProgramDrawer({
   program,
   loading,
@@ -46,7 +155,9 @@ export function ApiProgramDrawer({
   isFavorite,
   onToggleFavorite,
   onRetry,
-  onClose
+  onClose,
+  embedded = false,
+  preview = false
 }: {
   program: PublicProgram | null;
   loading: boolean;
@@ -55,20 +166,34 @@ export function ApiProgramDrawer({
   onToggleFavorite: () => void;
   onRetry: () => void;
   onClose: () => void;
+  embedded?: boolean;
+  preview?: boolean;
 }) {
   const dialogRef = useRef<HTMLElement>(null);
   const closeButtonRef = useRef<HTMLButtonElement>(null);
   const openerRef = useRef<HTMLElement | null>(null);
-  const status = program ? applicationStatus(program) : null;
+  const now = useCurrentDate();
+  const status = program ? applicationStatus(program, now) : null;
+  const socialResources = program?.resources.filter((resource) => isSocialResource(resource.url)) ?? [];
+  const winnerResources = program?.resources.filter(isWinnerResource) ?? [];
+  const winnerResourceGroups = groupWinnerResources(winnerResources);
+  const documentResources = program?.resources.filter(
+    (resource) => resource.kind !== 'application' && !isSocialResource(resource.url) && !isWinnerResource(resource)
+  ) ?? [];
+  const winnerSections = program?.contentSections.filter(
+    (section) => section.category === 'results' && isWinnerSection(section)
+  ) ?? [];
+  const additionalSections = program?.contentSections.filter((section) => section.category !== 'results') ?? [];
 
   useEffect(() => {
+    if (embedded) return undefined;
     openerRef.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
     closeButtonRef.current?.focus();
 
     return () => {
       if (openerRef.current && document.contains(openerRef.current)) openerRef.current.focus();
     };
-  }, []);
+  }, [embedded]);
 
   function getFocusableElements() {
     return Array.from(dialogRef.current?.querySelectorAll<HTMLElement>(focusableSelector) ?? []);
@@ -99,21 +224,21 @@ export function ApiProgramDrawer({
 
   return (
     <div
-      data-testid="program-drawer-overlay"
-      className="program-drawer-overlay fixed inset-0 z-50 flex justify-end p-3 backdrop-blur-sm"
-      role="presentation"
+      data-testid={embedded ? undefined : 'program-drawer-overlay'}
+      className={embedded ? 'w-full' : 'program-drawer-overlay fixed inset-0 z-50 flex justify-end p-3 backdrop-blur-sm'}
+      role={embedded ? undefined : 'presentation'}
       onClick={(event) => {
-        if (event.target === event.currentTarget) onClose();
+        if (!embedded && event.target === event.currentTarget) onClose();
       }}
     >
       <section
         ref={dialogRef}
-        role="dialog"
-        aria-modal="true"
+        role={embedded ? undefined : 'dialog'}
+        aria-modal={embedded ? undefined : true}
         aria-label={program?.title ?? 'Карточка программы'}
-        tabIndex={-1}
-        onKeyDown={handleKeyDown}
-        className="h-full w-full max-w-2xl overflow-y-auto rounded-lg bg-paper p-6 shadow-panel"
+        tabIndex={embedded ? undefined : -1}
+        onKeyDown={embedded ? undefined : handleKeyDown}
+        className={embedded ? 'w-full rounded-xl border border-ink/10 bg-paper p-5 shadow-sm sm:p-6' : 'h-full w-full max-w-2xl overflow-y-auto rounded-lg bg-paper p-6 shadow-panel'}
       >
         <div className="flex items-start justify-between gap-4">
           <div className="min-w-0">
@@ -123,7 +248,8 @@ export function ApiProgramDrawer({
             </h2>
           </div>
           <div className="flex shrink-0 items-center gap-2">
-            {program ? <FavoriteToggle itemName={program.title} isFavorite={isFavorite} onToggle={onToggleFavorite} /> : null}
+            {!embedded && program ? <FavoriteToggle itemName={program.title} isFavorite={isFavorite} onToggle={onToggleFavorite} /> : null}
+            {!embedded ? (
             <button
               ref={closeButtonRef}
               type="button"
@@ -133,6 +259,7 @@ export function ApiProgramDrawer({
             >
               <X className="h-5 w-5" aria-hidden="true" />
             </button>
+            ) : null}
           </div>
         </div>
 
@@ -152,6 +279,17 @@ export function ApiProgramDrawer({
               <Tag>{program.funding ? `Финансирование: ${program.funding.label}` : 'Сумма не указана'}</Tag>
             </div>
 
+            {program.applicationUrl && isValidExternalUrl(program.applicationUrl) ? (
+              <a
+                href={program.applicationUrl}
+                target="_blank"
+                rel="noreferrer"
+                className="button-primary mt-4 inline-flex items-center"
+              >
+                Подать заявку <ExternalLink className="ml-2 h-4 w-4" aria-hidden="true" />
+              </a>
+            ) : null}
+
             <p className="mt-6 text-base leading-7 text-graphite">
               {program.summary ?? 'Краткое описание не извлечено; подробные условия доступны на первоисточнике.'}
             </p>
@@ -159,7 +297,10 @@ export function ApiProgramDrawer({
             <section aria-labelledby="public-program-overview" className="mt-8 grid gap-4 sm:grid-cols-2">
               <h3 id="public-program-overview" className="sr-only">Основные параметры</h3>
               <PublicDetail label="Дата публикации на источнике" value={formatOptionalDate(program.sourcePublishedOn)} />
-              <PublicDetail label="Добавлено в Siderfold" value={formatOptionalDate(program.publishedAt.slice(0, 10))} />
+              <PublicDetail
+                label="Добавлено в Siderfold"
+                value={preview ? 'Появится после публикации' : formatOptionalDate(program.publishedAt.slice(0, 10))}
+              />
               <PublicDetail
                 label="Статус конкурса"
                 value={status?.label ?? 'Статус конкурса не указан'}
@@ -212,35 +353,57 @@ export function ApiProgramDrawer({
               </section>
             ) : null}
 
-            {program.resources.length > 0 ? (
+            {winnerResources.length > 0 || winnerSections.length > 0 ? (
               <section className="mt-8">
-                <h3 className="text-lg font-semibold">Документы и ссылки</h3>
-                <div className="mt-3 space-y-3">
-                  {program.resources.map((resource) => (
-                    <div key={resource.url} className="rounded-lg border border-ink/10 bg-white/70 p-4">
-                      <p className="font-semibold text-ink">{resource.title ?? resource.sourceSection ?? 'Материал источника'}</p>
-                      {resource.sourceSection ? <p className="mt-1 text-sm text-graphite">{resource.sourceSection}</p> : null}
-                      {isValidExternalUrl(resource.url) ? (
-                        <a
-                          href={resource.url}
-                          target="_blank"
-                          rel="noreferrer"
-                          className="mt-3 inline-flex items-center text-sm font-semibold text-cobalt"
-                        >
-                          Открыть материал <ExternalLink className="ml-2 h-4 w-4" aria-hidden="true" />
-                        </a>
-                      ) : null}
-                    </div>
-                  ))}
-                </div>
+                <h3 className="text-lg font-semibold">Победители</h3>
+                {winnerResources.length > 0 ? (
+                  <div className="mt-3 space-y-6">
+                    {winnerResourceGroups.map((group, index) => (
+                      <div key={`${group.year ?? 'without-year'}:${index}`}>
+                        {group.year ? <h4 className="font-semibold text-ink">{group.year}</h4> : null}
+                        <div className={group.year ? 'mt-3 space-y-3' : 'space-y-3'}>
+                          {group.resources.map((resource) => <ResourceCard key={resource.url} resource={resource} winner />)}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <div className="mt-3 space-y-4">
+                    {winnerSections.map((section) => (
+                      <div key={`${section.category}:${section.heading}`} className="rounded-lg border border-ink/10 bg-white/70 p-4">
+                        <h4 className="font-semibold text-ink">{section.heading}</h4>
+                        <p className="mt-2 text-sm leading-6 text-graphite">{section.content}</p>
+                      </div>
+                    ))}
+                  </div>
+                )}
               </section>
             ) : null}
 
-            {program.contentSections.length > 0 ? (
+            {documentResources.length > 0 || socialResources.length > 0 ? (
+              <section className="mt-8">
+                <h3 className="text-lg font-semibold">Документы и ссылки</h3>
+                {documentResources.length > 0 ? (
+                  <div className="mt-3 space-y-3">
+                    {documentResources.map((resource) => <ResourceCard key={resource.url} resource={resource} />)}
+                  </div>
+                ) : null}
+                {socialResources.length > 0 ? (
+                  <div className={documentResources.length > 0 ? 'mt-6' : 'mt-3'}>
+                    <h4 className="font-semibold text-ink">Официальные каналы</h4>
+                    <div className="mt-3 space-y-3">
+                      {socialResources.map((resource) => <ResourceCard key={resource.url} resource={resource} channel />)}
+                    </div>
+                  </div>
+                ) : null}
+              </section>
+            ) : null}
+
+            {additionalSections.length > 0 ? (
               <section className="mt-8">
                 <h3 className="text-lg font-semibold">Дополнительная информация</h3>
                 <div className="mt-3 space-y-4">
-                  {program.contentSections.map((section) => (
+                  {additionalSections.map((section) => (
                     <div key={`${section.category}:${section.heading}`} className="rounded-lg border border-ink/10 bg-white/70 p-4">
                       <h4 className="font-semibold text-ink">{section.heading}</h4>
                       <p className="mt-2 text-sm leading-6 text-graphite">{section.content}</p>

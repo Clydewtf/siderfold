@@ -48,6 +48,15 @@ FIXTURE_PATH = (
     / "sectioned-competition.html"
 )
 SOURCE_URL = "https://fondpotanin.ru/competitions/sectioned-quality-reference/"
+OPEN_FIXTURE_PATH = (
+    BACKEND_ROOT
+    / "tests"
+    / "fixtures"
+    / "adapters"
+    / "potanin"
+    / "open.html"
+)
+OPEN_SOURCE_URL = "https://fondpotanin.ru/competitions/quality-reference-open/"
 MULTI_CYCLE_FIXTURE_PATH = (
     BACKEND_ROOT
     / "tests"
@@ -238,6 +247,102 @@ def test_review_acceptance_preserves_rich_source_data_without_exposing_contacts(
         "review_decision",
     ):
         assert private_or_internal_field not in response_text
+
+
+def test_review_acceptance_keeps_application_url_out_of_the_material_list(
+    migrated_engine: Engine,
+) -> None:
+    with migrated_engine.begin() as connection:
+        source_id = insert_source(connection)
+        staged_record_id = _review_ready_potanin_candidate(
+            connection,
+            source_id=source_id,
+            fixture_path=OPEN_FIXTURE_PATH,
+            source_url=OPEN_SOURCE_URL,
+        )
+        review_case_id = evaluate_staged_record(connection, staged_record_id).review_case_id
+        accepted = accept_review_case(
+            connection,
+            review_case_id,
+            reason="Ссылка подачи и официальный документ сверены с источником.",
+        )
+        assert accepted.program_id is not None
+
+    with migrated_engine.connect() as connection:
+        details = connection.execute(
+            select(ProgramDetails.application_url).where(
+                ProgramDetails.program_id == accepted.program_id
+            )
+        ).one()
+        resources = connection.execute(
+            select(ProgramResource.resource_kind, ProgramResource.url).where(
+                ProgramResource.program_id == accepted.program_id
+            )
+        ).all()
+
+    assert details.application_url == "https://zayavka.fondpotanin.ru/ru/"
+    assert all(kind is not ProgramResourceKind.APPLICATION for kind, _url in resources)
+    assert any(url.endswith("rules.pdf") for _kind, url in resources)
+
+
+def test_public_detail_promotes_winner_documents_and_keeps_social_channels_separate(
+    migrated_engine: Engine,
+) -> None:
+    with migrated_engine.begin() as connection:
+        source_id = insert_source(connection)
+        staged_record_id = _review_ready_potanin_candidate(connection, source_id=source_id)
+        review_case_id = evaluate_staged_record(connection, staged_record_id).review_case_id
+        accepted = accept_review_case(
+            connection,
+            review_case_id,
+            reason="Поля и связанные материалы сверены с официальной страницей.",
+        )
+        assert accepted.program_id is not None
+        connection.execute(
+            insert(ProgramResource),
+            [
+                {
+                    "id": uuid4(),
+                    "program_id": accepted.program_id,
+                    "resource_kind": ProgramResourceKind.COMPETITION_DOCUMENT,
+                    "title": "Список победителей 2025",
+                    "url": "https://fondpotanin.ru/upload/winners-2025.pdf",
+                    "source_section": "Документы конкурса",
+                    "content_format": "application/pdf",
+                    "position": 100,
+                },
+                {
+                    "id": uuid4(),
+                    "program_id": accepted.program_id,
+                    "resource_kind": ProgramResourceKind.RESULT,
+                    "title": "Телеграм-канал конкурса",
+                    "url": "https://t.me/example_competition",
+                    "source_section": "Победители",
+                    "content_format": None,
+                    "position": 101,
+                },
+                {
+                    "id": uuid4(),
+                    "program_id": accepted.program_id,
+                    "resource_kind": ProgramResourceKind.RESULT,
+                    "title": "Результаты исследования рынка",
+                    "url": "https://fondpotanin.ru/press/news/research-results/",
+                    "source_section": None,
+                    "content_format": "text/html",
+                    "position": 102,
+                },
+            ],
+        )
+
+    client = TestClient(create_app(engine=migrated_engine))
+    response = client.get(f"/api/v1/programs/{accepted.program_id}")
+
+    assert response.status_code == 200
+    detail = ProgramDetail.model_validate(response.json())
+    resources_by_url = {resource.url: resource for resource in detail.resources}
+    assert resources_by_url["https://fondpotanin.ru/upload/winners-2025.pdf"].kind is ProgramResourceKind.RESULT
+    assert resources_by_url["https://t.me/example_competition"].kind is ProgramResourceKind.REFERENCE
+    assert "https://fondpotanin.ru/press/news/research-results/" not in resources_by_url
 
 
 def test_review_acceptance_preserves_multiple_application_windows_without_a_fake_deadline(

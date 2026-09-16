@@ -4,7 +4,8 @@ set -Eeuo pipefail
 PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 BACKEND_DIR="$PROJECT_ROOT/backend"
 SITE_DIR="$PROJECT_ROOT/site"
-VENV_DIR="${SIDERFOLD_BACKEND_VENV:-/private/tmp/siderfold-backend-venv}"
+VENV_DIR="${SIDERFOLD_BACKEND_VENV:-}"
+PYTHON_COMMAND="${SIDERFOLD_PYTHON:-}"
 COMPOSE_PROJECT="${SIDERFOLD_COMPOSE_PROJECT:-siderfold}"
 BACKEND_HOST="${SIDERFOLD_BACKEND_HOST:-127.0.0.1}"
 BACKEND_PORT="${SIDERFOLD_BACKEND_PORT:-8000}"
@@ -20,6 +21,41 @@ MODE="${1:-}"
 fail() {
   printf 'Ошибка: %s\n' "$1" >&2
   exit 1
+}
+
+select_python() {
+  local candidate
+  local candidates=()
+
+  if [[ -n "$PYTHON_COMMAND" ]]; then
+    candidates=("$PYTHON_COMMAND")
+  else
+    # Prefer a stable interpreter when several supported versions are installed.
+    candidates=(python3.12 python3.11 python3)
+  fi
+
+  for candidate in "${candidates[@]}"; do
+    if ! command -v "$candidate" >/dev/null 2>&1; then
+      continue
+    fi
+    if "$candidate" -c 'import sys; raise SystemExit(0 if sys.version_info >= (3, 11) else 1)' \
+      >/dev/null 2>&1; then
+      command -v "$candidate"
+      return 0
+    fi
+  done
+
+  return 1
+}
+
+is_valid_virtualenv() {
+  local candidate_dir="$1"
+  local candidate_python="$candidate_dir/bin/python"
+
+  [[ -f "$candidate_dir/pyvenv.cfg" && -x "$candidate_python" ]] || return 1
+  "$candidate_python" -c \
+    'import sys; raise SystemExit(0 if sys.prefix != sys.base_prefix and sys.version_info >= (3, 11) else 1)' \
+    >/dev/null 2>&1
 }
 
 cleanup() {
@@ -80,9 +116,12 @@ esac
 
 if [[ "$MODE" == "api" ]]; then
   command -v docker >/dev/null 2>&1 || fail "не найден Docker CLI. Запусти Docker Desktop."
-  command -v python3 >/dev/null 2>&1 || fail "не найден python3."
-  python3 -c 'import sys; raise SystemExit(0 if sys.version_info >= (3, 11) else 1)' \
-    || fail "нужен Python 3.11 или новее."
+  PYTHON_COMMAND="$(select_python)" \
+    || fail "нужен Python 3.11 или новее. Можно явно задать SIDERFOLD_PYTHON."
+  PYTHON_SERIES="$("$PYTHON_COMMAND" -c 'import sys; print(f"{sys.version_info.major}.{sys.version_info.minor}")')"
+  if [[ -z "$VENV_DIR" ]]; then
+    VENV_DIR="/private/tmp/siderfold-backend-venv-py${PYTHON_SERIES}"
+  fi
 fi
 
 if command -v lsof >/dev/null 2>&1; then
@@ -98,14 +137,17 @@ if [[ "$MODE" == "api" ]]; then
   cd "$BACKEND_DIR"
 
   PYTHON_BIN="$VENV_DIR/bin/python"
-  if [[ ! -x "$PYTHON_BIN" ]]; then
+  if [[ -e "$VENV_DIR" ]] && ! is_valid_virtualenv "$VENV_DIR"; then
+    fail "каталог $VENV_DIR не является корректным virtualenv. Задай другой SIDERFOLD_BACKEND_VENV или удали только этот временный каталог и запусти команду снова."
+  fi
+  if ! is_valid_virtualenv "$VENV_DIR"; then
     printf 'Создаю виртуальное окружение: %s\n' "$VENV_DIR"
-    python3 -m venv "$VENV_DIR"
+    "$PYTHON_COMMAND" -m venv "$VENV_DIR"
   fi
 
   PYTHON_BIN="$VENV_DIR/bin/python"
-  "$PYTHON_BIN" -c 'import sys; raise SystemExit(0 if sys.version_info >= (3, 11) else 1)' \
-    || fail "виртуальное окружение использует Python младше 3.11."
+  is_valid_virtualenv "$VENV_DIR" \
+    || fail "не удалось создать корректное виртуальное окружение."
 
   if ! "$PYTHON_BIN" -c 'import alembic, fastapi, sqlalchemy, uvicorn' >/dev/null 2>&1; then
     printf 'Устанавливаю зависимости backend...\n'
@@ -192,7 +234,12 @@ else
 fi
 printf 'Frontend: %s\n' "$FRONTEND_URL"
 if [[ "$MODE" == "api" ]]; then
+  printf 'Backend environment: %s\n' "$PYTHON_BIN"
   printf 'Backend health: http://%s:%s/healthz\n' "$BACKEND_HOST" "$BACKEND_PORT"
+  printf 'Операторская панель: %s/operator.html\n' "$FRONTEND_URL"
+  if [[ -z "${INTERNAL_API_TOKEN:-}" ]]; then
+    printf 'Для операторской панели сначала задай INTERNAL_API_TOKEN и перезапусти API-режим.\n'
+  fi
   printf 'Для остановки backend и frontend нажми Ctrl+C. PostgreSQL останется запущенным.\n'
 else
   printf 'Backend и PostgreSQL в этом режиме не запускаются.\n'

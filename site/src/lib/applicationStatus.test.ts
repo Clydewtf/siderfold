@@ -42,6 +42,14 @@ describe('applicationStatus', () => {
     });
   });
 
+  it('treats a future application deadline without a stated start date as open', () => {
+    expect(applicationStatus(program({ deadline: '2026-09-20' }), now)).toEqual({
+      value: 'open',
+      label: 'Приём заявок открыт',
+      derived: true
+    });
+  });
+
   it('prefers an active application window over a past window in the timeline', () => {
     expect(applicationStatus(program({
       timeline: [
@@ -103,6 +111,20 @@ describe('applicationStatus', () => {
     }), now)).toEqual({
       value: 'open',
       label: 'Приём заявок открыт',
+      derived: true
+    });
+  });
+
+  it('shows an active post-application lifecycle stage when the schedule gives its date range', () => {
+    expect(applicationStatus(program({
+      deadline: '2026-08-31',
+      timeline: [
+        { kind: 'application', start: '2026-08-01', end: '2026-08-31' },
+        { kind: 'evaluation', start: '2026-09-01', end: '2026-09-25' }
+      ]
+    }), now)).toEqual({
+      value: 'closed',
+      label: 'Идёт экспертиза заявок',
       derived: true
     });
   });

@@ -1,4 +1,5 @@
 import { applicationStatus, type ApplicationStatusInput } from '../lib/applicationStatus';
+import { useCurrentDate } from '../lib/useCurrentDate';
 import { Tag } from './ui';
 
 const toneClassNames = {
@@ -10,7 +11,7 @@ const toneClassNames = {
 } as const;
 
 export function ApplicationStatusTag({ program }: { program: ApplicationStatusInput }) {
-  const status = applicationStatus(program);
+  const status = applicationStatus(program, useCurrentDate());
   return (
     <Tag className={toneClassNames[status.value]}>
       <span aria-hidden="true" className="mr-1">●</span>

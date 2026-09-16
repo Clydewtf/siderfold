@@ -473,6 +473,11 @@ class Geography(Base):
         CheckConstraint("length(btrim(slug)) > 0", name="slug_not_blank"),
         CheckConstraint("length(btrim(name)) > 0", name="name_not_blank"),
         UniqueConstraint("slug", name="uq_geographies_slug"),
+        Index(
+            "uq_geographies_normalized_name",
+            func.lower(func.btrim(name)),
+            unique=True,
+        ),
     )
 
 
@@ -511,6 +516,11 @@ class Theme(Base):
         CheckConstraint("length(btrim(slug)) > 0", name="slug_not_blank"),
         CheckConstraint("length(btrim(name)) > 0", name="name_not_blank"),
         UniqueConstraint("slug", name="uq_themes_slug"),
+        Index(
+            "uq_themes_normalized_name",
+            func.lower(func.btrim(name)),
+            unique=True,
+        ),
     )
 
 
@@ -1500,6 +1510,97 @@ class ReviewAction(Base):
     )
 
 
+class ReviewRevision(Base):
+    """An immutable operator correction layered over one staged candidate."""
+
+    __tablename__ = "review_revisions"
+
+    id: Mapped[UUID] = mapped_column(PostgreSQLUUID(as_uuid=True), primary_key=True, default=uuid4)
+    review_case_id: Mapped[UUID] = mapped_column(
+        PostgreSQLUUID(as_uuid=True),
+        ForeignKey("review_cases.id", ondelete="RESTRICT"),
+        nullable=False,
+    )
+    staged_record_id: Mapped[UUID] = mapped_column(
+        PostgreSQLUUID(as_uuid=True),
+        ForeignKey("staged_records.id", ondelete="RESTRICT"),
+        nullable=False,
+    )
+    revision_number: Mapped[int] = mapped_column(Integer, nullable=False)
+    effective_record: Mapped[dict[str, Any]] = mapped_column(
+        JSONB,
+        nullable=False,
+        default=dict,
+        server_default=text("'{}'::jsonb"),
+    )
+    changed_fields: Mapped[list[str]] = mapped_column(
+        JSONB,
+        nullable=False,
+        default=list,
+        server_default=text("'[]'::jsonb"),
+    )
+    deduplication_snapshot: Mapped[dict[str, Any]] = mapped_column(
+        JSONB,
+        nullable=False,
+        default=dict,
+        server_default=text("'{}'::jsonb"),
+    )
+    reason: Mapped[str] = mapped_column(Text, nullable=False)
+    actor: Mapped[str] = mapped_column(String(255), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=func.now(),
+    )
+
+    __table_args__ = (
+        CheckConstraint("revision_number > 0", name="revision_number_positive"),
+        CheckConstraint("length(btrim(reason)) > 0", name="reason_not_blank"),
+        CheckConstraint("length(btrim(actor)) > 0", name="actor_not_blank"),
+        CheckConstraint("jsonb_typeof(effective_record) = 'object'", name="effective_record_is_object"),
+        CheckConstraint("jsonb_typeof(changed_fields) = 'array'", name="changed_fields_is_array"),
+        CheckConstraint(
+            "jsonb_typeof(deduplication_snapshot) = 'object'",
+            name="deduplication_snapshot_is_object",
+        ),
+        UniqueConstraint("review_case_id", "revision_number", name="uq_review_revisions_case_number"),
+        Index("ix_review_revisions_case_created", "review_case_id", "created_at"),
+        Index("ix_review_revisions_staged_record", "staged_record_id"),
+    )
+
+
+class ReviewIssueResolution(Base):
+    """The explicit review revision that resolved one quality issue."""
+
+    __tablename__ = "review_issue_resolutions"
+
+    id: Mapped[UUID] = mapped_column(PostgreSQLUUID(as_uuid=True), primary_key=True, default=uuid4)
+    review_revision_id: Mapped[UUID] = mapped_column(
+        PostgreSQLUUID(as_uuid=True),
+        ForeignKey("review_revisions.id", ondelete="RESTRICT"),
+        nullable=False,
+    )
+    data_quality_issue_id: Mapped[UUID] = mapped_column(
+        PostgreSQLUUID(as_uuid=True),
+        ForeignKey("data_quality_issues.id", ondelete="RESTRICT"),
+        nullable=False,
+    )
+    reason: Mapped[str] = mapped_column(Text, nullable=False)
+    actor: Mapped[str] = mapped_column(String(255), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=func.now(),
+    )
+
+    __table_args__ = (
+        CheckConstraint("length(btrim(reason)) > 0", name="reason_not_blank"),
+        CheckConstraint("length(btrim(actor)) > 0", name="actor_not_blank"),
+        UniqueConstraint("data_quality_issue_id", name="uq_review_issue_resolutions_issue"),
+        Index("ix_review_issue_resolutions_revision", "review_revision_id"),
+    )
+
+
 class ProgramPublicationAction(Base):
     """An append-only publication lifecycle action backed by prior review evidence."""
 
@@ -1586,6 +1687,10 @@ class OperatorOperation(Base):
         PostgreSQLUUID(as_uuid=True),
         ForeignKey("program_publication_actions.id", ondelete="RESTRICT"),
     )
+    review_revision_id: Mapped[UUID | None] = mapped_column(
+        PostgreSQLUUID(as_uuid=True),
+        ForeignKey("review_revisions.id", ondelete="RESTRICT"),
+    )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         nullable=False,
@@ -1605,7 +1710,8 @@ class OperatorOperation(Base):
         CheckConstraint(
             "((review_action_id IS NOT NULL)::integer + "
             "(discovery_review_action_id IS NOT NULL)::integer + "
-            "(program_publication_action_id IS NOT NULL)::integer) = 1",
+            "(program_publication_action_id IS NOT NULL)::integer + "
+            "(review_revision_id IS NOT NULL)::integer) = 1",
             name="exactly_one_audit_action",
         ),
         UniqueConstraint("actor", "idempotency_key", name="uq_operator_operations_actor_key"),

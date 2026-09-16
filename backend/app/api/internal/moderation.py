@@ -23,12 +23,18 @@ from app.api.internal.schemas import (
     InternalQualityIssue,
     InternalReviewAction,
     InternalReviewCaseDetail,
+    InternalReviewIssueResolution,
     InternalReviewQueueItem,
+    InternalReviewProvenance,
+    InternalReviewRevision,
+    InternalRegisteredSource,
     InternalSource,
     ProgramArchiveRequest,
     ProgramArchiveResponse,
     ProgramRepublishRequest,
     ProgramRepublishResponse,
+    SaveReviewRevisionRequest,
+    SaveReviewRevisionResponse,
 )
 from app.domain.models import (
     DataQualityIssue,
@@ -38,10 +44,13 @@ from app.domain.models import (
     ReviewAction,
     ReviewCase,
     ReviewCaseStatus,
+    ReviewIssueResolution,
+    ReviewRevision,
     Source,
     SourceExecutionRun,
     StagedRecord,
 )
+from app.domain.presentation import public_program_title
 from app.review.discovery import (
     DiscoveryReviewPolicyError,
     link_discovery_case_to_registered_source,
@@ -62,7 +71,10 @@ from app.review.service import (
     accept_review_case,
     merge_review_case,
     reject_review_case,
+    review_effective_record,
+    review_public_preview,
     request_clarification,
+    save_review_revision,
 )
 from app.sources.registry import RegistryValidationError, load_registry
 
@@ -172,8 +184,16 @@ def _review_queue_item(row: Mapping[str, Any]) -> InternalReviewQueueItem:
     candidate_payload = row.get("candidate_payload")
     candidate = candidate_payload if isinstance(candidate_payload, Mapping) else {}
     record = candidate.get("record") if isinstance(candidate.get("record"), Mapping) else candidate
-    title = record.get("title") if isinstance(record.get("title"), str) else None
     source_url = record.get("record_url") or record.get("record_key")
+    raw_title = record.get("title") if isinstance(record.get("title"), str) else None
+    title = (
+        public_program_title(
+            raw_title,
+            source_url=source_url if isinstance(source_url, str) else None,
+        )
+        if raw_title is not None
+        else None
+    )
     return InternalReviewQueueItem(
         review_case_id=row["id"],
         staged_record_id=row["staged_record_id"],
@@ -186,6 +206,15 @@ def _review_queue_item(row: Mapping[str, Any]) -> InternalReviewQueueItem:
 
 
 def _internal_quality_issue(row: Mapping[str, Any]) -> InternalQualityIssue:
+    resolution = None
+    if row.get("resolution_id") is not None:
+        resolution = InternalReviewIssueResolution(
+            id=row["resolution_id"],
+            review_revision_id=row["resolution_review_revision_id"],
+            reason=row["resolution_reason"],
+            actor=row["resolution_actor"],
+            created_at=row["resolution_created_at"],
+        )
     return InternalQualityIssue(
         id=row["id"],
         staged_record_id=row["staged_record_id"],
@@ -197,6 +226,7 @@ def _internal_quality_issue(row: Mapping[str, Any]) -> InternalQualityIssue:
         message=row["message"],
         created_at=row["created_at"],
         review_case_id=row.get("review_case_id"),
+        resolution=resolution,
     )
 
 
@@ -212,6 +242,43 @@ def list_internal_sources(
         .limit(limit)
     ).mappings()
     return [InternalSource(**row) for row in rows]
+
+
+@router.get("/source-definitions", response_model=list[InternalRegisteredSource])
+def list_internal_registered_sources(
+    request: Request,
+    _access: InternalAccess = Depends(require_internal_access),
+) -> list[InternalRegisteredSource]:
+    """Expose source routing metadata without configuration secrets."""
+
+    try:
+        registry = load_registry(request.app.state.settings.source_registry_path)
+    except RegistryValidationError as error:
+        raise InternalApiError(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            code="source_registry_unavailable",
+            message="The source registry is unavailable.",
+        ) from error
+
+    return [
+        InternalRegisteredSource(
+            source_key=definition.source_key,
+            name=definition.name,
+            canonical_url=definition.canonical_url,
+            allowed_url_prefixes=list(definition.allowed_url_prefixes),
+            allowed_exact_urls=list(definition.allowed_exact_urls),
+            access_method=definition.access_method.value,
+            schedule=definition.schedule,
+            status=definition.status.value,
+            responsible=definition.responsible,
+            adapter_name=definition.adapter_name,
+            adapter_version=definition.adapter_version,
+        )
+        for definition in sorted(
+            registry.sources.values(),
+            key=lambda definition: definition.source_key,
+        )
+    ]
 
 
 @router.get("/runs", response_model=list[InternalExecutionRun])
@@ -347,12 +414,21 @@ def list_internal_quality_issues(
             DataQualityIssue.message,
             DataQualityIssue.created_at,
             ReviewCase.id.label("review_case_id"),
+            ReviewIssueResolution.id.label("resolution_id"),
+            ReviewIssueResolution.review_revision_id.label("resolution_review_revision_id"),
+            ReviewIssueResolution.reason.label("resolution_reason"),
+            ReviewIssueResolution.actor.label("resolution_actor"),
+            ReviewIssueResolution.created_at.label("resolution_created_at"),
         )
         .select_from(DataQualityIssue)
         .join(StagedRecord, StagedRecord.id == DataQualityIssue.staged_record_id)
         .join(RawCapture, RawCapture.id == StagedRecord.raw_capture_id)
         .join(IngestionRun, IngestionRun.id == RawCapture.ingestion_run_id)
         .outerjoin(ReviewCase, ReviewCase.staged_record_id == StagedRecord.id)
+        .outerjoin(
+            ReviewIssueResolution,
+            ReviewIssueResolution.data_quality_issue_id == DataQualityIssue.id,
+        )
         .order_by(desc(DataQualityIssue.created_at), desc(DataQualityIssue.id))
         .limit(limit)
     ).mappings()
@@ -401,9 +477,23 @@ def get_internal_review_case(
             ReviewCase.opened_at,
             ReviewCase.opened_snapshot,
             StagedRecord.candidate_payload,
+            StagedRecord.raw_capture_id,
+            RawCapture.ingestion_run_id,
+            RawCapture.source_url.label("raw_capture_source_url"),
+            RawCapture.received_at,
+            RawCapture.content_sha256,
+            RawCapture.content_format,
+            RawCapture.adapter_name,
+            RawCapture.adapter_version,
+            IngestionRun.source_id,
+            Source.name.label("source_name"),
+            Source.canonical_url.label("source_canonical_url"),
         )
         .select_from(ReviewCase)
         .join(StagedRecord, StagedRecord.id == ReviewCase.staged_record_id)
+        .join(RawCapture, RawCapture.id == StagedRecord.raw_capture_id)
+        .join(IngestionRun, IngestionRun.id == RawCapture.ingestion_run_id)
+        .join(Source, Source.id == IngestionRun.source_id)
         .where(ReviewCase.id == review_case_id)
     ).mappings().one_or_none()
     if row is None:
@@ -425,12 +515,21 @@ def get_internal_review_case(
             DataQualityIssue.message,
             DataQualityIssue.created_at,
             ReviewCase.id.label("review_case_id"),
+            ReviewIssueResolution.id.label("resolution_id"),
+            ReviewIssueResolution.review_revision_id.label("resolution_review_revision_id"),
+            ReviewIssueResolution.reason.label("resolution_reason"),
+            ReviewIssueResolution.actor.label("resolution_actor"),
+            ReviewIssueResolution.created_at.label("resolution_created_at"),
         )
         .select_from(DataQualityIssue)
         .join(StagedRecord, StagedRecord.id == DataQualityIssue.staged_record_id)
         .join(RawCapture, RawCapture.id == StagedRecord.raw_capture_id)
         .join(IngestionRun, IngestionRun.id == RawCapture.ingestion_run_id)
         .join(ReviewCase, ReviewCase.staged_record_id == StagedRecord.id)
+        .outerjoin(
+            ReviewIssueResolution,
+            ReviewIssueResolution.data_quality_issue_id == DataQualityIssue.id,
+        )
         .where(ReviewCase.id == review_case_id)
         .order_by(asc(DataQualityIssue.created_at), asc(DataQualityIssue.id))
     ).mappings()
@@ -451,11 +550,59 @@ def get_internal_review_case(
         .where(ReviewAction.review_case_id == review_case_id)
         .order_by(asc(ReviewAction.created_at), asc(ReviewAction.id))
     ).mappings()
+    revision_rows = connection.execute(
+        select(
+            ReviewRevision.id,
+            ReviewRevision.revision_number,
+            ReviewRevision.changed_fields,
+            ReviewRevision.deduplication_snapshot,
+            ReviewRevision.reason,
+            ReviewRevision.actor,
+            ReviewRevision.created_at,
+        )
+        .where(ReviewRevision.review_case_id == review_case_id)
+        .order_by(asc(ReviewRevision.revision_number), asc(ReviewRevision.id))
+    ).mappings().all()
+    resolution_rows = connection.execute(
+        select(
+            ReviewIssueResolution.review_revision_id,
+            ReviewIssueResolution.data_quality_issue_id,
+        )
+        .join(ReviewRevision, ReviewRevision.id == ReviewIssueResolution.review_revision_id)
+        .where(ReviewRevision.review_case_id == review_case_id)
+        .order_by(
+            asc(ReviewIssueResolution.created_at),
+            asc(ReviewIssueResolution.data_quality_issue_id),
+        )
+    ).mappings()
+    resolved_by_revision: dict[UUID, list[UUID]] = {}
+    for resolution in resolution_rows:
+        resolved_by_revision.setdefault(resolution["review_revision_id"], []).append(
+            resolution["data_quality_issue_id"]
+        )
     item = _review_queue_item(row)
     snapshot = row["opened_snapshot"]
+    candidate_payload = row["candidate_payload"]
+    candidate = candidate_payload if isinstance(candidate_payload, Mapping) else {}
+    source_record = candidate.get("record") if isinstance(candidate.get("record"), Mapping) else candidate
     return InternalReviewCaseDetail(
         **item.model_dump(),
         opened_snapshot=dict(snapshot) if isinstance(snapshot, Mapping) else {},
+        source_record=dict(source_record) if isinstance(source_record, Mapping) else {},
+        effective_record=review_effective_record(connection, review_case_id),
+        provenance=InternalReviewProvenance(
+            source_id=row["source_id"],
+            source_name=row["source_name"],
+            source_canonical_url=row["source_canonical_url"],
+            source_url=row["raw_capture_source_url"],
+            raw_capture_id=row["raw_capture_id"],
+            ingestion_run_id=row["ingestion_run_id"],
+            received_at=row["received_at"],
+            content_sha256=row["content_sha256"],
+            content_format=row["content_format"],
+            adapter_name=row["adapter_name"],
+            adapter_version=row["adapter_version"],
+        ),
         quality_issues=[_internal_quality_issue(issue) for issue in issue_rows],
         actions=[
             InternalReviewAction(
@@ -467,6 +614,20 @@ def get_internal_review_case(
             )
             for action in action_rows
         ],
+        revisions=[
+            InternalReviewRevision(
+                id=revision["id"],
+                revision_number=revision["revision_number"],
+                changed_fields=list(revision["changed_fields"]),
+                deduplication_snapshot=dict(revision["deduplication_snapshot"]),
+                reason=revision["reason"],
+                actor=revision["actor"],
+                created_at=revision["created_at"],
+                resolved_issue_ids=resolved_by_revision.get(revision["id"], []),
+            )
+            for revision in revision_rows
+        ],
+        public_preview=review_public_preview(connection, review_case_id),
     )
 
 
@@ -546,6 +707,63 @@ def apply_internal_review_action(
         review_action_id=values["review_action_id"],
         program_id=values["program_id"],
         review_decision_id=values["review_decision_id"],
+    )
+
+
+@router.post(
+    "/review/cases/{review_case_id}/revisions",
+    response_model=SaveReviewRevisionResponse,
+)
+def save_internal_review_revision(
+    review_case_id: UUID,
+    payload: SaveReviewRevisionRequest,
+    connection: Connection = Depends(get_internal_database_connection),
+    access: InternalAccess = Depends(require_internal_access),
+    idempotency_key: str = Depends(require_idempotency_key),
+) -> SaveReviewRevisionResponse:
+    request_payload = payload.model_dump(mode="json", exclude_none=False)
+
+    def execute() -> OperatorOperationOutcome:
+        revision = save_review_revision(
+            connection,
+            review_case_id,
+            patch=payload.patch_values(),
+            resolved_issue_ids=payload.resolve_issue_ids,
+            reason=payload.reason,
+            actor=access.actor,
+        )
+        return OperatorOperationOutcome(
+            result_payload={
+                "review_case_id": str(revision.review_case_id),
+                "staged_record_id": str(revision.staged_record_id),
+                "review_revision_id": str(revision.review_revision_id),
+                "revision_number": revision.revision_number,
+                "changed_fields": list(revision.changed_fields),
+                "resolved_issue_ids": [str(value) for value in revision.resolved_issue_ids],
+            },
+            audit_link=OperatorAuditLink(review_revision_id=revision.review_revision_id),
+        )
+
+    result = execute_idempotent_operator_operation(
+        connection,
+        actor=access.actor,
+        idempotency_key=idempotency_key,
+        action="save_revision",
+        target_type="review_case",
+        target_id=review_case_id,
+        request_payload=request_payload,
+        execute=execute,
+    )
+    values = result.result_payload
+    return SaveReviewRevisionResponse(
+        operation_id=result.operation_id,
+        replayed=result.replayed,
+        review_case_id=values["review_case_id"],
+        staged_record_id=values["staged_record_id"],
+        review_revision_id=values["review_revision_id"],
+        revision_number=values["revision_number"],
+        changed_fields=values["changed_fields"],
+        resolved_issue_ids=values["resolved_issue_ids"],
     )
 
 

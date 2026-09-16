@@ -57,10 +57,13 @@ from app.domain.models import (
 )
 from app.domain.presentation import (
     has_russia_scope,
-    resolved_access_mode,
     is_public_content_section,
     is_public_resource,
+    is_winner_resource,
+    public_resource_kind,
     public_program_title,
+    resolved_access_mode,
+    winner_resource_group_key,
 )
 
 
@@ -715,30 +718,58 @@ def get_program(
         for timeline_row in timeline_rows
     ]
 
-    resource_rows = connection.execute(
-        select(
-            ProgramResource.resource_kind,
-            ProgramResource.title,
-            ProgramResource.url,
-            ProgramResource.source_section,
-        )
-        .where(ProgramResource.program_id == program_id)
-        .order_by(asc(ProgramResource.position), asc(ProgramResource.id))
-    ).mappings()
-    resources = [
-        ProgramResourcePublic(
-            kind=resource_row["resource_kind"],
-            title=resource_row["title"],
-            url=resource_row["url"],
-            source_section=resource_row["source_section"],
-        )
+    resource_rows = list(
+        connection.execute(
+            select(
+                ProgramResource.resource_kind,
+                ProgramResource.title,
+                ProgramResource.url,
+                ProgramResource.source_section,
+            )
+            .where(ProgramResource.program_id == program_id)
+            .order_by(asc(ProgramResource.position), asc(ProgramResource.id))
+        ).mappings()
+    )
+    winner_group_keys = {
+        group_key
         for resource_row in resource_rows
-        if is_public_resource(
-            kind=ProgramResourceKind(resource_row["resource_kind"]),
+        if (
+            group_key := winner_resource_group_key(resource_row["title"])
+        ) is not None
+        and is_winner_resource(
             title=resource_row["title"],
             source_section=resource_row["source_section"],
+            url=resource_row["url"],
         )
-    ]
+    }
+    resources: list[ProgramResourcePublic] = []
+    for resource_row in resource_rows:
+        group_has_winner_evidence = (
+            winner_resource_group_key(resource_row["title"]) in winner_group_keys
+        )
+        resource_kind = public_resource_kind(
+            ProgramResourceKind(resource_row["resource_kind"]),
+            title=resource_row["title"],
+            source_section=resource_row["source_section"],
+            url=resource_row["url"],
+            group_has_winner_evidence=group_has_winner_evidence,
+        )
+        if not is_public_resource(
+            kind=resource_kind,
+            title=resource_row["title"],
+            source_section=resource_row["source_section"],
+            url=resource_row["url"],
+            group_has_winner_evidence=group_has_winner_evidence,
+        ):
+            continue
+        resources.append(
+            ProgramResourcePublic(
+                kind=resource_kind,
+                title=resource_row["title"],
+                url=resource_row["url"],
+                source_section=resource_row["source_section"],
+            )
+        )
 
     content_rows = connection.execute(
         select(

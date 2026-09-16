@@ -256,6 +256,54 @@ def test_sectioned_competition_page_preserves_schedule_contacts_and_scoped_fundi
     assert all("Новости" != block["heading"] for block in payload["content_inventory"]["blocks"])
 
 
+def test_explicit_document_sections_win_over_inline_links_and_keep_card_titles_clean() -> None:
+    parsed = parse_competition_page(
+        """
+        <main>
+          <h1>Креативный музей</h1>
+          <section>
+            <h2>Требования к участникам</h2>
+            <p>См. <a href="/upload/terms.pdf">«Термины и определения»</a>.</p>
+          </section>
+          <section>
+            <h2>Как подать заявку</h2>
+            <p>Подайте заявку на <a href="https://zayavka.fondpotanin.ru/ru/">портале Фонда</a>.</p>
+            <p>Перед подачей прочитайте <a href="/upload/rules.pdf">«Принципы и правила»</a>.</p>
+          </section>
+          <section class="documents" id="anchor-d">
+            <h2 class="section-caption">Документы конкурса</h2>
+            <a class="documents__doc" href="/upload/rules.pdf">
+              <span>PDF</span>
+              <h3 class="documents__doc-title">Правила конкурса.pdf</h3>
+              <span>20 февраля 2026</span>
+              <span>(PDF, 1.3 МБ)</span>
+            </a>
+            <a class="documents__doc" href="/upload/application.pdf">
+              <span>PDF</span>
+              <h3 class="documents__doc-title">Форма заявки.pdf</h3>
+            </a>
+          </section>
+          <footer><a href="/press/news/unrelated/">Все новости</a></footer>
+        </main>
+        """.encode(),
+        source_url="https://fondpotanin.ru/competitions/creative-museum/",
+        sitemap_last_modified_at=None,
+    )
+
+    artifacts = {
+        artifact["url"]: artifact
+        for artifact in parsed.record_payload["payload"]["artifacts"]
+    }
+    rules = artifacts["https://fondpotanin.ru/upload/rules.pdf"]
+    assert rules["label"] == "Правила конкурса.pdf"
+    assert rules["section_title"] == "Документы конкурса"
+    assert rules["section_category"] == "documents"
+    assert artifacts["https://fondpotanin.ru/upload/application.pdf"]["label"] == "Форма заявки.pdf"
+    assert artifacts["https://fondpotanin.ru/upload/terms.pdf"]["section_category"] == "eligibility"
+    assert artifacts["https://zayavka.fondpotanin.ru/ru/"]["section_category"] == "application"
+    assert "https://fondpotanin.ru/press/news/unrelated/" not in artifacts
+
+
 @pytest.mark.parametrize(
     ("texts", "expected_start", "expected_end"),
     (
@@ -406,6 +454,98 @@ def test_page_inventory_keeps_unknown_sections_and_year_only_winner_links() -> N
     unrelated_news = artifacts["https://fondpotanin.ru/press/news/unrelated-news/"]
     assert unrelated_news["collection"] == "reference_only"
     assert unrelated_news["collection_reason"] == "not_result_material"
+
+
+def test_page_keeps_social_links_for_review_without_calling_them_winner_materials() -> None:
+    parsed = parse_competition_page(
+        """
+        <main>
+          <h1>Конкурс</h1>
+          <section>
+            <h2>Победители</h2>
+            <a href=\"/upload/winners-2026.pdf\">2026 год</a>
+            <a href=\"https://t.me/competition\">Телеграм-канал конкурса</a>
+          </section>
+          <a href=\"/press/news/research-results/\">Результаты исследования рынка</a>
+        </main>
+        """.encode(),
+        source_url="https://fondpotanin.ru/competitions/quality-reference-results/",
+        sitemap_last_modified_at=None,
+    )
+
+    artifacts = {artifact["url"]: artifact for artifact in parsed.record_payload["payload"]["artifacts"]}
+    assert artifacts["https://fondpotanin.ru/upload/winners-2026.pdf"]["kind"] == "result"
+    assert artifacts["https://t.me/competition"]["kind"] == "reference"
+    assert artifacts["https://t.me/competition"]["collection_reason"] == "outside_official_origin"
+    assert "https://fondpotanin.ru/press/news/research-results/" not in artifacts
+    assert parsed.record_payload["payload"]["links"]["result_urls"] == [
+        "https://fondpotanin.ru/upload/winners-2026.pdf"
+    ]
+
+
+def test_page_separates_inline_winner_heading_from_consultations_and_schedule() -> None:
+    parsed = parse_competition_page(
+        """
+        <main>
+          <h1>Стипендиальный конкурс</h1>
+          <h3>Консультации</h3>
+          <p>Серия онлайн-консультаций для заявителей.</p>
+          <p><a href="https://t.me/competition">Телеграм-канал конкурса</a></p>
+          <p><b>Победители конкурса</b></p>
+          <p><b>2026 год</b></p>
+          <p><a href="/upload/%D0%BF%D0%BE%D0%B1%D0%B5%D0%B4%D0%B8%D1%82%D0%B5%D0%BB%D0%B8-2026.pdf">I</a><a href="/upload/%D0%BF%D0%BE%D0%B1%D0%B5%D0%B4%D0%B8%D1%82%D0%B5%D0%BB%D0%B8-2026.pdf">цикл</a></p>
+          <p><b>2025 год</b></p>
+          <p><a href="/upload/%D0%BF%D0%BE%D0%B1%D0%B5%D0%B4%D0%B8%D1%82%D0%B5%D0%BB%D0%B8-2025.pdf">II цикл</a></p>
+          <div class="schedule__wrap">
+            <section class="schedule">
+              <h2>График</h2>
+              <ul>
+                <li><h3>Объявление результатов конкурса</h3>Не позднее 27 февраля 2026 года</li>
+                <li><h3>Вводный семинар для победителей</h3>Не позднее 6 марта 2026 года</li>
+                <li><h3>Заключение договоров с победителями</h3>28 февраля 2026 года – 30 марта 2026 года</li>
+              </ul>
+            </section>
+          </div>
+        </main>
+        """.encode(),
+        source_url="https://fondpotanin.ru/competitions/quality-reference-inline-winners/",
+        sitemap_last_modified_at=None,
+    )
+
+    payload = parsed.record_payload["payload"]
+    blocks = {
+        block["heading"]: block
+        for block in payload["content_inventory"]["blocks"]
+    }
+    consultation_urls = {link["url"] for link in blocks["Консультации"]["links"]}
+    winner_block = blocks["Победители конкурса"]
+    winner_urls = {link["url"] for link in winner_block["links"]}
+
+    assert winner_block["category"] == "results"
+    assert consultation_urls == {"https://t.me/competition"}
+    assert winner_urls == {
+        "https://fondpotanin.ru/upload/%D0%BF%D0%BE%D0%B1%D0%B5%D0%B4%D0%B8%D1%82%D0%B5%D0%BB%D0%B8-2026.pdf",
+        "https://fondpotanin.ru/upload/%D0%BF%D0%BE%D0%B1%D0%B5%D0%B4%D0%B8%D1%82%D0%B5%D0%BB%D0%B8-2025.pdf",
+    }
+    winner_links = {link["url"]: link for link in winner_block["links"]}
+    assert winner_links[
+        "https://fondpotanin.ru/upload/%D0%BF%D0%BE%D0%B1%D0%B5%D0%B4%D0%B8%D1%82%D0%B5%D0%BB%D0%B8-2026.pdf"
+    ]["label"] == "I цикл"
+    assert winner_links[
+        "https://fondpotanin.ru/upload/%D0%BF%D0%BE%D0%B1%D0%B5%D0%B4%D0%B8%D1%82%D0%B5%D0%BB%D0%B8-2026.pdf"
+    ]["section_title"] == "Победители конкурса · 2026 год"
+    assert winner_links[
+        "https://fondpotanin.ru/upload/%D0%BF%D0%BE%D0%B1%D0%B5%D0%B4%D0%B8%D1%82%D0%B5%D0%BB%D0%B8-2025.pdf"
+    ]["section_title"] == "Победители конкурса · 2025 год"
+    assert payload["links"]["result_urls"] == [
+        "https://fondpotanin.ru/upload/%D0%BF%D0%BE%D0%B1%D0%B5%D0%B4%D0%B8%D1%82%D0%B5%D0%BB%D0%B8-2026.pdf",
+        "https://fondpotanin.ru/upload/%D0%BF%D0%BE%D0%B1%D0%B5%D0%B4%D0%B8%D1%82%D0%B5%D0%BB%D0%B8-2025.pdf",
+    ]
+    assert all(
+        block["category"] != "results"
+        for heading, block in blocks.items()
+        if heading != "Победители конкурса"
+    )
 
 
 def test_per_program_funding_preserves_each_supported_value_kind() -> None:

@@ -8,7 +8,13 @@ from urllib.parse import urldefrag, urljoin, urlsplit
 
 from lxml import etree, html as lxml_html
 
-from app.domain.presentation import infer_access_mode, public_program_title
+from app.domain.presentation import (
+    infer_access_mode,
+    is_schedule_milestone_title,
+    is_social_resource_url,
+    is_winner_resource,
+    public_program_title,
+)
 from app.sources.adapters.potanin.normalization import (
     POTANIN_HOST,
     extract_geography_note,
@@ -221,10 +227,17 @@ _SCHEDULE_YEAR_CONTEXT_RE = re.compile(
     r"\b(?:в\s+течение|в|на)\s+(?P<year>20\d{2})\s+год(?:а|у)?\b",
     re.IGNORECASE,
 )
+_RESULT_YEAR_HEADING_RE = re.compile(
+    r"^20\d{2}\s*(?:год(?:а)?|[/–-]\s*20\d{2})$",
+    re.IGNORECASE,
+)
+_CYCLE_LABEL_RE = re.compile(r"^(?:[ivxlcdm]+|\d+)\s+цикл$", re.IGNORECASE)
 
 
 def _section_category(title: str) -> str:
     heading = normalize_heading(title)
+    if is_schedule_milestone_title(title):
+        return "schedule"
     categories = (
         ("results", ("победител", "итог", "результат", "лауреат")),
         (
@@ -252,6 +265,8 @@ def _section_category(title: str) -> str:
 
 
 def _heading_category(heading: Any, title: str) -> str:
+    if _has_schedule_ancestor(heading):
+        return "schedule"
     category = _section_category(title)
     if category != "unclassified":
         return category
@@ -262,6 +277,18 @@ def _heading_category(heading: Any, title: str) -> str:
         parent.xpath(".//a[starts-with(@href, 'mailto:') or starts-with(@href, 'tel:')]")
     )
     return "contacts" if has_contact_link else category
+
+
+def _has_schedule_ancestor(node: Any) -> bool:
+    current = node
+    while current is not None:
+        classes = current.get("class", "") if hasattr(current, "get") else ""
+        if "schedule" in classes.casefold().split():
+            return True
+        if "schedule" in classes.casefold():
+            return True
+        current = current.getparent() if hasattr(current, "getparent") else None
+    return False
 
 
 _CATALOG_TAIL_HEADINGS = {
@@ -286,14 +313,18 @@ def _bounded_text(value: str) -> tuple[str, bool]:
 def _link_kind(*, link: str, label: str, section_category: str) -> str:
     text = label.lower()
     path = urlsplit(link).path.lower()
+    if is_social_resource_url(link):
+        return "reference"
     if (
         re.search(r"подать\s+заяв|заполнить\s+заяв|перейти\s+к\s+заяв", text)
         or re.search(r"личн\w*\s+кабинет", text)
         or urlsplit(link).hostname == "zayavka.fondpotanin.ru"
     ):
         return "application"
-    if section_category == "results" or re.search(
-        r"победител|итог|результат|лауреат", text
+    if section_category == "results" or is_winner_resource(
+        title=label,
+        source_section=None,
+        url=link,
     ):
         return "result"
     if (
@@ -329,6 +360,7 @@ def _links_in_node(
     source_url: str,
     section_title: str | None,
     section_category: str,
+    result_year: str | None = None,
 ) -> list[dict[str, object]]:
     links: list[dict[str, object]] = []
     anchors = list(node.xpath(".//a[@href]"))
@@ -344,26 +376,171 @@ def _links_in_node(
         label = _node_text(anchor)
         kind = _link_kind(link=link, label=label, section_category=section_category)
         collection, reason = _collection_policy(link, kind)
+        link_section_title = section_title
+        if section_category == "results" and section_title and result_year:
+            link_section_title = f"{section_title} · {result_year}"
         entry: dict[str, object] = {
             "url": link,
             "label": label,
             "kind": kind,
-            "section_title": section_title,
+            "section_title": link_section_title,
             "section_category": section_category,
             "collection": collection,
         }
         if reason is not None:
             entry["collection_reason"] = reason
-        if entry not in links:
+        existing = next((candidate for candidate in links if candidate["url"] == link), None)
+        if existing is None:
             links.append(entry)
+            continue
+        existing_label = existing.get("label")
+        if not isinstance(existing_label, str) or not label:
+            continue
+        combined_label = normalize_whitespace(f"{existing_label} {label}")
+        if _CYCLE_LABEL_RE.fullmatch(combined_label):
+            existing["label"] = combined_label
     return links
+
+
+def _document_link_label(anchor: Any) -> str:
+    """Use the document-card title instead of its format, date, and file-size text."""
+
+    title_nodes = anchor.xpath(
+        ".//*[contains(concat(' ', normalize-space(@class), ' '), "
+        "' documents__doc-title ')]"
+    )
+    for title_node in title_nodes:
+        if (title := _node_text(title_node)):
+            return title
+    return _node_text(anchor)
+
+
+def _document_section_links(scope: Any, source_url: str) -> list[dict[str, object]]:
+    """Extract official materials from explicit document sections only."""
+
+    entries: list[dict[str, object]] = []
+    for section in scope.xpath(".//section"):
+        classes = f" {section.get('class', '')} "
+        headings = section.xpath(".//h2 | .//h3 | .//h4")
+        heading = headings[0] if headings else None
+        section_title = _node_text(heading) if heading is not None else None
+        is_document_section = (
+            " documents " in classes
+            or (section_title is not None and _section_category(section_title) == "documents")
+        )
+        if not is_document_section:
+            continue
+        anchors = section.xpath(
+            ".//a[contains(concat(' ', normalize-space(@class), ' '), "
+            "' documents__doc ') and @href]"
+        )
+        if not anchors:
+            anchors = section.xpath(".//a[@href]")
+        for anchor in anchors:
+            label = _document_link_label(anchor)
+            for entry in _links_in_node(
+                anchor,
+                source_url=source_url,
+                section_title=section_title,
+                section_category="documents",
+            ):
+                if label:
+                    entry["label"] = label
+                entries.append(entry)
+    return entries
+
+
+def _is_standalone_content_anchor(anchor: Any) -> bool:
+    """Exclude links embedded in ordinary prose from the compact material inventory."""
+
+    parent = anchor.getparent()
+    if parent is None:
+        return False
+    return _tag_name(parent) not in {"p", "li", "span", "strong", "b", "em", "small"}
+
+
+def _standalone_semantic_links(scope: Any, source_url: str) -> list[dict[str, object]]:
+    """Retain direct CTAs and named files without sweeping in page navigation."""
+
+    entries: list[dict[str, object]] = []
+    for anchor in scope.xpath(".//a[@href]"):
+        if not _is_standalone_content_anchor(anchor):
+            continue
+        for entry in _links_in_node(
+            anchor,
+            source_url=source_url,
+            section_title=None,
+            section_category="standalone",
+        ):
+            kind = entry.get("kind")
+            label = entry.get("label")
+            if kind not in {"application", "document", "result"}:
+                continue
+            if kind == "document" and (
+                not isinstance(label, str)
+                or re.search(r"(?:документ|положени|правил|регламент|форм\w*\s+заяв)", label, re.I)
+                is None
+            ):
+                continue
+            entry["section_category"] = {
+                "application": "application",
+                "document": "documents",
+                "result": "results",
+            }[kind]
+            entries.append(entry)
+    return entries
+
+
+def _inline_section_heading(node: Any) -> str | None:
+    """Read a short bold paragraph used as a section heading on legacy pages."""
+
+    if _tag_name(node) != "p":
+        return None
+    emphasized = [child for child in node if _tag_name(child) in {"b", "strong"}]
+    if len(emphasized) != 1:
+        return None
+    title = _node_text(node)
+    if not title or title != _node_text(emphasized[0]):
+        return None
+    if len(title) > 160 or _section_category(title) == "unclassified":
+        return None
+    return title
+
+
+def _result_year_heading(node: Any) -> str | None:
+    """Read a bold year label nested inside a winner-list section."""
+
+    if _tag_name(node) != "p":
+        return None
+    emphasized = [child for child in node if _tag_name(child) in {"b", "strong"}]
+    if len(emphasized) != 1:
+        return None
+    title = _node_text(node)
+    if not title or title != _node_text(emphasized[0]):
+        return None
+    return title if _RESULT_YEAR_HEADING_RE.fullmatch(title) is not None else None
+
+
+def _content_heading_nodes(scope: Any) -> list[Any]:
+    headings: list[Any] = []
+    for node in scope.iter():
+        if _tag_name(node) in {"h2", "h3", "h4", "h5", "h6"}:
+            headings.append(node)
+        elif _inline_section_heading(node) is not None:
+            headings.append(node)
+    return headings
+
+
+def _contains_content_heading(node: Any, headings: set[Any]) -> bool:
+    return any(descendant in headings for descendant in node.iter())
 
 
 def _extract_content_blocks(scope: Any, source_url: str) -> list[dict[str, object]]:
     blocks: list[dict[str, object]] = []
-    headings = scope.xpath(".//h2 | .//h3 | .//h4")
+    headings = _content_heading_nodes(scope)
+    heading_set = set(headings)
     for position, heading in enumerate(headings, 1):
-        title = _node_text(heading)
+        title = _inline_section_heading(heading) or _node_text(heading)
         if not title:
             continue
         if _is_catalog_tail_heading(title):
@@ -372,7 +549,7 @@ def _extract_content_blocks(scope: Any, source_url: str) -> list[dict[str, objec
         related_nodes: list[Any] = [heading]
         sibling = heading.getnext()
         while sibling is not None:
-            if _tag_name(sibling) in {"h2", "h3", "h4"}:
+            if sibling in heading_set or _contains_content_heading(sibling, heading_set):
                 break
             related_nodes.append(sibling)
             text = _node_text(sibling)
@@ -391,12 +568,16 @@ def _extract_content_blocks(scope: Any, source_url: str) -> list[dict[str, objec
         category = _heading_category(heading, title)
         links: list[dict[str, object]] = []
         items: list[str] = []
+        result_year: str | None = None
         for node in related_nodes:
+            if category == "results":
+                result_year = _result_year_heading(node) or result_year
             for link in _links_in_node(
                 node,
                 source_url=source_url,
                 section_title=title,
                 section_category=category,
+                result_year=result_year,
             ):
                 if link not in links:
                     links.append(link)
@@ -747,21 +928,16 @@ def _collect_links(
         "detail_urls": [],
         "inventory": [],
     }
-    inventory: list[dict[str, object]] = []
+    # Explicit document sections get first choice when the same URL is also
+    # mentioned inline elsewhere on the page.
+    inventory: list[dict[str, object]] = _document_section_links(scope, source_url)
+    inventory.extend(_standalone_semantic_links(scope, source_url))
     for block in blocks:
         block_links = block.get("links")
         if isinstance(block_links, list):
             inventory.extend(
                 item for item in block_links if isinstance(item, dict)
             )
-    inventory.extend(
-        _links_in_node(
-            scope,
-            source_url=source_url,
-            section_title=None,
-            section_category="page",
-        )
-    )
     unique_inventory: list[dict[str, object]] = []
     entries_by_url: dict[str, dict[str, object]] = {}
     for entry in inventory:

@@ -33,6 +33,7 @@ class OperatorAuditLink:
     review_action_id: UUID | None = None
     discovery_review_action_id: UUID | None = None
     program_publication_action_id: UUID | None = None
+    review_revision_id: UUID | None = None
 
     def __post_init__(self) -> None:
         if sum(
@@ -41,6 +42,7 @@ class OperatorAuditLink:
                 self.review_action_id,
                 self.discovery_review_action_id,
                 self.program_publication_action_id,
+                self.review_revision_id,
             )
         ) != 1:
             raise ValueError("an operator operation must link to exactly one audit action")
@@ -153,6 +155,7 @@ def execute_idempotent_operator_operation(
             OperatorOperation.review_action_id,
             OperatorOperation.discovery_review_action_id,
             OperatorOperation.program_publication_action_id,
+            OperatorOperation.review_revision_id,
         ).where(
             OperatorOperation.actor == actor,
             OperatorOperation.idempotency_key == idempotency_key,
@@ -179,6 +182,7 @@ def execute_idempotent_operator_operation(
                 review_action_id=existing["review_action_id"],
                 discovery_review_action_id=existing["discovery_review_action_id"],
                 program_publication_action_id=existing["program_publication_action_id"],
+                review_revision_id=existing["review_revision_id"],
             ),
         )
 
@@ -198,6 +202,7 @@ def execute_idempotent_operator_operation(
             review_action_id=outcome.audit_link.review_action_id,
             discovery_review_action_id=outcome.audit_link.discovery_review_action_id,
             program_publication_action_id=outcome.audit_link.program_publication_action_id,
+            review_revision_id=outcome.audit_link.review_revision_id,
         )
     )
     return OperatorOperationResult(
