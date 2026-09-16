@@ -2,6 +2,27 @@
 
 All notable project milestones are documented in this file.
 
+## v0.8.1 - 2026-09-16
+
+Operator Workflow And Catalog Data Improvements.
+
+### Added
+
+- A protected local operator workspace with review queues, source-record details, full data editing, a public-card preview and immutable revision history.
+- Explicit handling of program documents, result materials, winner links and official Telegram/VK channels in the public program representation.
+- Database-level canonicalization for theme and geography names, including a data migration that merges existing case/whitespace duplicates.
+
+### Changed
+
+- Potanin extraction now classifies documents and winner materials more reliably, preserves programme schedules and avoids promoting inline application links into the document list.
+- Public cards derive a human-readable application status from dates at render time, so an open, upcoming, closed or completed programme does not require a republish solely because the date changed.
+- Program titles are normalized for display, while source attribution and operator provenance remain intact.
+
+### Fixed
+
+- Manually corrected themes and geographies no longer create duplicate public filter values.
+- Winner links for multi-cycle programmes are kept with results rather than being shown as generic resources.
+
 ## v0.8.0 - 2026-09-02
 
 Public Catalog And Controlled Moderation.

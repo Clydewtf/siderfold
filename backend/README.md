@@ -1,4 +1,4 @@
-# Siderfold backend — v0.8.0
+# Siderfold backend — v0.8.1
 
 Здесь живёт backend Siderfold. Frontend из `site/` может работать либо с
 публичным API, либо с явным локальным seed-набором для разработки и демонстрации.

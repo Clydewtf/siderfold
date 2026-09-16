@@ -1,6 +1,6 @@
 {
   "name": "support-programs-aggregator-site",
-  "version": "0.8.0",
+  "version": "0.8.1",
   "private": true,
   "type": "module",
   "scripts": {

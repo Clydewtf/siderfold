@@ -7,7 +7,7 @@ pipeline for controlled source ingestion and review.
 
 ## Current Version
 
-`v0.8.0` combines an allowlisted source-ingestion contour with a public catalog
+`v0.8.1` combines an allowlisted source-ingestion contour with a public catalog
 that can use the backend API:
 
 - Python/FastAPI/PostgreSQL backend with canonical, provenance, staging, review,
@@ -94,8 +94,8 @@ are intentionally not used yet; important states are fixed with Git tags.
 
 ## Status
 
-This repository represents `v0.8.0` and is prepared for a controlled local
-catalog workflow: ingest a source, review candidates, publish verified programs
-and inspect the result in API mode. A public internet deployment, account
-management, automated host scheduling and notification delivery remain explicit
-future decisions.
+This repository represents `v0.8.1` and is prepared for a controlled local
+catalog workflow: ingest a source, inspect and correct candidates in the
+protected operator workspace, publish verified programs and inspect the result
+in API mode. A public internet deployment, account management, automated host
+scheduling and notification delivery remain explicit future decisions.

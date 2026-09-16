@@ -480,7 +480,7 @@ def test_openapi_documents_versioned_public_contract_without_internal_fields(
     migrated_engine: Engine,
 ) -> None:
     spec = create_app(engine=migrated_engine).openapi()
-    assert spec["info"]["version"] == "0.8.0"
+    assert spec["info"]["version"] == "0.8.1"
     paths = spec["paths"]
     assert {
         "/api/v1/programs",
