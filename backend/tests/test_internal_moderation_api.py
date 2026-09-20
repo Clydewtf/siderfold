@@ -534,6 +534,107 @@ def test_internal_merge_rejects_a_candidate_without_deleting_match_history(
         ) == 1
 
 
+def test_internal_match_target_reveals_a_staged_candidate_and_its_review_case(
+    migrated_engine: Engine,
+) -> None:
+    with migrated_engine.begin() as connection:
+        source_id = insert_source(connection)
+        target_staged_id, target_case_id = _review_case(
+            connection,
+            source_id=source_id,
+            record_key="target-card",
+            external_id="target-card-2026",
+        )
+        candidate_staged_id, _candidate_case_id = _review_case(
+            connection,
+            source_id=source_id,
+            record_key="candidate-card",
+            external_id="candidate-card-2026",
+        )
+        match_id = connection.scalar(
+            select(DeduplicationMatch.id).where(
+                DeduplicationMatch.candidate_staged_record_id == candidate_staged_id
+            )
+        )
+
+    assert match_id is not None
+    client = _client(migrated_engine)
+    response = client.get(
+        f"/api/internal/v1/review/matches/{match_id}/target",
+        headers=AUTHORIZATION,
+    )
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "kind": "staged_record",
+        "id": str(target_staged_id),
+        "title": "Конкурс для региональных инициатив",
+        "source_name": "Fixture source",
+        "source_url": "https://source.example.test/competitions/target-card",
+        "deadline_on": "2026-11-30",
+        "staged_state": "review",
+        "review_case_id": str(target_case_id),
+        "review_case_status": "open",
+        "publication_status": None,
+    }
+
+
+def test_internal_match_target_reveals_a_published_program(
+    migrated_engine: Engine,
+) -> None:
+    with migrated_engine.begin() as connection:
+        source_id = insert_source(connection)
+        _target_staged_id, target_case_id = _review_case(
+            connection,
+            source_id=source_id,
+            record_key="published-target",
+            external_id="published-target-2026",
+        )
+
+    client = _client(migrated_engine)
+    accepted = client.post(
+        f"/api/internal/v1/review/cases/{target_case_id}/actions",
+        headers=_request_headers("published-target-accept"),
+        json={"action": "accept", "reason": "Первичная карточка опубликована."},
+    )
+    assert accepted.status_code == 200
+    program_id = accepted.json()["program_id"]
+    assert program_id is not None
+
+    with migrated_engine.begin() as connection:
+        candidate_staged_id, _candidate_case_id = _review_case(
+            connection,
+            source_id=source_id,
+            record_key="published-candidate",
+            external_id="published-candidate-2026",
+        )
+        match_id = connection.scalar(
+            select(DeduplicationMatch.id).where(
+                DeduplicationMatch.candidate_staged_record_id == candidate_staged_id
+            )
+        )
+
+    assert match_id is not None
+    response = client.get(
+        f"/api/internal/v1/review/matches/{match_id}/target",
+        headers=AUTHORIZATION,
+    )
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "kind": "program",
+        "id": program_id,
+        "title": "Конкурс для региональных инициатив",
+        "source_name": "Fixture source",
+        "source_url": "https://source.example.test/competitions/published-target",
+        "deadline_on": "2026-11-30",
+        "staged_state": None,
+        "review_case_id": str(target_case_id),
+        "review_case_status": "resolved",
+        "publication_status": "published",
+    }
+
+
 def test_internal_archive_and_republish_use_prior_review_evidence_and_are_idempotent(
     migrated_engine: Engine,
 ) -> None:

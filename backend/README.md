@@ -364,6 +364,68 @@ python -m app.sources.cli dry-run potanin-competitions
 Ошибка валидации в отчёте содержит номер строки и `resource_key` с URL исходной
 карточки, поэтому её можно открыть и проверить без поиска по всему каталогу.
 
+### Фонд Тимченко
+
+Адаптер `timchenko-competitions` читает все три официальные вкладки конкурса:
+`/contests/programs/`, `/contests/ready/` и `/contests/archive/`. Все найденные
+карточки остаются в одной staging/review-очереди. `source_status` (`open` или
+`closed`) и `catalog_section` сохраняются для модератора и при принятии
+переносятся в программу; закрытая или архивная карточка не становится
+quality-error только из-за своего статуса.
+
+После считывания каталогов адаптер получает каждую карточку, а затем в
+детерминированном порядке расходует оставшийся общий бюджет на разрешённые
+материалы `/upload/` и результатные страницы `/press-center/`. Внешние формы,
+социальные ссылки и application CTA не открываются. Если материалов больше
+доступного byte/request/time-бюджета, карточки конкурсов всё равно сохраняются,
+а материалы получают `collection_status=deferred` с объясняющей причиной.
+Эквивалентные HTTP/HTTPS-ссылки на одну форму объединяются в одну CTA-ссылку с
+предпочтением HTTPS, когда обе версии присутствуют в источнике.
+
+### ФАСИЭ
+
+Адаптер `fasie-competitions` получает главную страницу, ленту
+`/press/fund/` в пределах настроек `lookback_days` и `max_feed_pages`, затем
+связанные публикации и только официальные вложения из `/upload/`. Формы подачи
+и сторонние сайты остаются ссылками и никогда не скачиваются. Для standalone
+возможности с единственной внешней ссылкой на заявку эта ссылка дополнительно
+сохраняется как `origin_url`: она служит evidence для точной межисточниковой
+дедупликации и не вызывает автоматического объединения программ.
+
+Адаптер сохраняет порядок ленты для разрешения записей с одной датой, корректно
+распознаёт формулировки «заявки будут приниматься до …» и откладывает все
+оставшиеся вложения после достижения общего byte-limit. Полезные сигналы для
+review: `deadline_missing`, `origin_url_missing_possible_duplicate` и
+`artifact_*`.
+
+Оба источника пока имеют ручное расписание, как и Потанин. Проверка и запуск:
+
+```bash
+cd /Users/clyde/projects/siderfold/backend
+export PYTHON_BIN="${PYTHON_BIN:-python}"
+
+$PYTHON_BIN -m pytest -q \
+  tests/test_fasie_adapter.py \
+  tests/test_timchenko_adapter.py
+
+$PYTHON_BIN -m app.sources.cli dry-run fasie-competitions
+$PYTHON_BIN -m app.sources.cli dry-run timchenko-competitions
+
+# Только после проверки успешных отчётов и DATABASE_URL
+$PYTHON_BIN -m app.sources.cli run fasie-competitions
+$PYTHON_BIN -m app.sources.cli run timchenko-competitions
+
+$PYTHON_BIN -m app.sources.cli runs --source-key fasie-competitions --limit 5
+$PYTHON_BIN -m app.sources.cli runs --source-key timchenko-competitions --limit 5
+```
+
+`dry-run` делает реальные сетевые запросы, но не пишет в PostgreSQL и не
+создаёт raw-файлы. `run` сохраняет provenance, raw-capture metadata,
+staging-кандидатов, quality issues и review-кейсы, но не публикует `Program`
+автоматически. Полные ответы остаются в `RAW_CAPTURE_DIR`, а не в PostgreSQL.
+Подробный операторский порядок, критерии остановки и добавление нового источника
+описаны в [RUNBOOK.md](RUNBOOK.md).
+
 ### Telegram-discovery
 
 `telegram-cptgrantov-discovery` читает только публичную веб-страницу канала

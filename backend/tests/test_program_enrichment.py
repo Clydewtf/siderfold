@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from copy import deepcopy
 from pathlib import Path
 from uuid import UUID, uuid4
 
@@ -74,6 +75,7 @@ def _review_ready_potanin_candidate(
     source_id: UUID,
     fixture_path: Path = FIXTURE_PATH,
     source_url: str = SOURCE_URL,
+    timeline: list[dict[str, object]] | None = None,
 ) -> UUID:
     parsed = parse_competition_page(
         fixture_path.read_bytes(),
@@ -81,6 +83,9 @@ def _review_ready_potanin_candidate(
         sitemap_last_modified_at=None,
     )
     assert parsed.issues == ()
+    record_payload = deepcopy(parsed.record_payload)
+    if timeline is not None:
+        record_payload["payload"]["timeline"] = timeline
 
     run_id = insert_ingestion_run(connection, source_id=source_id)
     start_ingestion_run(connection, run_id=run_id)
@@ -92,7 +97,7 @@ def _review_ready_potanin_candidate(
             id=staged_record_id,
             raw_capture_id=raw_capture_id,
             record_key=source_url,
-            candidate_payload={"record": parsed.record_payload},
+            candidate_payload={"record": record_payload},
             state=StagedRecordState.RECEIVED,
         )
     )
@@ -247,6 +252,57 @@ def test_review_acceptance_preserves_rich_source_data_without_exposing_contacts(
         "review_decision",
     ):
         assert private_or_internal_field not in response_text
+
+
+def test_review_acceptance_persists_a_source_date_label_without_an_invented_day(
+    migrated_engine: Engine,
+) -> None:
+    with migrated_engine.begin() as connection:
+        source_id = insert_source(connection)
+        staged_record_id = _review_ready_potanin_candidate(
+            connection,
+            source_id=source_id,
+            timeline=[
+                {
+                    "kind": "other",
+                    "label": "Вебинары для заявителей",
+                    "start_on": None,
+                    "end_on": None,
+                    "date_label": "Сентябрь 2026",
+                    "evidence": "Сентябрь 2026 — Вебинары для заявителей",
+                }
+            ],
+        )
+        review_case_id = evaluate_staged_record(connection, staged_record_id).review_case_id
+        accepted = accept_review_case(
+            connection,
+            review_case_id,
+            reason="Этап без дня месяца сверён с официальным графиком.",
+        )
+
+    assert accepted.program_id is not None
+    with migrated_engine.connect() as connection:
+        event = connection.execute(
+            select(
+                ProgramTimelineEvent.label,
+                ProgramTimelineEvent.start_on,
+                ProgramTimelineEvent.end_on,
+                ProgramTimelineEvent.date_label,
+            ).where(ProgramTimelineEvent.program_id == accepted.program_id)
+        ).one()
+
+    assert event.label == "Вебинары для заявителей"
+    assert event.start_on is None
+    assert event.end_on is None
+    assert event.date_label == "Сентябрь 2026"
+
+    client = TestClient(create_app(engine=migrated_engine))
+    response = client.get(f"/api/v1/programs/{accepted.program_id}")
+
+    assert response.status_code == 200
+    detail = ProgramDetail.model_validate(response.json())
+    assert detail.timeline[0].label == "Вебинары для заявителей"
+    assert detail.timeline[0].date_label == "Сентябрь 2026"
 
 
 def test_review_acceptance_keeps_application_url_out_of_the_material_list(

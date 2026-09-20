@@ -45,6 +45,8 @@ from app.sources.contract import (
     validation_issue_to_adapter_issue,
 )
 from app.sources.adapters.potanin.adapter import potanin_adapter
+from app.sources.adapters.fasie.adapter import fasie_adapter
+from app.sources.adapters.timchenko.adapter import timchenko_adapter
 from app.sources.adapters.telegram.adapter import (
     TelegramDiscoveryAdapter,
     telegram_discovery_adapter,
@@ -66,6 +68,8 @@ AdapterFactory = Callable[[], SourceAdapter | TelegramDiscoveryAdapter]
 ADAPTER_FACTORIES: dict[str, AdapterFactory] = {
     "fixture-catalog": fixture_adapter,
     "potanin-competitions": potanin_adapter,
+    "timchenko-competitions": timchenko_adapter,
+    "fasie-competitions": fasie_adapter,
     "telegram-discovery": telegram_discovery_adapter,
 }
 
@@ -973,6 +977,11 @@ def list_registered_sources(registry: SourceRegistry) -> list[dict[str, object]]
             "telegram_channel": (
                 definition.telegram_channel.model_dump(mode="json")
                 if definition.telegram_channel is not None
+                else None
+            ),
+            "fasie": (
+                definition.fasie.model_dump(mode="json")
+                if definition.fasie is not None
                 else None
             ),
         }

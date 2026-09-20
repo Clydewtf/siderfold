@@ -13,6 +13,7 @@ from app.sources.registry import (
     load_registry,
     require_allowed_url,
 )
+from app.sources.runner import list_registered_sources
 
 
 def _definition(**overrides: object) -> SourceDefinition:
@@ -62,6 +63,43 @@ def test_potanin_registry_entry_bounds_discovery_and_card_requests() -> None:
     )
     assert not is_url_allowed("https://zayavka.fondpotanin.ru/ru/", definition)
     assert not is_url_allowed("https://fondpotanin.ru/activity/programms/", definition)
+
+
+def test_fasie_registry_requires_http_and_allowlisted_home_and_feed_urls() -> None:
+    definition = load_registry(DEFAULT_REGISTRY_PATH).get("fasie-competitions")
+    values = definition.model_dump(mode="python")
+
+    with pytest.raises(ValidationError, match="requires http access"):
+        SourceDefinition.model_validate(
+            {
+                **values,
+                "access_method": SourceAccessMethod.FIXTURE,
+                "fixture_path": "tests/fixtures/adapters/catalog_v1.json",
+            }
+        )
+
+    with pytest.raises(ValidationError, match="home_url must be covered"):
+        SourceDefinition.model_validate(
+            {
+                **values,
+                "allowed_url_prefixes": ("https://fasie.ru/upload",),
+            }
+        )
+
+    listed = {
+        item["source_key"]: item
+        for item in list_registered_sources(load_registry(DEFAULT_REGISTRY_PATH))
+    }
+    assert listed["fasie-competitions"]["fasie"] == {
+        "home_url": "https://fasie.ru/",
+        "press_feed_url": "https://fasie.ru/press/fund/",
+        "lookback_days": 365,
+        "max_feed_pages": 90,
+    }
+    assert all(
+        listed[key]["schedule"] == "manual"
+        for key in ("potanin-competitions", "timchenko-competitions", "fasie-competitions")
+    )
 
 
 def test_allowlist_matches_an_explicit_path_prefix_only() -> None:

@@ -125,6 +125,20 @@ def _external_id(record: Mapping[str, Any], record_key: str) -> object:
     return record_key
 
 
+def _origin_urls(record: Mapping[str, Any]) -> tuple[str, ...]:
+    payload = record.get("payload")
+    raw_urls = payload.get("origin_urls") if isinstance(payload, Mapping) else None
+    if not isinstance(raw_urls, (list, tuple)):
+        return ()
+    normalized = {
+        candidate
+        for value in raw_urls
+        if isinstance(value, str)
+        and (candidate := normalize_deduplication_url(value)) is not None
+    }
+    return tuple(sorted(normalized))
+
+
 @dataclass(frozen=True)
 class CandidateFingerprint:
     """Comparison values derived from one staging candidate or canonical program."""
@@ -137,6 +151,7 @@ class CandidateFingerprint:
     organizer: str | None
     deadline_on: date | None
     funding: tuple[str, str | None, str | None, str | None, str | None] | None
+    origin_urls: tuple[str, ...] = ()
 
     def audit_values(self) -> dict[str, Any]:
         return {
@@ -148,6 +163,7 @@ class CandidateFingerprint:
             "organizer": self.organizer,
             "deadline_on": self.deadline_on.isoformat() if self.deadline_on else None,
             "funding": list(self.funding) if self.funding is not None else None,
+            "origin_urls": list(self.origin_urls),
         }
 
 
@@ -168,6 +184,7 @@ def staged_fingerprint(
         organizer=normalize_text(_organizer(record)),
         deadline_on=_parse_date(record.get("deadline_on")),
         funding=_funding_signature(record.get("funding")),
+        origin_urls=_origin_urls(record),
     )
 
 
@@ -188,7 +205,25 @@ def program_fingerprint(
         organizer=None,
         deadline_on=deadline_on,
         funding=_funding_signature(funding),
+        origin_urls=(),
     )
+
+
+def exact_origin_url_match(
+    candidate: CandidateFingerprint,
+    target: CandidateFingerprint,
+) -> str | None:
+    """Return an explicitly declared primary URL shared across source identities."""
+
+    if candidate.source_id == target.source_id:
+        return None
+    candidate_origins = set(candidate.origin_urls)
+    target_origins = set(target.origin_urls)
+    if target.source_url is not None and target.source_url in candidate_origins:
+        return target.source_url
+    if candidate.source_url is not None and candidate.source_url in target_origins:
+        return candidate.source_url
+    return None
 
 
 def conflicting_fields(

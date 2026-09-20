@@ -183,6 +183,46 @@ class TelegramChannelConfig(BaseModel):
         return self
 
 
+class FasieSourceConfig(BaseModel):
+    """Typed discovery bounds for the public FASIE press source."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    home_url: str = Field(min_length=1, max_length=2_048)
+    press_feed_url: str = Field(min_length=1, max_length=2_048)
+    lookback_days: int = Field(default=365, ge=1, le=3650)
+    max_feed_pages: int = Field(default=90, ge=1, le=90)
+
+    @field_validator("home_url", "press_feed_url")
+    @classmethod
+    def normalize_urls(cls, value: str) -> str:
+        normalized = normalize_url(value)
+        parsed = urlsplit(normalized)
+        if parsed.hostname and parsed.hostname.lower() in {"fasie.ru", "www.fasie.ru"}:
+            return urlunsplit((parsed.scheme.lower(), "fasie.ru", parsed.path or "/", parsed.query, ""))
+        return normalized
+
+    @model_validator(mode="after")
+    def validate_public_paths(self) -> FasieSourceConfig:
+        home = _parsed_http_url(self.home_url)
+        feed = _parsed_http_url(self.press_feed_url)
+        if (
+            home.scheme.lower() != "https"
+            or home.hostname.lower() not in {"fasie.ru", "www.fasie.ru"}
+            or home.path.rstrip("/")
+            or home.query
+        ):
+            raise ValueError("home_url must be the HTTPS FASIE home page")
+        if (
+            feed.scheme.lower() != "https"
+            or feed.hostname.lower() not in {"fasie.ru", "www.fasie.ru"}
+            or feed.path.rstrip("/") != "/press/fund"
+            or feed.query
+        ):
+            raise ValueError("press_feed_url must be the HTTPS FASIE fund press feed")
+        return self
+
+
 class SourceDefinition(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -201,6 +241,7 @@ class SourceDefinition(BaseModel):
     fixture_path: str | None = Field(default=None, max_length=1024)
     secret_env_vars: tuple[str, ...] = ()
     telegram_channel: TelegramChannelConfig | None = None
+    fasie: FasieSourceConfig | None = None
 
     @field_validator("name", "responsible", "adapter_name", "adapter_version")
     @classmethod
@@ -284,6 +325,17 @@ class SourceDefinition(BaseModel):
                 raise ValueError(
                     "telegram canonical_url must be https://t.me/<configured channel handle>"
                 )
+        if self.adapter_name == "fasie-competitions" and self.fasie is None:
+            raise ValueError("fasie-competitions requires fasie configuration")
+        if self.fasie is not None and self.adapter_name != "fasie-competitions":
+            raise ValueError("fasie configuration is only valid for fasie-competitions")
+        if self.fasie is not None:
+            if self.access_method is not SourceAccessMethod.HTTP:
+                raise ValueError("fasie-competitions requires http access")
+            if not is_url_allowed(self.fasie.home_url, self):
+                raise ValueError("fasie home_url must be covered by the source allowlist")
+            if not is_url_allowed(self.fasie.press_feed_url, self):
+                raise ValueError("fasie press_feed_url must be covered by the source allowlist")
         return self
 
     def resolve_fixture_path(self, project_root: Path) -> Path:

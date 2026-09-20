@@ -236,6 +236,10 @@ class TimelineEvent:
     end_on: date | None
     evidence: str
     date_parse_error: bool = False
+    # Some publishers intentionally announce an imprecise milestone date,
+    # such as "Сентябрь 2026". Keep their reader-facing text separately
+    # from the machine-readable range instead of inventing a day.
+    date_label: str | None = None
 
 
 @dataclass(frozen=True)

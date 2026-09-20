@@ -15,6 +15,8 @@ from app.domain.models import (
     DeduplicationMatchDisposition,
     DeduplicationMatchLevel,
     Program,
+    ProgramDetails,
+    ProgramSourceStatus,
     ReviewAction,
     ReviewActionType,
     ReviewCase,
@@ -57,6 +59,8 @@ def _review_candidate(
     organizer: str = "Фонд примеров",
     deadline_on: date = date(2026, 11, 30),
     record_url: str | None = None,
+    source_status: str = "open",
+    origin_urls: list[str] | None = None,
 ) -> UUID:
     run_id = insert_ingestion_run(connection, source_id=source_id)
     start_ingestion_run(connection, run_id=run_id)
@@ -80,7 +84,11 @@ def _review_candidate(
                         "currency_code": "RUB",
                         "max_amount": "500000",
                     },
-                    "payload": {"organizer": organizer},
+                    "payload": {
+                        "organizer": organizer,
+                        "source_status": source_status,
+                        "origin_urls": origin_urls or [],
+                    },
                 }
             },
             state=StagedRecordState.RECEIVED,
@@ -181,6 +189,45 @@ def test_exact_url_auto_merge_uses_a_deterministic_tracking_free_url_form(
         assert connection.scalar(
             select(DeduplicationMatch.match_level).where(DeduplicationMatch.id == result.match_ids[0])
         ) == DeduplicationMatchLevel.EXACT_URL
+
+
+def test_cross_source_origin_url_creates_manual_review_evidence_not_auto_merge(
+    migrated_engine: Engine,
+) -> None:
+    external_url = "https://partner.example.test/competitions/primary/"
+    with migrated_engine.begin() as connection:
+        primary_source_id = insert_source(connection)
+        fasie_source_id = insert_source(connection)
+        primary_id = _review_candidate(
+            connection,
+            source_id=primary_source_id,
+            record_key="partner:primary",
+            external_id="partner-primary",
+            record_url=external_url,
+        )
+        evaluate_staged_record(connection, primary_id)
+        fasie_id = _review_candidate(
+            connection,
+            source_id=fasie_source_id,
+            record_key="fasie:publication:external",
+            external_id="fasie-external",
+            record_url="https://fasie.ru/press/fund/external/",
+            origin_urls=[external_url],
+        )
+        result = evaluate_staged_record(connection, fasie_id)
+
+    assert result.auto_merged is False
+    assert "cross_source_origin_url_match" in result.reason_codes
+    with migrated_engine.connect() as connection:
+        assert connection.scalar(
+            select(StagedRecord.state).where(StagedRecord.id == fasie_id)
+        ) == StagedRecordState.REVIEW
+        evidence = connection.scalar(
+            select(DeduplicationMatch.evidence).where(
+                DeduplicationMatch.id == result.match_ids[0]
+            )
+        )
+        assert evidence["match_basis"] == "cross_source_origin_url"
 
 
 def test_text_and_url_normalization_are_deterministic() -> None:
@@ -446,6 +493,36 @@ def test_accept_reject_and_clarification_actions_keep_a_reproducible_history(
                 .where(ReviewAction.id == accepted.review_action_id)
                 .values(reason="Changed later")
             )
+
+
+def test_closed_source_status_remains_reviewable_and_is_persisted_to_program(
+    migrated_engine: Engine,
+) -> None:
+    with migrated_engine.begin() as connection:
+        source_id = insert_source(connection)
+        staged_record_id = _review_candidate(
+            connection,
+            source_id=source_id,
+            record_key="timchenko:archive:closed",
+            external_id="timchenko-archive-2024",
+            source_status="closed",
+        )
+        review_case_id = evaluate_staged_record(connection, staged_record_id).review_case_id
+
+    with migrated_engine.begin() as connection:
+        accepted = accept_review_case(
+            connection,
+            review_case_id,
+            reason="Закрытый конкурс подтверждён официальной архивной карточкой.",
+        )
+
+    assert accepted.program_id is not None
+    with migrated_engine.connect() as connection:
+        assert connection.scalar(
+            select(ProgramDetails.source_status).where(
+                ProgramDetails.program_id == accepted.program_id
+            )
+        ) == ProgramSourceStatus.CLOSED
 
 
 def test_quality_error_blocks_acceptance_but_not_the_audit_queue(

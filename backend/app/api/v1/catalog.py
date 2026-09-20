@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections import defaultdict
 from collections.abc import Iterator, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import date
@@ -64,6 +65,10 @@ from app.domain.presentation import (
     public_program_title,
     resolved_access_mode,
     winner_resource_group_key,
+)
+from app.domain.geography import (
+    federal_district_filter_names,
+    normalize_geography_entry,
 )
 
 
@@ -308,6 +313,7 @@ def _program_filter_clauses(
     *,
     search: ProgramSearch | None,
     source_ids: Sequence[UUID] | None,
+    source_statuses: Sequence[ProgramSourceStatus] | None,
     theme_slugs: Sequence[str] | None,
     geography_slugs: Sequence[str] | None,
     funding_kinds: Sequence[FundingValueKind] | None,
@@ -334,6 +340,31 @@ def _program_filter_clauses(
                 .exists()
         )
 
+    if source_statuses:
+        status_values = list(source_statuses)
+        status_clause: Any = ProgramDetails.source_status.in_(status_values)
+        status_exists = (
+            select(1)
+            .select_from(ProgramDetails)
+            .where(ProgramDetails.program_id == Program.id, status_clause)
+            .correlate(Program)
+            .exists()
+        )
+        if ProgramSourceStatus.UNKNOWN in status_values:
+            # Older records may not have a ProgramDetails row.  Treat those
+            # as unknown so the explicit "status not specified" filter is
+            # useful.
+            missing_details = (
+                ~select(1)
+                .select_from(ProgramDetails)
+                .where(ProgramDetails.program_id == Program.id)
+                .correlate(Program)
+                .exists()
+            )
+            clauses.append(or_(status_exists, missing_details))
+        else:
+            clauses.append(status_exists)
+
     if theme_slugs:
         clauses.append(
             select(1)
@@ -348,13 +379,20 @@ def _program_filter_clauses(
         )
 
     if geography_slugs:
+        district_names = federal_district_filter_names(geography_slugs)
+        geography_match = Geography.slug.in_(geography_slugs)
+        if district_names:
+            geography_match = or_(
+                geography_match,
+                func.lower(Geography.name).in_(name.casefold() for name in district_names),
+            )
         clauses.append(
             select(1)
                 .select_from(ProgramGeography)
                 .join(Geography, Geography.id == ProgramGeography.geography_id)
                 .where(
                     ProgramGeography.program_id == Program.id,
-                    Geography.slug.in_(geography_slugs),
+                    geography_match,
                 )
                 .correlate(Program)
                 .exists()
@@ -471,7 +509,53 @@ def _funding(row: Mapping[str, Any]) -> FundingPublic | None:
     )
 
 
-def _program_list_item(row: Mapping[str, Any]) -> ProgramListItem:
+def _taxonomy_by_program_ids(
+    connection: Connection,
+    program_ids: Sequence[UUID],
+) -> tuple[dict[UUID, list[TaxonomyOption]], dict[UUID, list[TaxonomyOption]]]:
+    """Load list-card taxonomy in two bounded queries.
+
+    Keeping this separate from the summary query prevents a many-to-many join
+    from multiplying rows (which would break pagination and totals).
+    """
+
+    geographies: dict[UUID, list[TaxonomyOption]] = defaultdict(list)
+    themes: dict[UUID, list[TaxonomyOption]] = defaultdict(list)
+    if not program_ids:
+        return geographies, themes
+
+    geography_rows = connection.execute(
+        select(ProgramGeography.program_id, Geography.slug, Geography.name)
+        .select_from(ProgramGeography)
+        .join(Geography, Geography.id == ProgramGeography.geography_id)
+        .where(ProgramGeography.program_id.in_(program_ids))
+        .order_by(asc(ProgramGeography.program_id), asc(Geography.name), asc(Geography.slug))
+    ).mappings()
+    for row in geography_rows:
+        slug, name = normalize_geography_entry(slug=row["slug"], name=row["name"])
+        option = TaxonomyOption(slug=slug, name=name)
+        if option not in geographies[row["program_id"]]:
+            geographies[row["program_id"]].append(option)
+
+    theme_rows = connection.execute(
+        select(ProgramTheme.program_id, Theme.slug, Theme.name)
+        .select_from(ProgramTheme)
+        .join(Theme, Theme.id == ProgramTheme.theme_id)
+        .where(ProgramTheme.program_id.in_(program_ids))
+        .order_by(asc(ProgramTheme.program_id), asc(Theme.name), asc(Theme.slug))
+    ).mappings()
+    for row in theme_rows:
+        themes[row["program_id"]].append(TaxonomyOption(slug=row["slug"], name=row["name"]))
+
+    return geographies, themes
+
+
+def _program_list_item(
+    row: Mapping[str, Any],
+    *,
+    geographies: Sequence[TaxonomyOption] = (),
+    themes: Sequence[TaxonomyOption] = (),
+) -> ProgramListItem:
     return ProgramListItem(
         id=row["program_id"],
         title=public_program_title(
@@ -487,6 +571,8 @@ def _program_list_item(row: Mapping[str, Any]) -> ProgramListItem:
         deadline_on=row["deadline_on"],
         funding=_funding(row),
         primary_source=_source_link(row),
+        geographies=list(geographies),
+        themes=list(themes),
     )
 
 
@@ -541,6 +627,10 @@ def list_programs(
         default=None,
         description="Repeat for alternatives; the program may be linked to any listed source.",
     ),
+    source_status: list[ProgramSourceStatus] | None = Query(
+        default=None,
+        description="Repeat for alternatives among source statuses (open, upcoming, closed, completed, unknown).",
+    ),
     theme: list[str] | None = Query(
         default=None,
         description="Repeat for alternatives among canonical theme slugs.",
@@ -565,6 +655,7 @@ def list_programs(
     clauses = _program_filter_clauses(
         search=search,
         source_ids=source_id,
+        source_statuses=source_status,
         theme_slugs=theme,
         geography_slugs=geography,
         funding_kinds=funding_kind,
@@ -574,14 +665,23 @@ def list_programs(
     total = int(
         connection.scalar(select(func.count(Program.id)).select_from(Program).where(*clauses)) or 0
     )
-    rows = connection.execute(
+    rows = list(connection.execute(
         _program_summary_select()
         .where(*clauses)
         .order_by(*_program_order_by(sort, order, search=search))
         .offset((page - 1) * page_size)
         .limit(page_size)
-    ).mappings()
-    items = [_program_list_item(row) for row in rows]
+    ).mappings())
+    program_ids = [row["program_id"] for row in rows]
+    geographies_by_program, themes_by_program = _taxonomy_by_program_ids(connection, program_ids)
+    items = [
+        _program_list_item(
+            row,
+            geographies=geographies_by_program.get(row["program_id"], ()),
+            themes=themes_by_program.get(row["program_id"], ()),
+        )
+        for row in rows
+    ]
     return Page[ProgramListItem](items=items, page=page, page_size=page_size, total=total)
 
 
@@ -648,7 +748,20 @@ def get_program(
         .where(ProgramGeography.program_id == program_id)
         .order_by(asc(Geography.name), asc(Geography.slug))
     ).mappings()
-    geographies = [TaxonomyOption(**geography_row) for geography_row in geography_rows]
+    # Canonicalize historical federal-district aliases at the API boundary as
+    # well as in the migration.  This keeps the filter stable during a rolling
+    # deploy and prevents duplicate entries from reaching the UI.
+    geography_options: dict[str, TaxonomyOption] = {}
+    for geography_row in geography_rows:
+        slug, name = normalize_geography_entry(
+            slug=geography_row["slug"],
+            name=geography_row["name"],
+        )
+        geography_options[slug] = TaxonomyOption(slug=slug, name=name)
+    geographies = sorted(
+        geography_options.values(),
+        key=lambda option: (option.name.casefold(), option.slug),
+    )
 
     theme_rows = connection.execute(
         select(Theme.slug, Theme.name)
@@ -704,6 +817,7 @@ def get_program(
             ProgramTimelineEvent.label,
             ProgramTimelineEvent.start_on,
             ProgramTimelineEvent.end_on,
+            ProgramTimelineEvent.date_label,
         )
         .where(ProgramTimelineEvent.program_id == program_id)
         .order_by(asc(ProgramTimelineEvent.position), asc(ProgramTimelineEvent.id))
@@ -714,6 +828,7 @@ def get_program(
             label=timeline_row["label"],
             start_on=timeline_row["start_on"],
             end_on=timeline_row["end_on"],
+            date_label=timeline_row["date_label"],
         )
         for timeline_row in timeline_rows
     ]

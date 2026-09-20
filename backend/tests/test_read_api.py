@@ -181,6 +181,12 @@ def test_program_list_is_published_only_and_supports_pagination_and_filters(
     assert page.items[0].updated_at == PUBLISHED_AT
     assert page.items[0].primary_source.source.id == ids["main_source_id"]
     assert page.items[0].primary_source.source_url.endswith(str(ids["alpha_id"]))
+    assert [item.model_dump() for item in page.items[0].geographies] == [
+        {"slug": "russia", "name": "Russia"}
+    ]
+    assert [item.model_dump() for item in page.items[0].themes] == [
+        {"slug": "education", "name": "Education"}
+    ]
 
     filtered = client.get(
         "/api/v1/programs",
@@ -195,6 +201,10 @@ def test_program_list_is_published_only_and_supports_pagination_and_filters(
     assert filtered.status_code == 200
     assert filtered.json()["total"] == 1
     assert filtered.json()["items"][0]["id"] == str(ids["alpha_id"])
+
+    unknown_status = client.get("/api/v1/programs", params={"source_status": "unknown"})
+    assert unknown_status.status_code == 200
+    assert unknown_status.json()["total"] == 2
 
 
 def test_public_api_presents_a_known_source_label_without_mutating_provenance(

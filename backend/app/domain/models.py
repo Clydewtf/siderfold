@@ -648,7 +648,7 @@ class ProgramDetails(Base):
 
 
 class ProgramTimelineEvent(Base):
-    """One explicit date or date range announced for a published program."""
+    """One source-announced milestone for a published program."""
 
     __tablename__ = "program_timeline_events"
 
@@ -665,6 +665,7 @@ class ProgramTimelineEvent(Base):
     label: Mapped[str] = mapped_column(String(500), nullable=False)
     start_on: Mapped[date | None] = mapped_column(Date)
     end_on: Mapped[date | None] = mapped_column(Date)
+    date_label: Mapped[str | None] = mapped_column(String(500))
     evidence: Mapped[str | None] = mapped_column(Text)
     position: Mapped[int] = mapped_column(Integer, nullable=False)
 
@@ -672,8 +673,12 @@ class ProgramTimelineEvent(Base):
         CheckConstraint("length(btrim(label)) > 0", name="label_not_blank"),
         CheckConstraint("position >= 0", name="position_nonnegative"),
         CheckConstraint(
-            "start_on IS NOT NULL OR end_on IS NOT NULL",
-            name="timeline_event_has_date",
+            "start_on IS NOT NULL OR end_on IS NOT NULL OR date_label IS NOT NULL",
+            name="timeline_event_has_date_or_label",
+        ),
+        CheckConstraint(
+            "date_label IS NULL OR length(btrim(date_label)) > 0",
+            name="timeline_event_date_label_not_blank",
         ),
         CheckConstraint(
             "start_on IS NULL OR end_on IS NULL OR start_on <= end_on",

@@ -56,6 +56,7 @@ from app.domain.models import (
     StagedRecordState,
     Theme,
 )
+from app.domain.geography import normalize_geography_entry
 from app.domain.presentation import (
     has_russia_scope,
     is_public_content_section,
@@ -70,6 +71,7 @@ from app.import_bridge.contract import FundingInput
 from app.review.deduplication import (
     CandidateFingerprint,
     conflicting_fields,
+    exact_origin_url_match,
     normalized_fields_match,
     program_fingerprint,
     staged_fingerprint,
@@ -123,6 +125,7 @@ class MatchObservation:
     conflicts: tuple[str, ...]
     target_quality: QualitySummary
     target_ingestion_status: IngestionRunStatus | None
+    origin_url_match: str | None = None
 
     @property
     def is_staged_target(self) -> bool:
@@ -342,6 +345,7 @@ def _load_program_targets(connection: Connection) -> tuple[tuple[UUID, Candidate
                 organizer=provenance.organizer,
                 deadline_on=canonical.deadline_on,
                 funding=canonical.funding,
+                origin_urls=provenance.origin_urls,
             )
         targets.append((row["program_id"], canonical))
     return tuple(targets)
@@ -362,6 +366,8 @@ def _match_level(
         and candidate.source_url is not None
         and candidate.source_url == target.source_url
     ):
+        return DeduplicationMatchLevel.EXACT_URL
+    if exact_origin_url_match(candidate, target) is not None:
         return DeduplicationMatchLevel.EXACT_URL
     if normalized_fields_match(candidate, target):
         return DeduplicationMatchLevel.NORMALIZED_FIELDS
@@ -386,6 +392,7 @@ def _find_matches(
                 conflicts=conflicting_fields(candidate.fingerprint, target.fingerprint),
                 target_quality=target.quality,
                 target_ingestion_status=target.ingestion_status,
+                origin_url_match=exact_origin_url_match(candidate.fingerprint, target.fingerprint),
             )
         )
     for program_id, target in _load_program_targets(connection):
@@ -401,6 +408,7 @@ def _find_matches(
                 conflicts=conflicting_fields(candidate.fingerprint, target),
                 target_quality=QualitySummary((), ()),
                 target_ingestion_status=None,
+                origin_url_match=exact_origin_url_match(candidate.fingerprint, target),
             )
         )
     return tuple(observations)
@@ -414,6 +422,7 @@ def _is_high_confidence_auto_merge(
         observation.is_staged_target
         and observation.level
         in {DeduplicationMatchLevel.EXACT_EXTERNAL_ID, DeduplicationMatchLevel.EXACT_URL}
+        and observation.origin_url_match is None
         and not observation.conflicts
         and not candidate.quality.blocks_auto_merge
         and not observation.target_quality.blocks_auto_merge
@@ -430,6 +439,12 @@ def _match_evidence(
         "candidate": candidate.fingerprint.audit_values(),
         "target": observation.target.audit_values(),
         "match_level": observation.level.value,
+        "match_basis": (
+            "cross_source_origin_url"
+            if observation.origin_url_match is not None
+            else observation.level.value
+        ),
+        "origin_url_match": observation.origin_url_match,
         "conflicting_fields": list(observation.conflicts),
         "candidate_quality": candidate.quality.audit_values(),
         "target_quality": observation.target_quality.audit_values(),
@@ -483,6 +498,8 @@ def _reason_codes(
     elif observations:
         if any(observation.conflicts for observation in observations):
             reasons.append("exact_identity_conflict")
+        elif any(observation.origin_url_match is not None for observation in observations):
+            reasons.append("cross_source_origin_url_match")
         elif any(
             observation.level is DeduplicationMatchLevel.NORMALIZED_FIELDS
             for observation in observations
@@ -577,6 +594,9 @@ def _add_deduplication_issue(
     ):
         code = "deduplication_possible_duplicate"
         message = "Normalized title, organizer, and application deadline match another candidate."
+    elif any(observation.origin_url_match is not None for observation in observations):
+        code = "deduplication_cross_source_origin_url_match"
+        message = "An explicit primary origin URL matches a record from another source; manual review is required."
     else:
         code = "deduplication_exact_identity_review"
         message = "An exact source identity requires a manual decision before publication."
@@ -1069,6 +1089,13 @@ def _normalized_taxonomy_patch(
             raise ReviewPolicyError(f"{namespace} taxonomy entries require a name")
         if slug is not None and not re.fullmatch(r"[a-z0-9][a-z0-9-]*", slug):
             raise ReviewPolicyError(f"{namespace} taxonomy slug is invalid")
+        if namespace == "geographies":
+            normalized_slug, normalized_name = normalize_geography_entry(
+                slug=slug or "",
+                name=name,
+            )
+            if (normalized_slug, normalized_name) != (slug or "", name):
+                slug, name = normalized_slug, normalized_name
         canonical = existing_by_name.get(_taxonomy_name_key(name))
         if canonical is not None:
             slug, name = canonical
@@ -1174,8 +1201,9 @@ def _apply_review_record_patch(
                 label = _optional_text(event.get("label"), maximum=500)
                 start_on = _optional_date(event.get("start_on"))
                 end_on = _optional_date(event.get("end_on"))
-                if label is None or (start_on is None and end_on is None):
-                    raise ReviewPolicyError("timeline events require a label and at least one date")
+                date_label = _optional_text(event.get("date_label"), maximum=500)
+                if label is None or (start_on is None and end_on is None and date_label is None):
+                    raise ReviewPolicyError("timeline events require a label and a date or date label")
                 if start_on is not None and end_on is not None and start_on > end_on:
                     raise ReviewPolicyError("timeline event dates are out of order")
                 events.append(
@@ -1184,6 +1212,7 @@ def _apply_review_record_patch(
                         "label": label,
                         "start_on": start_on.isoformat() if start_on is not None else None,
                         "end_on": end_on.isoformat() if end_on is not None else None,
+                        "date_label": date_label,
                         "evidence": _optional_text(event.get("evidence"), maximum=2_000),
                     }
                 )
@@ -1286,6 +1315,7 @@ def _deduplication_snapshot(
                 if observation.target_program_id is not None
                 else None,
                 "match_level": observation.level.value,
+                "origin_url_match": observation.origin_url_match,
                 "conflicting_fields": list(observation.conflicts),
             }
             for observation in observations
@@ -1543,18 +1573,19 @@ def _insert_timeline_events(
 ) -> None:
     raw_events = payload.get("timeline")
     position = 0
-    seen: set[tuple[str, date | None, date | None]] = set()
+    seen: set[tuple[str, date | None, date | None, str | None]] = set()
     if isinstance(raw_events, list):
         for raw_event in raw_events:
             event = _mapping(raw_event)
             label = _optional_text(event.get("label"), maximum=500)
             start_on = _optional_date(event.get("start_on"))
             end_on = _optional_date(event.get("end_on"))
-            if label is None or (start_on is None and end_on is None):
+            date_label = _optional_text(event.get("date_label"), maximum=500)
+            if label is None or (start_on is None and end_on is None and date_label is None):
                 continue
             if start_on is not None and end_on is not None and start_on > end_on:
                 continue
-            key = (label.casefold(), start_on, end_on)
+            key = (label.casefold(), start_on, end_on, date_label.casefold() if date_label else None)
             if key in seen:
                 continue
             seen.add(key)
@@ -1566,6 +1597,7 @@ def _insert_timeline_events(
                     label=label,
                     start_on=start_on,
                     end_on=end_on,
+                    date_label=date_label,
                     evidence=_optional_text(event.get("evidence"), maximum=2_000),
                     position=position,
                 )
@@ -1585,6 +1617,7 @@ def _insert_timeline_events(
             label="Приём заявок",
             start_on=start_on,
             end_on=end_on,
+            date_label=None,
             evidence=None,
             position=0,
         )
@@ -1661,6 +1694,8 @@ def _taxonomy_entries(payload: Mapping[str, Any], key: str) -> list[tuple[str, s
         name = _optional_text(value.get("name"), maximum=255)
         if slug is None or name is None or not re.fullmatch(r"[a-z0-9][a-z0-9-]*", slug):
             continue
+        if key == "geographies":
+            slug, name = normalize_geography_entry(slug=slug, name=name)
         entry = (slug, name)
         if entry not in entries:
             entries.append(entry)
@@ -1942,7 +1977,7 @@ def _preview_timeline(
     application: Mapping[str, Any],
 ) -> list[dict[str, Any]]:
     events: list[dict[str, Any]] = []
-    seen: set[tuple[str, date | None, date | None]] = set()
+    seen: set[tuple[str, date | None, date | None, str | None]] = set()
     raw_events = payload.get("timeline")
     if isinstance(raw_events, list):
         for raw_event in raw_events:
@@ -1950,11 +1985,12 @@ def _preview_timeline(
             label = _optional_text(event.get("label"), maximum=500)
             start_on = _optional_date(event.get("start_on"))
             end_on = _optional_date(event.get("end_on"))
-            if label is None or (start_on is None and end_on is None):
+            date_label = _optional_text(event.get("date_label"), maximum=500)
+            if label is None or (start_on is None and end_on is None and date_label is None):
                 continue
             if start_on is not None and end_on is not None and start_on > end_on:
                 continue
-            key = (label.casefold(), start_on, end_on)
+            key = (label.casefold(), start_on, end_on, date_label.casefold() if date_label else None)
             if key in seen:
                 continue
             seen.add(key)
@@ -1964,6 +2000,7 @@ def _preview_timeline(
                     "label": label,
                     "start_on": start_on,
                     "end_on": end_on,
+                    "date_label": date_label,
                 }
             )
     if events:

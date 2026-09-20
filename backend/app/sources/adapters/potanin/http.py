@@ -90,8 +90,14 @@ class ResponseFetcher(Protocol):
 class UrllibResponseFetcher:
     """Small standard-library transport with a strict response-size cap."""
 
-    def __init__(self, *, redirect_validator: Callable[[str], str] | None = None) -> None:
+    def __init__(
+        self,
+        *,
+        redirect_validator: Callable[[str], str] | None = None,
+        user_agent: str = USER_AGENT,
+    ) -> None:
         self._redirect_validator = redirect_validator
+        self._user_agent = user_agent
 
     def get(
         self,
@@ -105,7 +111,7 @@ class UrllibResponseFetcher:
             headers={
                 "Accept": "application/xml,text/xml,text/html;q=0.9,*/*;q=0.1",
                 "Accept-Language": "ru",
-                "User-Agent": USER_AGENT,
+                "User-Agent": self._user_agent,
             },
         )
         try:

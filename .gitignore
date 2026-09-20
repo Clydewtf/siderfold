@@ -19,3 +19,4 @@ __pycache__/
 /*.md
 !/README.md
 !/CHANGELOG.md
+backend/.db-snapshots/

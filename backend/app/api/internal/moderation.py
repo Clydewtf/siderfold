@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Iterator, Mapping
+from datetime import date
 from typing import Any
 from uuid import UUID
 
@@ -24,6 +25,7 @@ from app.api.internal.schemas import (
     InternalReviewAction,
     InternalReviewCaseDetail,
     InternalReviewIssueResolution,
+    InternalReviewMatchTarget,
     InternalReviewQueueItem,
     InternalReviewProvenance,
     InternalReviewRevision,
@@ -39,11 +41,16 @@ from app.api.internal.schemas import (
 from app.domain.models import (
     DataQualityIssue,
     DataQualitySeverity,
+    DeduplicationMatch,
     IngestionRun,
+    Program,
+    ProgramDeadline,
+    ProgramSource,
     RawCapture,
     ReviewAction,
     ReviewCase,
     ReviewCaseStatus,
+    ReviewDecision,
     ReviewIssueResolution,
     ReviewRevision,
     Source,
@@ -181,19 +188,9 @@ def _reason_codes(opened_snapshot: object) -> list[str]:
 
 
 def _review_queue_item(row: Mapping[str, Any]) -> InternalReviewQueueItem:
-    candidate_payload = row.get("candidate_payload")
-    candidate = candidate_payload if isinstance(candidate_payload, Mapping) else {}
-    record = candidate.get("record") if isinstance(candidate.get("record"), Mapping) else candidate
-    source_url = record.get("record_url") or record.get("record_key")
-    raw_title = record.get("title") if isinstance(record.get("title"), str) else None
-    title = (
-        public_program_title(
-            raw_title,
-            source_url=source_url if isinstance(source_url, str) else None,
-        )
-        if raw_title is not None
-        else None
-    )
+    record = _candidate_record(row.get("candidate_payload"))
+    source_url = _candidate_source_url(record)
+    title = _candidate_title(record, source_url=source_url)
     return InternalReviewQueueItem(
         review_case_id=row["id"],
         staged_record_id=row["staged_record_id"],
@@ -203,6 +200,34 @@ def _review_queue_item(row: Mapping[str, Any]) -> InternalReviewQueueItem:
         title=title,
         source_url=source_url if isinstance(source_url, str) else None,
     )
+
+
+def _candidate_record(candidate_payload: object) -> Mapping[str, Any]:
+    candidate = candidate_payload if isinstance(candidate_payload, Mapping) else {}
+    record = candidate.get("record")
+    return record if isinstance(record, Mapping) else candidate
+
+
+def _candidate_source_url(record: Mapping[str, Any]) -> str | None:
+    value = record.get("record_url") or record.get("record_key")
+    return value if isinstance(value, str) and value.strip() else None
+
+
+def _candidate_title(record: Mapping[str, Any], *, source_url: str | None) -> str | None:
+    raw_title = record.get("title")
+    if not isinstance(raw_title, str) or not raw_title.strip():
+        return None
+    return public_program_title(raw_title, source_url=source_url)
+
+
+def _candidate_deadline(record: Mapping[str, Any]) -> date | None:
+    value = record.get("deadline_on")
+    if not isinstance(value, str):
+        return None
+    try:
+        return date.fromisoformat(value)
+    except ValueError:
+        return None
 
 
 def _internal_quality_issue(row: Mapping[str, Any]) -> InternalQualityIssue:
@@ -628,6 +653,118 @@ def get_internal_review_case(
             for revision in revision_rows
         ],
         public_preview=review_public_preview(connection, review_case_id),
+    )
+
+
+@router.get(
+    "/review/matches/{deduplication_match_id}/target",
+    response_model=InternalReviewMatchTarget,
+)
+def get_internal_review_match_target(
+    deduplication_match_id: UUID,
+    connection: Connection = Depends(get_internal_database_connection),
+    _access: InternalAccess = Depends(require_internal_access),
+) -> InternalReviewMatchTarget:
+    """Return a safe, current summary of the target behind a match evidence row."""
+
+    match = connection.execute(
+        select(
+            DeduplicationMatch.target_staged_record_id,
+            DeduplicationMatch.target_program_id,
+        ).where(DeduplicationMatch.id == deduplication_match_id)
+    ).mappings().one_or_none()
+    if match is None:
+        raise InternalApiError(
+            status_code=status.HTTP_404_NOT_FOUND,
+            code="deduplication_match_not_found",
+            message="Deduplication match was not found.",
+        )
+
+    staged_record_id = match["target_staged_record_id"]
+    if staged_record_id is not None:
+        row = connection.execute(
+            select(
+                StagedRecord.id,
+                StagedRecord.state,
+                StagedRecord.candidate_payload,
+                RawCapture.source_url.label("raw_capture_source_url"),
+                Source.name.label("source_name"),
+                ReviewCase.id.label("review_case_id"),
+                ReviewCase.status.label("review_case_status"),
+            )
+            .select_from(StagedRecord)
+            .join(RawCapture, RawCapture.id == StagedRecord.raw_capture_id)
+            .join(IngestionRun, IngestionRun.id == RawCapture.ingestion_run_id)
+            .join(Source, Source.id == IngestionRun.source_id)
+            .outerjoin(ReviewCase, ReviewCase.staged_record_id == StagedRecord.id)
+            .where(StagedRecord.id == staged_record_id)
+        ).mappings().one_or_none()
+        if row is None:
+            raise InternalApiError(
+                status_code=status.HTTP_404_NOT_FOUND,
+                code="deduplication_match_target_not_found",
+                message="Deduplication match target was not found.",
+            )
+        record = _candidate_record(row["candidate_payload"])
+        source_url = _candidate_source_url(record) or row["raw_capture_source_url"]
+        return InternalReviewMatchTarget(
+            kind="staged_record",
+            id=row["id"],
+            title=_candidate_title(record, source_url=source_url) or "Кандидат без названия",
+            source_name=row["source_name"],
+            source_url=source_url,
+            deadline_on=_candidate_deadline(record),
+            staged_state=row["state"],
+            review_case_id=row["review_case_id"],
+            review_case_status=row["review_case_status"],
+        )
+
+    program_id = match["target_program_id"]
+    if program_id is None:
+        raise InternalApiError(
+            status_code=status.HTTP_404_NOT_FOUND,
+            code="deduplication_match_target_not_found",
+            message="Deduplication match target was not found.",
+        )
+    row = connection.execute(
+        select(
+            Program.id,
+            Program.title,
+            Program.publication_status,
+            ProgramSource.source_url,
+            Source.name.label("source_name"),
+            ProgramDeadline.deadline_on,
+            ReviewCase.id.label("review_case_id"),
+            ReviewCase.status.label("review_case_status"),
+        )
+        .select_from(Program)
+        .join(
+            ProgramSource,
+            (ProgramSource.program_id == Program.id)
+            & (ProgramSource.source_id == Program.primary_source_id),
+        )
+        .join(Source, Source.id == ProgramSource.source_id)
+        .outerjoin(ProgramDeadline, ProgramDeadline.program_id == Program.id)
+        .outerjoin(ReviewDecision, ReviewDecision.id == Program.publication_review_decision_id)
+        .outerjoin(ReviewCase, ReviewCase.staged_record_id == ReviewDecision.staged_record_id)
+        .where(Program.id == program_id)
+    ).mappings().one_or_none()
+    if row is None:
+        raise InternalApiError(
+            status_code=status.HTTP_404_NOT_FOUND,
+            code="deduplication_match_target_not_found",
+            message="Deduplication match target was not found.",
+        )
+    return InternalReviewMatchTarget(
+        kind="program",
+        id=row["id"],
+        title=public_program_title(row["title"], source_url=row["source_url"]),
+        source_name=row["source_name"],
+        source_url=row["source_url"],
+        deadline_on=row["deadline_on"],
+        review_case_id=row["review_case_id"],
+        review_case_status=row["review_case_status"],
+        publication_status=row["publication_status"],
     )
 
 

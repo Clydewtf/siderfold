@@ -16,6 +16,7 @@ from app.domain.models import (
     ProgramResourceKind,
     ProgramSourceStatus,
     ProgramTimelineEventKind,
+    PublicationStatus,
     ReviewActionType,
     ReviewCaseStatus,
     SourceExecutionStatus,
@@ -71,6 +72,21 @@ class InternalReviewQueueItem(InternalSchema):
     reason_codes: list[str]
     title: str | None = None
     source_url: str | None = None
+
+
+class InternalReviewMatchTarget(InternalSchema):
+    """Safe operator summary of a record referenced by a deduplication match."""
+
+    kind: Literal["staged_record", "program"]
+    id: UUID
+    title: str
+    source_name: str
+    source_url: str | None = None
+    deadline_on: date | None = None
+    staged_state: StagedRecordState | None = None
+    review_case_id: UUID | None = None
+    review_case_status: ReviewCaseStatus | None = None
+    publication_status: PublicationStatus | None = None
 
 
 class InternalReviewIssueResolution(InternalSchema):
@@ -157,6 +173,7 @@ class InternalReviewTimelineEvent(InternalSchema):
     label: str
     start_on: date | None = None
     end_on: date | None = None
+    date_label: str | None = None
 
 
 class InternalReviewResource(InternalSchema):
@@ -297,12 +314,17 @@ class InternalReviewTimelinePatch(InternalSchema):
     label: str = Field(min_length=1, max_length=500)
     start_on: date | None = None
     end_on: date | None = None
+    date_label: str | None = Field(default=None, max_length=500)
     evidence: str | None = Field(default=None, max_length=2_000)
 
     @model_validator(mode="after")
     def validate_date_range(self) -> InternalReviewTimelinePatch:
-        if self.start_on is None and self.end_on is None:
-            raise ValueError("at least one event date is required")
+        if (
+            self.start_on is None
+            and self.end_on is None
+            and (self.date_label is None or not self.date_label.strip())
+        ):
+            raise ValueError("at least one event date or date label is required")
         if self.start_on is not None and self.end_on is not None and self.start_on > self.end_on:
             raise ValueError("start_on must not be after end_on")
         return self

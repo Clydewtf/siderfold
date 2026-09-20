@@ -106,6 +106,74 @@ $PYTHON_BIN -m app.sources.cli runs --source-key fixture-catalog
    $PYTHON_BIN -m app.sources.cli run potanin-competitions
    ```
 
+### Фонд Тимченко и ФАСИЭ: ручной запуск
+
+Оба источника, как и Потанин, имеют `schedule = "manual"`: команда
+`schedule-once` их не выберет и не включает сбор сама. До отдельного решения об
+автоматизации оператор запускает их только в такой последовательности:
+
+```bash
+cd /Users/clyde/projects/siderfold/backend
+export PYTHON_BIN="${PYTHON_BIN:-python}"
+
+$PYTHON_BIN -m pytest -q \
+  tests/test_fasie_adapter.py \
+  tests/test_timchenko_adapter.py
+
+$PYTHON_BIN -m app.sources.cli dry-run fasie-competitions
+$PYTHON_BIN -m app.sources.cli dry-run timchenko-competitions
+```
+
+`dry-run` выполняет реальные HTTP-запросы, но не создаёт записи в PostgreSQL и
+не записывает raw-файлы. Перед `run` проверь финальный JSON: `status` должен
+быть `completed`, `errors` — нулевым, а предупреждения — понятными по URL
+карточки. Особого внимания требуют `deadline_missing`,
+`application_url_ambiguous`, `origin_url_missing_possible_duplicate` и
+`artifact_*`. Отложенный материал (`collection_status=deferred`) не означает,
+что карточка конкурса потеряна: в payload остаются его ссылка и причина
+отложения.
+
+Если отчёт приемлем, запусти сохранение и посмотри журнал и review-очередь:
+
+```bash
+$PYTHON_BIN -m app.sources.cli run fasie-competitions
+$PYTHON_BIN -m app.sources.cli run timchenko-competitions
+
+$PYTHON_BIN -m app.sources.cli runs --source-key fasie-competitions --limit 5
+$PYTHON_BIN -m app.sources.cli runs --source-key timchenko-competitions --limit 5
+$PYTHON_BIN -m app.review.cli list
+$PYTHON_BIN -m app.review.cli show <review_case_id>
+```
+
+У Тимченко discovery обязательно обходит все три официальные вкладки:
+`programs`, `ready` и `archive`. Открытые, закрытые и архивные конкурсы идут в
+одну обычную review-очередь; `source_status` — это информационное поле
+первоисточника, а не блокирующая ошибка. Обычное ручное принятие закрытой
+карточки разрешено. Массовое принятие по-прежнему предназначено только для
+открытых чистых карточек.
+
+Тимченко скачивает только разрешённые материалы с `fondtimchenko.ru/upload/`
+и результатные страницы из `press-center/`; внешние формы, social- и
+application-ссылки остаются reference-only. Сначала всегда считываются
+каталоги и карточки, затем в детерминированном порядке расходуется остаток
+общего лимита на материалы. Превышение лимита оставляет остальные материалы
+отложенными с причиной, а не прекращает обработку уже найденных конкурсов.
+
+FASIE читает главную страницу и ленту `/press/fund/` в пределах `lookback_days`
+и `max_feed_pages`, затем только связанные публикации и официальные вложения
+из `/upload/`. Внешние сайты и формы подачи не скачиваются. Единственная
+внешняя ссылка на заявку у standalone-возможности также сохраняется как
+`origin_url`: это создаёт доказательство для точной межисточниковой
+дедупликации, но никогда не выполняет автоматическое объединение программ.
+При достижении общего byte-limit последующие вложения FASIE получают
+`collection_status=deferred` и причину `total_bytes_limit`.
+
+Обычный `run` создаёт или переиспользует `Source`, execution/ingestion run,
+raw-capture metadata, staging-записи, quality issues и review-кейсы. Он не
+создаёт опубликованный `Program`. Полные raw-ответы остаются вне PostgreSQL в
+`RAW_CAPTURE_DIR`; в БД сохраняются метаданные и URI. Не добавляй конкурсы,
+источники или provenance прямыми SQL-запросами.
+
 5. Открой операторскую панель в браузере: адрес выводит
    `scripts/start-local.sh` после запуска API-режима. Обычно это
    `http://127.0.0.1:4191/operator.html`. Введи тот же
@@ -286,6 +354,16 @@ cookie, токенов или текста исключения. Вебхуки 
 ```bash
 $PYTHON_BIN -m app.sources.cli runs --limit 50
 ```
+
+## Добавление нового источника
+
+Новый источник не создают вручную в PostgreSQL. Добавь запись в
+`config/sources.toml` с каноническим URL, строгим allowlist, способом доступа,
+ручным расписанием, лимитами и версией адаптера; зарегистрируй factory адаптера;
+добавь fixtures, unit-тесты и PostgreSQL integration-тесты для ingestion/review.
+После этого обнови README и этот RUNBOOK, выполни `dry-run`, проверь отчёт и
+только затем запускай управляемый `run`. `Source` и вся цепочка provenance
+создаются идемпотентно самим runner.
 
 ## Хранение журнала
 

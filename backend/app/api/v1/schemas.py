@@ -81,6 +81,7 @@ class TimelineEventPublic(PublicSchema):
     label: str
     start_on: date | None = None
     end_on: date | None = None
+    date_label: str | None = None
 
 
 class ProgramResourcePublic(PublicSchema):
@@ -110,6 +111,11 @@ class ProgramListItem(PublicSchema):
     deadline_on: date | None = None
     funding: FundingPublic | None = None
     primary_source: SourceLinkPublic
+    # Taxonomy is included on list cards as well as detail pages so clients do
+    # not need to issue one request per visible card just to render filters or
+    # a region/theme summary.
+    geographies: list[TaxonomyOption] = Field(default_factory=list)
+    themes: list[TaxonomyOption] = Field(default_factory=list)
 
 
 class ProgramDetail(ProgramListItem):

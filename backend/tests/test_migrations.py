@@ -4,7 +4,10 @@ from uuid import uuid4
 
 from alembic import command
 import pytest
-from sqlalchemy import create_engine, inspect, text
+from sqlalchemy import create_engine, func, insert, inspect, select, text
+
+from app.domain.models import Geography, ProgramGeography
+from tests.fixtures.canonical import insert_program_with_source, insert_source
 
 
 CANONICAL_TABLES = {
@@ -135,6 +138,61 @@ TAXONOMY_INDEXES = {
 }
 
 
+@pytest.mark.postgres
+def test_federal_district_alias_migration_relinks_existing_programs(
+    alembic_config: object,
+    test_database_url: str,
+) -> None:
+    command.downgrade(alembic_config, "base")
+    command.upgrade(alembic_config, "0016_timeline_date_labels")
+    engine = create_engine(test_database_url)
+    try:
+        with engine.begin() as connection:
+            source_id = insert_source(connection)
+            program_id = insert_program_with_source(connection, source_id=source_id)
+            long_name_id = uuid4()
+            canonical_id = uuid4()
+            connection.execute(
+                insert(Geography),
+                [
+                    {
+                        "id": long_name_id,
+                        "slug": "far-eastern-federal-district",
+                        "name": "Дальневосточный федеральный округ",
+                    },
+                    {
+                        "id": canonical_id,
+                        "slug": "far-eastern",
+                        "name": "Дальневосточный",
+                    },
+                ],
+            )
+            connection.execute(
+                insert(ProgramGeography).values(
+                    program_id=program_id,
+                    geography_id=long_name_id,
+                )
+            )
+
+        command.upgrade(alembic_config, "head")
+
+        with engine.connect() as connection:
+            assert connection.execute(
+                select(Geography.slug, Geography.name).where(
+                    Geography.slug.in_(("far-eastern", "far-eastern-federal-district"))
+                )
+            ).all() == [("far-eastern", "Дальневосточный")]
+            assert connection.scalar(
+                select(func.count())
+                .select_from(ProgramGeography)
+                .where(ProgramGeography.program_id == program_id)
+                .where(ProgramGeography.geography_id == canonical_id)
+            ) == 1
+    finally:
+        engine.dispose()
+        command.downgrade(alembic_config, "base")
+
+
 def _index_names(engine: object, table_name: str) -> set[str]:
     return {index["name"] for index in inspect(engine).get_indexes(table_name)}
 
@@ -175,7 +233,7 @@ def test_provenance_migration_applies_to_a_clean_database_and_rolls_back(
             assert expected_indexes.issubset(_index_names(engine, table_name))
         with engine.connect() as connection:
             assert connection.scalar(text("SELECT version_num FROM alembic_version")) == (
-                "0015_taxonomy_name_uniqueness"
+                "0017_normalize_fd_geographies"
             )
 
         with engine.connect() as connection:
@@ -212,7 +270,7 @@ def test_provenance_migration_applies_to_a_clean_database_and_rolls_back(
         assert "ix_programs_title_trigram" in _index_names(engine, "programs")
         with engine.connect() as connection:
             assert connection.scalar(text("SELECT version_num FROM alembic_version")) == (
-                "0015_taxonomy_name_uniqueness"
+                "0017_normalize_fd_geographies"
             )
 
         command.downgrade(alembic_config, "0013_program_details_resources")
