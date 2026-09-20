@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { fundingLabel, mapProgramDetail } from './catalogMapper';
+import { fundingLabel, mapProgram, mapProgramDetail } from './catalogMapper';
 
 describe('public catalog mapper', () => {
   it('keeps unknown funding unknown instead of inventing an amount', () => {
@@ -59,5 +59,27 @@ describe('public catalog mapper', () => {
     expect(program.regions).toEqual(['Россия']);
     expect(program.themes).toEqual(['Наука']);
     expect(program.sources[0]?.sourceUrl).toBe('https://example.org/programs/one');
+  });
+
+  it('keeps list-card taxonomies available without opening the drawer', () => {
+    const program = mapProgram({
+      id: 'program-1',
+      title: 'Программа',
+      publication_status: 'published',
+      published_at: '2025-02-10T09:00:00Z',
+      updated_at: '2025-02-14T10:30:00Z',
+      deadline_on: null,
+      funding: null,
+      primary_source: {
+        source: { id: 'source-1', name: 'Источник', canonical_url: 'https://example.org' },
+        source_url: 'https://example.org/programs/one',
+        observed_at: '2025-02-14T10:30:00Z'
+      },
+      geographies: [{ slug: 'far-eastern', name: 'Дальневосточный' }],
+      themes: [{ slug: 'science', name: 'Наука' }]
+    });
+
+    expect(program.regions).toEqual(['Дальневосточный']);
+    expect(program.themes).toEqual(['Наука']);
   });
 });

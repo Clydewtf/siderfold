@@ -290,7 +290,7 @@ export function ApiProgramDrawer({
               </a>
             ) : null}
 
-            <p className="mt-6 text-base leading-7 text-graphite">
+            <p className="mt-6 whitespace-pre-line text-base leading-7 text-graphite">
               {program.summary ?? 'Краткое описание не извлечено; подробные условия доступны на первоисточнике.'}
             </p>
 
@@ -335,7 +335,7 @@ export function ApiProgramDrawer({
             {program.eligibilitySummary ? (
               <section className="mt-8">
                 <h3 className="text-lg font-semibold">Условия участия</h3>
-                <p className="mt-3 text-sm leading-6 text-graphite">{program.eligibilitySummary}</p>
+                <p className="mt-3 whitespace-pre-line text-sm leading-6 text-graphite">{program.eligibilitySummary}</p>
               </section>
             ) : null}
 
@@ -346,7 +346,7 @@ export function ApiProgramDrawer({
                   {program.timeline.map((event, index) => (
                     <li key={`${event.kind}:${event.label}:${index}`} className="rounded-lg border border-ink/10 bg-white/70 p-4">
                       <p className="font-semibold text-ink">{event.label}</p>
-                      <p className="mt-1">{formatDateRange(event.start, event.end)}</p>
+                      <p className="mt-1">{event.dateLabel ?? formatDateRange(event.start, event.end)}</p>
                     </li>
                   ))}
                 </ul>
@@ -372,7 +372,7 @@ export function ApiProgramDrawer({
                     {winnerSections.map((section) => (
                       <div key={`${section.category}:${section.heading}`} className="rounded-lg border border-ink/10 bg-white/70 p-4">
                         <h4 className="font-semibold text-ink">{section.heading}</h4>
-                        <p className="mt-2 text-sm leading-6 text-graphite">{section.content}</p>
+                        <p className="mt-2 whitespace-pre-line text-sm leading-6 text-graphite">{section.content}</p>
                       </div>
                     ))}
                   </div>
@@ -406,7 +406,7 @@ export function ApiProgramDrawer({
                   {additionalSections.map((section) => (
                     <div key={`${section.category}:${section.heading}`} className="rounded-lg border border-ink/10 bg-white/70 p-4">
                       <h4 className="font-semibold text-ink">{section.heading}</h4>
-                      <p className="mt-2 text-sm leading-6 text-graphite">{section.content}</p>
+                      <p className="mt-2 whitespace-pre-line text-sm leading-6 text-graphite">{section.content}</p>
                     </div>
                   ))}
                 </div>

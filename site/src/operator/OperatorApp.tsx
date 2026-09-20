@@ -6,6 +6,7 @@ import {
   createOperatorApiClient,
   createOperatorIdempotencyKey,
   OperatorApiError,
+  type DeduplicationMatchTarget,
   type DiscoveryActionKind,
   type DiscoveryReviewItem,
   type ExecutionRun,
@@ -21,6 +22,7 @@ import { mapReviewPublicPreview } from './preview';
 
 type OperatorView = 'review' | 'quality' | 'runs' | 'discovery' | 'publication';
 type ReviewFilter = 'all' | 'ready' | 'quality' | 'duplicates' | 'clarification';
+type ReviewSort = 'newest' | 'oldest' | 'title' | 'attention';
 type ClientFactory = (options: { token: string }) => OperatorApiClient;
 
 type DashboardData = {
@@ -97,6 +99,36 @@ function reviewReasonLabel(reason: string): string {
     multiple_candidates: 'несколько совпадений'
   };
   return labels[reason] ?? reason.replaceAll('_', ' ');
+}
+
+function deduplicationMatchLabel(level: string): string {
+  const labels: Record<string, string> = {
+    exact_external_id: 'Совпадение по ID источника',
+    exact_url: 'Совпадение по ссылке',
+    normalized_fields: 'Похожи по названию, организатору и сроку'
+  };
+  return labels[level] ?? level.replaceAll('_', ' ');
+}
+
+function matchTargetStatusLabel(target: DeduplicationMatchTarget): string {
+  if (target.kind === 'program') {
+    const labels: Record<string, string> = {
+      draft: 'черновик',
+      published: 'опубликована',
+      archived: 'архивирована'
+    };
+    return labels[target.publication_status ?? ''] ?? 'статус публикации не указан';
+  }
+  const labels: Record<string, string> = {
+    received: 'получен',
+    extracted: 'извлечён',
+    warning: 'есть предупреждение',
+    error: 'есть ошибка',
+    review: 'в очереди',
+    published: 'опубликован',
+    rejected: 'отклонён'
+  };
+  return labels[target.staged_state ?? ''] ?? 'статус кандидата не указан';
 }
 
 function isCleanReviewCase(item: ReviewQueueItem, issues: QualityIssue[]): boolean {
@@ -280,7 +312,7 @@ function ReviewActions({
                   const targetStage = asString(match.target_staged_record_id);
                   const evidence = asRecord(match.evidence);
                   const level = asString(evidence.match_level) ?? 'сопоставление';
-                  return <option key={id} value={id}>{level}: {targetProgram ? `программа ${targetProgram}` : `кандидат ${targetStage ?? 'не указан'}`}</option>;
+                  return <option key={id} value={id}>{deduplicationMatchLabel(level)}: {targetProgram ? `программа ${targetProgram}` : `кандидат ${targetStage ?? 'не указан'}`}</option>;
                 })}
               </select>
             </label>
@@ -484,6 +516,7 @@ type CorrectionTimelineEvent = {
   label: string;
   startOn: string;
   endOn: string;
+  dateLabel: string;
   evidence: string;
 };
 
@@ -602,6 +635,7 @@ function correctionTimeline(detail: ReviewCaseDetail): CorrectionTimelineEvent[]
       label: asString(event.label) ?? '',
       startOn: asInputDate(asString(event.start_on)),
       endOn: asInputDate(asString(event.end_on)),
+      dateLabel: asString(event.date_label) ?? '',
       evidence: asString(event.evidence) ?? ''
     };
   });
@@ -755,7 +789,10 @@ function timelinePatchItems(items: CorrectionTimelineEvent[]): Record<string, st
   return items.map((item) => {
     const label = optionalText(item.label);
     if (!label) throw new Error('Укажи название каждого события графика.');
-    if (!item.startOn && !item.endOn) throw new Error('Укажи хотя бы одну дату для каждого события графика.');
+    const dateLabel = optionalText(item.dateLabel);
+    if (!item.startOn && !item.endOn && !dateLabel) {
+      throw new Error('Укажи дату или подпись даты для каждого события графика.');
+    }
     if (item.startOn && item.endOn && item.startOn > item.endOn) {
       throw new Error('Дата начала события графика не может быть позже даты окончания.');
     }
@@ -764,6 +801,7 @@ function timelinePatchItems(items: CorrectionTimelineEvent[]): Record<string, st
       label,
       start_on: item.startOn || null,
       end_on: item.endOn || null,
+      date_label: dateLabel,
       evidence: optionalText(item.evidence)
     };
   });
@@ -997,6 +1035,7 @@ function ReviewCorrectionEditor({
         label: '',
         startOn: '',
         endOn: '',
+        dateLabel: '',
         evidence: ''
       }]
     }));
@@ -1129,6 +1168,7 @@ function ReviewCorrectionEditor({
                 <label className="field-label">Тип<select value={event.kind} onChange={(input) => updateTimelineEvent(event.id, 'kind', input.target.value)}><option value="application">Приём заявок</option><option value="application_open">Начало приёма</option><option value="application_close">Окончание приёма</option><option value="evaluation">Экспертиза</option><option value="results">Результаты</option><option value="contracting">Заключение договоров</option><option value="implementation">Реализация</option><option value="other">Другое</option></select></label>
                 <label className="field-label">Начало<input type="date" value={event.startOn} onChange={(input) => updateTimelineEvent(event.id, 'startOn', input.target.value)} /></label>
                 <label className="field-label">Окончание<input type="date" value={event.endOn} onChange={(input) => updateTimelineEvent(event.id, 'endOn', input.target.value)} /></label>
+                <label className="field-label sm:col-span-2">Подпись даты у источника<input value={event.dateLabel} onChange={(input) => updateTimelineEvent(event.id, 'dateLabel', input.target.value)} placeholder="Например: Сентябрь 2026" /></label>
                 <label className="field-label sm:col-span-2">Основание для правки<textarea className="min-h-20 w-full resize-y rounded-xl border border-ink/20 bg-white p-3 text-ink" value={event.evidence} onChange={(input) => updateTimelineEvent(event.id, 'evidence', input.target.value)} placeholder="Фрагмент официального графика" /></label>
               </div>
             </div>
@@ -1199,15 +1239,50 @@ function ReviewDetail({
   detail,
   busy,
   onAction,
-  onSaveRevision
+  onSaveRevision,
+  onLoadMatchTarget,
+  onOpenReviewCase
 }: {
   detail: ReviewCaseDetail | null;
   busy: boolean;
   onAction: (action: ReviewActionKind, reason: string, matchId?: string) => Promise<void>;
   onSaveRevision: (reviewCaseId: string, payload: { reason: string; patch: Record<string, unknown>; resolve_issue_ids: string[] }) => Promise<void>;
+  onLoadMatchTarget: (deduplicationMatchId: string) => Promise<DeduplicationMatchTarget>;
+  onOpenReviewCase: (reviewCaseId: string) => void;
 }) {
   const [activeTab, setActiveTab] = useState<ReviewDetailTab>('source');
-  useEffect(() => { setActiveTab('source'); }, [detail?.review_case_id]);
+  const [matchTargets, setMatchTargets] = useState<Record<string, DeduplicationMatchTarget>>({});
+  const [loadingMatchIds, setLoadingMatchIds] = useState<Set<string>>(new Set());
+  const [matchErrors, setMatchErrors] = useState<Record<string, string>>({});
+  useEffect(() => {
+    setActiveTab('source');
+    setMatchTargets({});
+    setLoadingMatchIds(new Set());
+    setMatchErrors({});
+  }, [detail?.review_case_id]);
+
+  async function loadMatchTarget(deduplicationMatchId: string) {
+    if (matchTargets[deduplicationMatchId] || loadingMatchIds.has(deduplicationMatchId)) return;
+    setLoadingMatchIds((current) => new Set(current).add(deduplicationMatchId));
+    setMatchErrors((current) => {
+      const next = { ...current };
+      delete next[deduplicationMatchId];
+      return next;
+    });
+    try {
+      const target = await onLoadMatchTarget(deduplicationMatchId);
+      setMatchTargets((current) => ({ ...current, [deduplicationMatchId]: target }));
+    } catch (error) {
+      setMatchErrors((current) => ({ ...current, [deduplicationMatchId]: errorMessage(error) }));
+    } finally {
+      setLoadingMatchIds((current) => {
+        const next = new Set(current);
+        next.delete(deduplicationMatchId);
+        return next;
+      });
+    }
+  }
+
   if (!detail) {
     return <EmptyState title="Выбери кандидата" description="Здесь появятся исходные данные, предпросмотр карточки, замечания и история решений." />;
   }
@@ -1238,12 +1313,35 @@ function ReviewDetail({
             {matches.map((match) => {
               const evidence = asRecord(match.evidence);
               const evidenceLevel = asString(evidence.match_level) ?? 'сопоставление';
+              const targetEvidence = asRecord(evidence.target);
+              const matchId = asString(match.id);
               const programId = asString(match.target_program_id);
               const stagedId = asString(match.target_staged_record_id);
+              const target = matchId ? matchTargets[matchId] : undefined;
+              const snapshotTitle = asString(targetEvidence.title);
               return (
                 <li key={asString(match.id) ?? JSON.stringify(match)} className="rounded-lg border border-ink/10 bg-paper/60 p-3 text-sm">
-                  <p className="font-medium text-ink">{evidenceLevel}</p>
-                  <p className="mt-1 text-graphite">{programId ? `Опубликованная программа: ${programId}` : `Кандидат: ${stagedId ?? 'не указан'}`}</p>
+                  <p className="font-medium text-ink">{deduplicationMatchLabel(evidenceLevel)}</p>
+                  <p className="mt-1 text-graphite">{target?.title ?? snapshotTitle ?? (programId ? 'Опубликованная программа' : 'Кандидат без названия')}</p>
+                  <p className="mt-1 break-all text-xs text-graphite/75">{programId ? `ID программы: ${programId}` : `ID кандидата: ${stagedId ?? 'не указан'}`}</p>
+                  <div className="mt-3 flex flex-wrap gap-2">
+                    {!target ? <button type="button" className="button-secondary" disabled={!matchId || loadingMatchIds.has(matchId)} onClick={() => { if (matchId) void loadMatchTarget(matchId); }}>
+                      {loadingMatchIds.has(matchId ?? '') ? 'Загружаем…' : 'Показать карточку совпадения'}
+                    </button> : null}
+                    {target?.review_case_id ? <button type="button" className="button-secondary" onClick={() => onOpenReviewCase(target.review_case_id!)}>Открыть карточку {target.kind === 'program' ? 'программы' : 'кандидата'}</button> : null}
+                    {target && isExternalUrl(target.source_url) ? <a className="button-secondary" href={target.source_url} target="_blank" rel="noreferrer">Открыть первоисточник <ExternalLink className="ml-2 inline h-4 w-4" aria-hidden="true" /></a> : null}
+                  </div>
+                  {matchErrors[matchId ?? ''] ? <p role="alert" className="mt-2 text-xs text-clay">{matchErrors[matchId ?? '']}</p> : null}
+                  {target ? (
+                    <div className="mt-3 rounded-lg border border-ink/10 bg-white/70 p-3">
+                      <p className="font-semibold text-ink">{target.title}</p>
+                      <p className="mt-1 text-xs text-graphite">{target.kind === 'program' ? 'Программа' : 'Кандидат'} · {matchTargetStatusLabel(target)}</p>
+                      <dl className="mt-3 grid gap-2 text-xs sm:grid-cols-2">
+                        <div><dt className="text-graphite/70">Источник</dt><dd className="mt-0.5 text-ink">{target.source_name}</dd></div>
+                        <div><dt className="text-graphite/70">Срок подачи</dt><dd className="mt-0.5 text-ink">{formatDate(target.deadline_on)}</dd></div>
+                      </dl>
+                    </div>
+                  ) : null}
                 </li>
               );
             })}
@@ -1294,7 +1392,8 @@ function ReviewWorkspace({
   detailLoading,
   actionBusy,
   onAction,
-  onSaveRevision
+  onSaveRevision,
+  onLoadMatchTarget
 }: {
   reviewCases: ReviewQueueItem[];
   issues: QualityIssue[];
@@ -1305,8 +1404,10 @@ function ReviewWorkspace({
   actionBusy: boolean;
   onAction: (reviewCaseId: string, action: ReviewActionKind, reason: string, matchId?: string) => Promise<void>;
   onSaveRevision: (reviewCaseId: string, payload: { reason: string; patch: Record<string, unknown>; resolve_issue_ids: string[] }) => Promise<void>;
+  onLoadMatchTarget: (deduplicationMatchId: string) => Promise<DeduplicationMatchTarget>;
 }) {
   const [filter, setFilter] = useState<ReviewFilter>('all');
+  const [sort, setSort] = useState<ReviewSort>('newest');
   const [selectedForBatch, setSelectedForBatch] = useState<Set<string>>(new Set());
   const [batchReason, setBatchReason] = useState('');
   const [batchConfirmed, setBatchConfirmed] = useState(false);
@@ -1329,20 +1430,48 @@ function ReviewWorkspace({
     [issuesByCase, reviewCases]
   );
 
-  const visibleCases = useMemo(() => reviewCases.filter((item) => {
-    const reasons = item.reason_codes;
-    const itemIssues = issuesByCase.get(item.review_case_id) ?? [];
-    if (filter === 'ready') return isCleanReviewCase(item, itemIssues);
-    if (filter === 'quality') return itemIssues.length > 0 || reasons.some((reason) => reason.startsWith('quality_'));
-    if (filter === 'duplicates') return reasons.some((reason) => reason.includes('duplicate') || reason.includes('identity'));
-    if (filter === 'clarification') return item.status === 'needs_clarification';
-    return true;
-  }), [filter, issuesByCase, reviewCases]);
+  const visibleCases = useMemo(() => {
+    const items = reviewCases.filter((item) => {
+      const reasons = item.reason_codes;
+      const itemIssues = issuesByCase.get(item.review_case_id) ?? [];
+      if (filter === 'ready') return isCleanReviewCase(item, itemIssues);
+      if (filter === 'quality') return itemIssues.length > 0 || reasons.some((reason) => reason.startsWith('quality_'));
+      if (filter === 'duplicates') return reasons.some((reason) => reason.includes('duplicate') || reason.includes('identity'));
+      if (filter === 'clarification') return item.status === 'needs_clarification';
+      return true;
+    });
+
+    const timestamp = (item: ReviewQueueItem) => {
+      const value = Date.parse(item.opened_at);
+      return Number.isNaN(value) ? 0 : value;
+    };
+    const attentionRank = (item: ReviewQueueItem) => {
+      const itemIssues = issuesByCase.get(item.review_case_id) ?? [];
+      if (itemIssues.some((issue) => issue.severity === 'error')) return 0;
+      if (item.status === 'needs_clarification') return 1;
+      if (itemIssues.length > 0) return 2;
+      if (item.reason_codes.some((reason) => reason.includes('duplicate') || reason.includes('identity'))) return 3;
+      return 4;
+    };
+
+    return items.sort((left, right) => {
+      if (sort === 'title') {
+        return (left.title ?? '').localeCompare(right.title ?? '', 'ru');
+      }
+      if (sort === 'attention') {
+        const rankDifference = attentionRank(left) - attentionRank(right);
+        if (rankDifference !== 0) return rankDifference;
+      }
+      return sort === 'oldest'
+        ? timestamp(left) - timestamp(right)
+        : timestamp(right) - timestamp(left);
+    });
+  }, [filter, issuesByCase, reviewCases, sort]);
 
   useEffect(() => {
-    const allowed = new Set(cleanCases.map((item) => item.review_case_id));
+    const allowed = new Set(reviewCases.map((item) => item.review_case_id));
     setSelectedForBatch((current) => new Set([...current].filter((id) => allowed.has(id))));
-  }, [cleanCases]);
+  }, [reviewCases]);
 
   useEffect(() => {
     if (selectedForBatch.size === 0) setBatchConfirmed(false);
@@ -1352,6 +1481,19 @@ function ReviewWorkspace({
     setSelectedForBatch((current) => {
       const next = new Set(current);
       if (next.has(id)) next.delete(id); else next.add(id);
+      return next;
+    });
+  }
+
+  function toggleVisibleSelection() {
+    setSelectedForBatch((current) => {
+      const next = new Set(current);
+      const everyVisibleIsSelected = visibleCases.length > 0
+        && visibleCases.every((item) => next.has(item.review_case_id));
+      for (const item of visibleCases) {
+        if (everyVisibleIsSelected) next.delete(item.review_case_id);
+        else next.add(item.review_case_id);
+      }
       return next;
     });
   }
@@ -1382,6 +1524,34 @@ function ReviewWorkspace({
     await onAction(reviewCaseId, 'accept', reason);
   }
 
+  async function rejectSelected() {
+    const selected = reviewCases.filter((item) => selectedForBatch.has(item.review_case_id));
+    if (!batchReason.trim() || selected.length === 0) return;
+    setBatchBusy(true);
+    setBatchFeedback(null);
+    let rejected = 0;
+    let skipped = 0;
+    for (const item of selected) {
+      try {
+        await onAction(item.review_case_id, 'reject', batchReason.trim());
+        rejected += 1;
+      } catch {
+        skipped += 1;
+      }
+    }
+    setSelectedForBatch(new Set());
+    setBatchReason('');
+    setBatchConfirmed(false);
+    setBatchFeedback(skipped === 0
+      ? `Убрано из очереди: ${rejected}. История и исходные данные сохранены.`
+      : `Убрано: ${rejected}; не выполнено: ${skipped}. Обнови очередь перед повторной попыткой.`);
+    setBatchBusy(false);
+  }
+
+  const selectedCleanCount = cleanCases.filter((item) => selectedForBatch.has(item.review_case_id)).length;
+  const everyVisibleIsSelected = visibleCases.length > 0
+    && visibleCases.every((item) => selectedForBatch.has(item.review_case_id));
+
   return (
     <div className="grid gap-5 xl:grid-cols-[minmax(18rem,0.8fr)_minmax(0,1.45fr)]">
       <Panel title="Очередь кандидатов" description="Выбирай запись, сверяй поля с первоисточником и фиксируй решение.">
@@ -1397,33 +1567,48 @@ function ReviewWorkspace({
           ))}
         </div>
 
-        {cleanCases.length > 0 ? (
-          <div className="mt-4 rounded-lg border border-moss/25 bg-moss/10 p-3">
-            <p className="text-sm font-semibold text-ink">Безопасное массовое принятие</p>
-            <p className="mt-1 text-xs leading-5 text-graphite">Доступно только для открытых записей с единственной причиной «готово к проверке» и без проблем качества. Каждая запись всё равно проходит серверную проверку и получает отдельную запись аудита.</p>
+        <div className="mt-4 flex flex-wrap items-end justify-between gap-3">
+          <button type="button" className="button-secondary" disabled={visibleCases.length === 0 || batchBusy} onClick={toggleVisibleSelection}>
+            {everyVisibleIsSelected ? 'Снять выбор с видимых' : `Выбрать все видимые (${visibleCases.length})`}
+          </button>
+          <label className="field-label min-w-52 text-sm">Сортировка
+            <select className="mt-1 w-full rounded-lg border border-ink/20 bg-white px-3 py-2 text-sm text-ink" value={sort} onChange={(event) => setSort(event.target.value as ReviewSort)}>
+              <option value="newest">Сначала новые</option>
+              <option value="oldest">Сначала старые</option>
+              <option value="attention">Сначала требующие внимания</option>
+              <option value="title">По названию</option>
+            </select>
+          </label>
+        </div>
+
+        {reviewCases.length > 0 ? (
+          <div className="mt-4 rounded-lg border border-ink/15 bg-paper/70 p-3">
+            <p className="text-sm font-semibold text-ink">Массовые действия</p>
+            <p className="mt-1 text-xs leading-5 text-graphite">Принятие доступно только для чистых кандидатов. «Убрать из очереди» отклоняет выбранные кейсы с сохранением истории, исходных данных и аудита.</p>
             {selectedForBatch.size > 0 ? (
-              <div className="mt-3 space-y-2">
+              <div className="mt-3 space-y-3">
                 <label className="field-label text-sm">Общая причина
-                  <textarea className="min-h-20 w-full resize-y rounded-xl border border-ink/20 bg-white p-3 text-ink" value={batchReason} onChange={(event) => setBatchReason(event.target.value)} placeholder="Например: данные сверены с официальными страницами источников." />
+                  <textarea className="min-h-20 w-full resize-y rounded-xl border border-ink/20 bg-white p-3 text-ink" value={batchReason} onChange={(event) => setBatchReason(event.target.value)} placeholder="Например: карточки загружены повторно после исправления парсера." />
                 </label>
-                <label className="flex items-start gap-2 text-xs leading-5 text-graphite"><input type="checkbox" checked={batchConfirmed} onChange={(event) => setBatchConfirmed(event.target.checked)} />Я проверил выбранные записи и подтверждаю их публикацию.</label>
-                <button type="button" disabled={batchBusy || !batchReason.trim() || !batchConfirmed} className="button-primary" onClick={() => void acceptSelected()}>{batchBusy ? 'Сохраняем решения…' : `Принять выбранные (${selectedForBatch.size})`}</button>
+                <label className="flex items-start gap-2 text-xs leading-5 text-graphite"><input type="checkbox" checked={batchConfirmed} onChange={(event) => setBatchConfirmed(event.target.checked)} />Я проверил выбранные записи и подтверждаю это массовое действие.</label>
+                <div className="flex flex-wrap gap-2">
+                  {selectedCleanCount > 0 ? <button type="button" disabled={batchBusy || !batchReason.trim() || !batchConfirmed} className="button-primary" onClick={() => void acceptSelected()}>{batchBusy ? 'Сохраняем решения…' : `Принять чистые (${selectedCleanCount})`}</button> : null}
+                  <button type="button" disabled={batchBusy || !batchReason.trim() || !batchConfirmed} className="button-secondary border-rose-500/35 text-rose-700 hover:bg-rose-50" onClick={() => void rejectSelected()}>{batchBusy ? 'Сохраняем решения…' : `Убрать из очереди (${selectedForBatch.size})`}</button>
+                </div>
               </div>
-            ) : <p className="mt-2 text-xs text-graphite">Отметь подходящие записи в списке ниже.</p>}
+            ) : <p className="mt-2 text-xs text-graphite">Отметь одну или несколько записей в списке ниже.</p>}
             {batchFeedback ? <p role="status" className="mt-3 text-sm text-graphite">{batchFeedback}</p> : null}
           </div>
         ) : null}
 
         <ul className="mt-4 max-h-[62vh] space-y-2 overflow-y-auto pr-1" aria-label="Кандидаты для проверки">
           {visibleCases.map((item) => {
-            const itemIssues = issuesByCase.get(item.review_case_id) ?? [];
-            const clean = isCleanReviewCase(item, itemIssues);
             const selected = item.review_case_id === selectedCaseId;
             return (
               <li key={item.review_case_id}>
                 <div className={`rounded-lg border p-3 ${selected ? 'border-cobalt bg-cobalt/10' : 'border-ink/10 bg-paper/45'}`}>
                   <div className="flex items-start gap-2">
-                    {clean ? <input aria-label={`Выбрать ${item.title ?? 'кандидат'} для массового принятия`} type="checkbox" checked={selectedForBatch.has(item.review_case_id)} onChange={() => toggleBatchSelection(item.review_case_id)} /> : null}
+                    <input aria-label={`Выбрать ${item.title ?? 'кандидат'} для массового действия`} type="checkbox" checked={selectedForBatch.has(item.review_case_id)} onChange={() => toggleBatchSelection(item.review_case_id)} />
                     <button type="button" className="min-w-0 flex-1 text-left" onClick={() => onSelect(item.review_case_id)}>
                       <p className="break-words text-sm font-semibold text-ink">{item.title ?? 'Кандидат без названия'}</p>
                       <p className="mt-1 text-xs text-graphite">{formatDateTime(item.opened_at)}</p>
@@ -1442,7 +1627,7 @@ function ReviewWorkspace({
       </Panel>
 
       <div>
-        {detailLoading ? <Panel title="Загружаем детали"><p role="status" className="text-sm text-graphite">Получаем безопасную операторскую сводку…</p></Panel> : <ReviewDetail detail={detail} busy={actionBusy} onAction={(action, reason, matchId) => detail ? onAction(detail.review_case_id, action, reason, matchId) : Promise.resolve()} onSaveRevision={onSaveRevision} />}
+        {detailLoading ? <Panel title="Загружаем детали"><p role="status" className="text-sm text-graphite">Получаем безопасную операторскую сводку…</p></Panel> : <ReviewDetail detail={detail} busy={actionBusy} onAction={(action, reason, matchId) => detail ? onAction(detail.review_case_id, action, reason, matchId) : Promise.resolve()} onSaveRevision={onSaveRevision} onLoadMatchTarget={onLoadMatchTarget} onOpenReviewCase={onSelect} />}
       </div>
     </div>
   );
@@ -1809,7 +1994,7 @@ function OperatorWorkspace({ client, onSignOut }: { client: OperatorApiClient; o
 
         <section className="mt-5">
           {loading || !data ? <Panel title="Загружаем операционные данные"><p role="status" className="text-sm text-graphite">Получаем очередь, журнал запусков и конфигурацию источников…</p></Panel> : null}
-          {!loading && data && activeView === 'review' ? <ReviewWorkspace reviewCases={data.reviewCases} issues={data.qualityIssues} selectedCaseId={selectedCaseId} onSelect={setSelectedCaseId} detail={detail} detailLoading={detailLoading} actionBusy={actionBusy} onAction={applyReviewAction} onSaveRevision={saveReviewRevision} /> : null}
+          {!loading && data && activeView === 'review' ? <ReviewWorkspace reviewCases={data.reviewCases} issues={data.qualityIssues} selectedCaseId={selectedCaseId} onSelect={setSelectedCaseId} detail={detail} detailLoading={detailLoading} actionBusy={actionBusy} onAction={applyReviewAction} onSaveRevision={saveReviewRevision} onLoadMatchTarget={(matchId) => client.getDeduplicationMatchTarget(matchId)} /> : null}
           {!loading && data && activeView === 'quality' ? <QualityWorkspace issues={data.qualityIssues} onOpenReviewCase={(id) => { setActiveView('review'); setSelectedCaseId(id); }} /> : null}
           {!loading && data && activeView === 'runs' ? <RunsWorkspace executionRuns={data.executionRuns} ingestionRuns={data.ingestionRuns} sourceDefinitions={data.sourceDefinitions} /> : null}
           {!loading && data && activeView === 'discovery' ? <DiscoveryWorkspace cases={data.discoveryCases} sourceDefinitions={data.sourceDefinitions} busy={actionBusy} onAction={applyDiscoveryAction} /> : null}

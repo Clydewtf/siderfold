@@ -20,7 +20,7 @@ export function ProgramCard({ program, source, isFavorite, showDataQuality, onTo
   const remainingRegions = program.regions.length - shownRegions.length;
 
   return (
-    <article aria-label={program.title} data-motion-card data-density-card className="group min-w-0 overflow-hidden rounded-lg border border-ink/10 bg-white/80 p-5 shadow-sm transition hover:-translate-y-1">
+    <article aria-label={program.title} data-motion-card data-density-card className="group flex h-full min-w-0 flex-col overflow-hidden rounded-lg border border-ink/10 bg-white/80 p-5 shadow-sm transition hover:-translate-y-1">
       <div className="flex flex-wrap items-center gap-2">
         <Tag>{program.status}</Tag>
         <Tag>{formatDeadline(program.deadline)}</Tag>
@@ -29,13 +29,13 @@ export function ProgramCard({ program, source, isFavorite, showDataQuality, onTo
       </div>
       <div className="mt-5 flex items-start justify-between gap-3">
         <div className="min-w-0">
-          <h2 className="break-words text-xl font-semibold">{program.title}</h2>
-          <p className="mt-1 text-sm font-medium text-cobalt">{source?.name ?? 'Источник не найден'}</p>
+          <h2 className="line-clamp-2 break-words text-xl font-semibold leading-tight">{program.title}</h2>
+          <p className="mt-1 line-clamp-1 text-sm font-medium text-cobalt">{source?.name ?? 'Источник не найден'}</p>
         </div>
         <FavoriteToggle itemName={program.title} isFavorite={isFavorite} onToggle={onToggleFavorite} />
       </div>
-      <p className="mt-3 line-clamp-3 text-sm leading-6 text-graphite">{program.description}</p>
-      <div className="mt-4 flex flex-wrap gap-2">
+      <p className="mt-3 min-h-[4.5rem] line-clamp-3 whitespace-pre-line text-sm leading-6 text-graphite">{program.description}</p>
+      <div className="mt-4 min-h-[2rem] flex flex-wrap content-start gap-2">
         {shownTopics.map((topic) => <Tag key={topic}>{topic}</Tag>)}
         {remainingTopics > 0 ? <Tag>+{remainingTopics}</Tag> : null}
       </div>
@@ -46,7 +46,7 @@ export function ProgramCard({ program, source, isFavorite, showDataQuality, onTo
         <div><dt className="text-xs font-medium uppercase tracking-[0.08em] text-graphite/65">Актуальность</dt><dd className="mt-1 font-semibold text-ink">Обновлено {formatDeadline(program.updatedAt)}</dd></div>
       </dl>
       {showDataQuality ? <p className="mt-4 text-xs text-graphite/75">Полнота данных: {program.dataQuality.score}%. Не заполнено полей: {program.dataQuality.missingFields.length}.</p> : null}
-      <div className="mt-5 flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-center">
+      <div className="mt-auto flex flex-col gap-3 pt-5 sm:flex-row sm:flex-wrap sm:items-center">
         <button type="button" onClick={onOpen} aria-label={`Подробнее о программе ${program.title}`} className="inline-flex min-h-11 items-center justify-center rounded-lg bg-ink px-4 py-2 text-sm font-semibold text-white transition hover:bg-ink/85 focus:outline-none focus:ring-2 focus:ring-cobalt focus:ring-offset-2">
           Подробнее
         </button>

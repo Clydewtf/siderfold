@@ -35,6 +35,7 @@ export type PublicTimelineEvent = {
   label: string;
   start: string | null;
   end: string | null;
+  dateLabel?: string | null;
 };
 
 export type PublicProgramResource = {
@@ -76,6 +77,8 @@ export type PublicProgram = {
   sources: readonly PublicSourceLink[];
   regions: readonly string[];
   themes: readonly string[];
+  /** Whether list response included taxonomy (old API versions may omit it). */
+  taxonomyAvailable?: boolean;
   summary: string | null;
   eligibilitySummary: string | null;
   eligibilityGeographyNote: string | null;
@@ -191,7 +194,8 @@ function mapTimelineEvent(event: TimelineEventDto): PublicTimelineEvent {
     kind: event.kind,
     label: event.label,
     start: event.start_on,
-    end: event.end_on
+    end: event.end_on,
+    dateLabel: event.date_label ?? null
   };
 }
 
@@ -224,8 +228,9 @@ function mapProgramBase(program: ProgramListItemDto): PublicProgram {
     funding: mapFunding(program.funding),
     primarySource: mapSourceLink(program.primary_source),
     sources: [mapSourceLink(program.primary_source)],
-    regions: [],
-    themes: [],
+    regions: (program.geographies ?? []).map((item) => item.name),
+    themes: (program.themes ?? []).map((item) => item.name),
+    taxonomyAvailable: program.geographies !== undefined && program.themes !== undefined,
     summary: program.summary ?? null,
     eligibilitySummary: null,
     eligibilityGeographyNote: null,

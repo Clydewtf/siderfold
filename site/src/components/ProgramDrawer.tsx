@@ -150,7 +150,7 @@ export function ProgramDrawer({
           <Tag>{formatCoverageLevel(program.coverageLevel)}</Tag>
         </div>
 
-        <p className="mt-6 text-base leading-7 text-graphite">{program.description}</p>
+        <p className="mt-6 whitespace-pre-line text-base leading-7 text-graphite">{program.description}</p>
 
         <section aria-labelledby="program-overview" className="mt-8 grid gap-4 sm:grid-cols-2">
           <h3 id="program-overview" className="sr-only">Основные параметры</h3>

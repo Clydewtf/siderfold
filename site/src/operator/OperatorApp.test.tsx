@@ -106,6 +106,7 @@ function createClient(): OperatorApiClient {
   return {
     listReviewCases: vi.fn().mockResolvedValue([reviewCase]),
     getReviewCase: vi.fn().mockResolvedValue(reviewDetail),
+    getDeduplicationMatchTarget: vi.fn(),
     listQualityIssues: vi.fn().mockResolvedValue([]),
     listDiscoveryCases: vi.fn().mockResolvedValue([]),
     listSourceDefinitions: vi.fn().mockResolvedValue([]),
@@ -137,6 +138,58 @@ function createClient(): OperatorApiClient {
 }
 
 describe('operator panel', () => {
+  it('reveals a deduplication target and opens its review card from the match', async () => {
+    const user = userEvent.setup();
+    const targetCase: ReviewQueueItem = {
+      ...reviewCase,
+      review_case_id: 'case-target',
+      staged_record_id: 'staged-target',
+      title: 'Новые искатели 2025'
+    };
+    const detailWithMatch: ReviewCaseDetail = {
+      ...reviewDetail,
+      opened_snapshot: {
+        ...reviewDetail.opened_snapshot,
+        matches: [{
+          id: 'match-1',
+          target_staged_record_id: 'staged-target',
+          target_program_id: null,
+          evidence: {
+            match_level: 'normalized_fields',
+            target: { title: 'новые искатели 2025' }
+          }
+        }]
+      }
+    };
+    const client = createClient();
+    client.listReviewCases = vi.fn().mockResolvedValue([reviewCase, targetCase]);
+    client.getReviewCase = vi.fn().mockImplementation((reviewCaseId: string) => Promise.resolve(
+      reviewCaseId === 'case-target' ? { ...reviewDetail, ...targetCase } : detailWithMatch
+    ));
+    client.getDeduplicationMatchTarget = vi.fn().mockResolvedValue({
+      kind: 'staged_record',
+      id: 'staged-target',
+      title: 'Новые искатели 2025',
+      source_name: 'Фонд Тимченко',
+      source_url: 'https://fondtimchenko.ru/contests/archive/novye-iskateli-2025/',
+      deadline_on: '2025-10-19',
+      staged_state: 'review',
+      review_case_id: 'case-target',
+      review_case_status: 'open',
+      publication_status: null
+    });
+
+    render(<OperatorApp clientFactory={() => client} />);
+
+    await user.type(screen.getByLabelText('Токен внутреннего доступа'), 'local-token');
+    await user.click(screen.getByRole('button', { name: 'Открыть операторскую панель' }));
+    await user.click(await screen.findByRole('button', { name: 'Показать карточку совпадения' }));
+
+    expect((await screen.findAllByText('Новые искатели 2025')).length).toBeGreaterThan(0);
+    await user.click(screen.getByRole('button', { name: 'Открыть карточку кандидата' }));
+    await waitFor(() => expect(client.getReviewCase).toHaveBeenCalledWith('case-target'));
+  });
+
   it('keeps the token in the current UI session and submits a reviewed decision through the internal client', async () => {
     const user = userEvent.setup();
     const client = createClient();
@@ -172,13 +225,13 @@ describe('operator panel', () => {
 
     await user.type(screen.getByLabelText('Токен внутреннего доступа'), 'local-token');
     await user.click(screen.getByRole('button', { name: 'Открыть операторскую панель' }));
-    await screen.findByLabelText('Выбрать Проверяемая программа для массового принятия');
+    await screen.findByLabelText('Выбрать Проверяемая программа для массового действия');
 
-    await user.click(screen.getByLabelText('Выбрать Проверяемая программа для массового принятия'));
+    await user.click(screen.getByLabelText('Выбрать Проверяемая программа для массового действия'));
     await user.type(screen.getByLabelText('Общая причина'), 'Проверено для массовой публикации.');
-    const submit = screen.getByRole('button', { name: 'Принять выбранные (1)' });
+    const submit = screen.getByRole('button', { name: 'Принять чистые (1)' });
     expect(submit).toBeDisabled();
-    await user.click(screen.getByLabelText('Я проверил выбранные записи и подтверждаю их публикацию.'));
+    await user.click(screen.getByLabelText('Я проверил выбранные записи и подтверждаю это массовое действие.'));
     expect(submit).toBeEnabled();
     await user.click(submit);
 
@@ -209,7 +262,10 @@ describe('operator panel', () => {
 
     await user.click(screen.getByRole('tab', { name: 'Правки оператора' }));
     await user.clear(screen.getByLabelText('Краткое описание'));
-    await user.type(screen.getByLabelText('Краткое описание'), 'Описание после ручной сверки.');
+    await user.type(
+      screen.getByLabelText('Краткое описание'),
+      'Первый абзац после ручной сверки.\n\nВторой абзац после ручной сверки.'
+    );
     await user.type(screen.getByLabelText('Причина правки'), 'Данные сверены с официальной страницей.');
     await user.click(screen.getByRole('button', { name: 'Сохранить версию правок' }));
 
@@ -218,7 +274,7 @@ describe('operator panel', () => {
         'case-1',
         expect.objectContaining({
           reason: 'Данные сверены с официальной страницей.',
-          patch: { summary: 'Описание после ручной сверки.' },
+          patch: { summary: 'Первый абзац после ручной сверки.\n\nВторой абзац после ручной сверки.' },
           resolve_issue_ids: []
         }),
         expect.stringMatching(/^operator-ui:save-revision:/)

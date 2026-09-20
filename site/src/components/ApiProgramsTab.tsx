@@ -1,15 +1,18 @@
 import { Search } from 'lucide-react';
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { ScrollTrigger } from 'gsap/ScrollTrigger';
-import type { ProgramQuery } from '../data-access/catalogApi';
+import type { ProgramQuery, SourceStatus } from '../data-access/catalogApi';
 import type { PublicCatalogFilters, PublicProgram } from '../data-access/catalogMapper';
 import type { CatalogPage } from '../data-access/usePublicCatalog';
+import { sourceStatuses } from '../data-access/catalogApi';
+import { groupGeographies } from '../lib/geography';
 import { ApiProgramCard } from './ApiProgramCard';
 import { EmptyState, PageIntro } from './ui';
 
 type ApiFilterState = {
   query: string;
   sourceId: string;
+  sourceStatus: string;
   region: string;
   theme: string;
   fundingKind: string;
@@ -23,6 +26,7 @@ type ApiFilterState = {
 const defaultFilters: ApiFilterState = {
   query: '',
   sourceId: '',
+  sourceStatus: '',
   region: '',
   theme: '',
   fundingKind: '',
@@ -50,6 +54,7 @@ function toQuery(filters: ApiFilterState): ProgramQuery {
     order: filters.sort === 'relevance' ? 'desc' : filters.order,
     query: filters.query || undefined,
     sourceId: filters.sourceId || undefined,
+    sourceStatus: filters.sourceStatus as ProgramQuery['sourceStatus'] || undefined,
     theme: filters.theme || undefined,
     geography: filters.region || undefined,
     fundingKind: filters.fundingKind as ProgramQuery['fundingKind'] || undefined,
@@ -60,7 +65,7 @@ function toQuery(filters: ApiFilterState): ProgramQuery {
 
 function hasActiveFilter(filters: ApiFilterState): boolean {
   return Boolean(
-    filters.query || filters.sourceId || filters.region || filters.theme || filters.fundingKind ||
+    filters.query || filters.sourceId || filters.sourceStatus || filters.region || filters.theme || filters.fundingKind ||
     filters.deadlineFrom || filters.deadlineTo
   );
 }
@@ -91,6 +96,16 @@ export function ApiProgramsTab({
   onRetry: () => void;
 }) {
   const [localFilters, setLocalFilters] = useState<ApiFilterState>(defaultFilters);
+  const [filtersOpen, setFiltersOpen] = useState(true);
+
+  useEffect(() => {
+    if (typeof window.matchMedia !== 'function') return;
+    const mediaQuery = window.matchMedia('(min-width: 1024px)');
+    const updateOpenState = () => setFiltersOpen(mediaQuery.matches);
+    updateOpenState();
+    mediaQuery.addEventListener?.('change', updateOpenState) ?? mediaQuery.addListener?.(updateOpenState);
+    return () => mediaQuery.removeEventListener?.('change', updateOpenState) ?? mediaQuery.removeListener?.(updateOpenState);
+  }, []);
 
   useEffect(() => {
     const timer = window.setTimeout(() => onQueryChange(toQuery(localFilters)), 250);
@@ -131,12 +146,40 @@ export function ApiProgramsTab({
   const reset = () => setLocalFilters(defaultFilters);
   const sourceOptions = filters?.sources ?? [];
   const regionOptions = filters?.regions ?? [];
+  const geographyGroups = useMemo(() => groupGeographies(regionOptions), [regionOptions]);
   const themeOptions = filters?.themes ?? [];
   const fundingOptions = filters?.fundingKinds ?? [];
   const items = page?.items ?? [];
   const emptyDescription = hasActiveFilter(localFilters)
     ? 'Измените параметры поиска или сбросьте фильтры.'
     : 'В базе пока нет опубликованных программ.';
+  const activeFilterCount = [
+    localFilters.query,
+    localFilters.sourceId,
+    localFilters.sourceStatus,
+    localFilters.region,
+    localFilters.theme,
+    localFilters.fundingKind,
+    localFilters.deadlineFrom,
+    localFilters.deadlineTo
+  ].filter(Boolean).length;
+  const sourceStatusLabels: Record<string, string> = {
+    open: 'Приём открыт',
+    upcoming: 'Скоро начнётся',
+    closed: 'Приём завершён',
+    completed: 'Конкурс завершён',
+    unknown: 'Статус не указан'
+  };
+  const sourceStatusOptions: readonly SourceStatus[] = ['open', 'upcoming', 'closed', 'completed', 'unknown'];
+  const activeFilterChips: Array<{ key: string; label: string; clear: () => void }> = [];
+  if (localFilters.query) activeFilterChips.push({ key: 'query', label: `Поиск: ${localFilters.query}`, clear: () => update({ query: '' }) });
+  if (localFilters.sourceId) activeFilterChips.push({ key: 'source', label: `Источник: ${sourceOptions.find((item) => item.id === localFilters.sourceId)?.name ?? 'выбран'}`, clear: () => update({ sourceId: '' }) });
+  if (localFilters.sourceStatus) activeFilterChips.push({ key: 'status', label: `Статус: ${sourceStatusLabels[localFilters.sourceStatus] ?? localFilters.sourceStatus}`, clear: () => update({ sourceStatus: '' }) });
+  if (localFilters.region) activeFilterChips.push({ key: 'region', label: `География: ${regionOptions.find((item) => item.slug === localFilters.region)?.name ?? localFilters.region}`, clear: () => update({ region: '' }) });
+  if (localFilters.theme) activeFilterChips.push({ key: 'theme', label: `Тематика: ${themeOptions.find((item) => item.slug === localFilters.theme)?.name ?? localFilters.theme}`, clear: () => update({ theme: '' }) });
+  if (localFilters.fundingKind) activeFilterChips.push({ key: 'funding', label: `Финансирование: ${fundingLabels[localFilters.fundingKind] ?? localFilters.fundingKind}`, clear: () => update({ fundingKind: '' }) });
+  if (localFilters.deadlineFrom) activeFilterChips.push({ key: 'deadline-from', label: `Дедлайн от: ${localFilters.deadlineFrom}`, clear: () => update({ deadlineFrom: '' }) });
+  if (localFilters.deadlineTo) activeFilterChips.push({ key: 'deadline-to', label: `Дедлайн до: ${localFilters.deadlineTo}`, clear: () => update({ deadlineTo: '' }) });
 
   return (
     <div className="page-container" data-page="programs" data-data-mode="api">
@@ -166,8 +209,8 @@ export function ApiProgramsTab({
             ) : null}
           </span>
         </label>
-        <details open className="mt-3 rounded-lg border border-ink/10 bg-white/70 p-4 shadow-sm">
-          <summary className="cursor-pointer text-sm font-semibold text-ink">Фильтры</summary>
+        <details open={filtersOpen} onToggle={(event) => setFiltersOpen(event.currentTarget.open)} className="mt-3 rounded-lg border border-ink/10 bg-white/70 p-4 shadow-sm">
+          <summary className="cursor-pointer text-sm font-semibold text-ink">Фильтры{activeFilterCount > 0 ? ` · выбрано ${activeFilterCount}` : ''}</summary>
           <div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
             <label className="grid gap-1 text-sm font-medium text-graphite">
               Источник
@@ -177,10 +220,20 @@ export function ApiProgramsTab({
               </select>
             </label>
             <label className="grid gap-1 text-sm font-medium text-graphite">
+              Статус конкурса
+              <select value={localFilters.sourceStatus} onChange={(event) => update({ sourceStatus: event.target.value })} disabled={metadataLoading} className="rounded-lg border border-ink/10 bg-white px-3 py-2 text-ink">
+                <option value="">Все статусы</option>
+                {sourceStatusOptions.filter((status) => sourceStatuses.includes(status)).map((status) => <option key={status} value={status}>{sourceStatusLabels[status]}</option>)}
+              </select>
+            </label>
+            <label className="grid gap-1 text-sm font-medium text-graphite">
               География
               <select value={localFilters.region} onChange={(event) => update({ region: event.target.value })} disabled={metadataLoading} className="rounded-lg border border-ink/10 bg-white px-3 py-2 text-ink">
                 <option value="">Все регионы</option>
-                {regionOptions.map((region) => <option key={region.slug} value={region.slug}>{region.name}</option>)}
+                {geographyGroups.country.length > 0 ? <optgroup label="Россия"><option value={geographyGroups.country[0]?.slug}>Россия</option></optgroup> : null}
+                {geographyGroups.districts.length > 0 ? <optgroup label="Федеральные округа">{geographyGroups.districts.map((region) => <option key={region.slug} value={region.slug}>{region.name}</option>)}</optgroup> : null}
+                {geographyGroups.subjects.length > 0 ? <optgroup label="Субъекты РФ">{geographyGroups.subjects.map((region) => <option key={region.slug} value={region.slug}>{region.name}</option>)}</optgroup> : null}
+                {geographyGroups.other.length > 0 ? <optgroup label="Другие территории">{geographyGroups.other.map((region) => <option key={region.slug} value={region.slug}>{region.name}</option>)}</optgroup> : null}
               </select>
             </label>
             <label className="grid gap-1 text-sm font-medium text-graphite">
@@ -224,8 +277,20 @@ export function ApiProgramsTab({
             </label>
           </div>
           {metadataError ? <p role="status" className="mt-3 text-sm text-graphite">{metadataError}</p> : null}
-          {hasActiveFilter(localFilters) ? <button type="button" onClick={reset} className="mt-4 text-sm font-semibold text-cobalt">Сбросить фильтры</button> : null}
+          <div className="mt-4 flex flex-wrap items-center gap-3">
+            {hasActiveFilter(localFilters) ? <button type="button" onClick={reset} className="button-secondary">Сбросить фильтры</button> : null}
+            {loading && page ? <span role="status" className="text-sm text-graphite">Обновляем результаты…</span> : null}
+          </div>
         </details>
+        {activeFilterChips.length > 0 ? (
+          <div role="group" aria-label="Активные фильтры" className="mt-4 flex flex-wrap items-center gap-2">
+            {activeFilterChips.map((chip) => (
+              <button key={chip.key} type="button" onClick={chip.clear} className="rounded-full border border-cobalt/25 bg-cobalt/10 px-3 py-1 text-xs font-semibold text-cobalt transition hover:bg-cobalt/20" aria-label={`Убрать фильтр ${chip.label}`}>
+                {chip.label} ×
+              </button>
+            ))}
+          </div>
+        ) : null}
       </section>
 
       {loading && !page ? <p role="status" className="mt-8 text-sm text-graphite">Загружаем каталог…</p> : null}
@@ -241,7 +306,7 @@ export function ApiProgramsTab({
       ) : null}
       {!error && items.length > 0 ? (
         <>
-          <section data-density-grid className="mt-8 grid min-w-0 gap-4 lg:grid-cols-[repeat(2,minmax(0,1fr))]">
+          <section data-density-grid aria-busy={loading} className="mt-8 grid min-w-0 items-stretch gap-4 lg:grid-cols-[repeat(2,minmax(0,1fr))]">
             {items.map((program) => (
               <ApiProgramCard
                 key={program.id}
@@ -254,7 +319,7 @@ export function ApiProgramsTab({
           </section>
           <nav aria-label="Пагинация каталога" className="mt-8 flex items-center justify-center gap-3">
             <button type="button" disabled={localFilters.page <= 1 || loading} onClick={() => update({ page: localFilters.page - 1 })} className="button-secondary disabled:cursor-not-allowed disabled:opacity-50">Назад</button>
-            <span className="text-sm text-graphite">Страница {localFilters.page} из {totalPages}</span>
+            <span className="text-center text-sm text-graphite">Страница {localFilters.page} из {totalPages} · показано {items.length} из {page?.total ?? 0}</span>
             <button type="button" disabled={localFilters.page >= totalPages || loading} onClick={() => update({ page: localFilters.page + 1 })} className="button-secondary disabled:cursor-not-allowed disabled:opacity-50">Вперёд</button>
           </nav>
         </>

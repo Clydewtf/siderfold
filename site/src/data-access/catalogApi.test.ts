@@ -32,7 +32,9 @@ const listItem: ProgramListItemDto = {
     min_amount: null,
     max_amount: null
   },
-  primary_source: sourceLink
+  primary_source: sourceLink,
+  geographies: [{ slug: 'far-eastern', name: 'Дальневосточный' }],
+  themes: [{ slug: 'science', name: 'Наука' }]
 };
 
 const detail: ProgramDetailDto = {
@@ -66,6 +68,7 @@ describe('catalog API client', () => {
       order: 'asc',
       query: '  грант  ',
       sourceId: 'source-1',
+      sourceStatus: 'open',
       theme: 'science',
       geography: 'russia',
       fundingKind: 'unknown',
@@ -80,6 +83,8 @@ describe('catalog API client', () => {
     expect(requestUrl.searchParams.get('page_size')).toBe('20');
     expect(requestUrl.searchParams.get('q')).toBe('грант');
     expect(requestUrl.searchParams.get('source_id')).toBe('source-1');
+    expect(requestUrl.searchParams.get('source_status')).toBe('open');
+    expect(result.items[0]?.geographies?.[0]?.name).toBe('Дальневосточный');
     expect(requestUrl.searchParams.get('funding_kind')).toBe('unknown');
     expect(requestUrl.searchParams.get('deadline_from')).toBe('2025-01-01');
     expect(requestUrl.searchParams.get('deadline_to')).toBe('2025-12-31');

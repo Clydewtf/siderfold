@@ -27,6 +27,35 @@ describe('operator API client', () => {
     );
   });
 
+  it('loads a deduplication target through the protected internal API', async () => {
+    const fetcher = vi.fn(async () => response({
+      kind: 'staged_record',
+      id: 'staged-1',
+      title: 'Похожий конкурс',
+      source_name: 'Тестовый источник',
+      source_url: 'https://source.example.test/programs/similar',
+      deadline_on: '2026-11-30',
+      staged_state: 'review',
+      review_case_id: 'case-2',
+      review_case_status: 'open',
+      publication_status: null
+    }));
+    const client = createOperatorApiClient({
+      token: 'local-operator-token',
+      baseUrl: 'https://localhost.test/api/internal/v1',
+      fetcher
+    });
+
+    await client.getDeduplicationMatchTarget('match-1');
+
+    expect(fetcher).toHaveBeenCalledWith(
+      'https://localhost.test/api/internal/v1/review/matches/match-1/target',
+      expect.objectContaining({
+        headers: expect.objectContaining({ Authorization: 'Bearer local-operator-token' })
+      })
+    );
+  });
+
   it('adds a fresh idempotency header to internal write requests', async () => {
     const fetcher = vi.fn(async () => response({
       operation_id: 'operation-1',

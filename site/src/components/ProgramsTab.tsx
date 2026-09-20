@@ -128,7 +128,7 @@ export function ProgramsTab({
         <ProgramFilters filters={filters} options={options} isDesktopOpen={isDesktopFiltersOpen} onChange={updateFilters} onReset={resetFilters} />
       </section>
 
-      <section data-density-grid className="mt-8 grid min-w-0 gap-4 lg:grid-cols-[repeat(2,minmax(0,1fr))]">
+      <section data-density-grid className="mt-8 grid min-w-0 items-stretch gap-4 lg:grid-cols-[repeat(2,minmax(0,1fr))]">
         {visible.map((program) => (
           <ProgramCard
             key={program.id}

@@ -29,6 +29,7 @@ export type ProgramQuery = {
   order?: SortOrder;
   query?: string;
   sourceId?: string;
+  sourceStatus?: SourceStatus;
   theme?: string;
   geography?: string;
   fundingKind?: FundingKind;
@@ -69,6 +70,7 @@ export type TimelineEventDto = {
   label: string;
   start_on: string | null;
   end_on: string | null;
+  date_label?: string | null;
 };
 
 export type ProgramResourceDto = {
@@ -108,6 +110,8 @@ export type ProgramListItemDto = {
   deadline_on: string | null;
   funding: FundingDto | null;
   primary_source: SourceLinkDto;
+  geographies?: TaxonomyDto[];
+  themes?: TaxonomyDto[];
 };
 
 export type ProgramDetailDto = ProgramListItemDto & {
@@ -263,7 +267,8 @@ function parseTimelineEvent(value: unknown, prefix: string): TimelineEventDto {
     kind: enumValue(value.kind, timelineEventKinds, `${prefix}.kind`),
     label: requiredString(value.label, `${prefix}.label`),
     start_on: nullableString(value.start_on, `${prefix}.start_on`),
-    end_on: nullableString(value.end_on, `${prefix}.end_on`)
+    end_on: nullableString(value.end_on, `${prefix}.end_on`),
+    date_label: optionalNullableString(value.date_label, `${prefix}.date_label`)
   };
 }
 
@@ -322,6 +327,14 @@ function parseTaxonomy(value: unknown, prefix: string): TaxonomyDto {
   };
 }
 
+function parseTaxonomyList(value: unknown, prefix: string): TaxonomyDto[] | undefined {
+  if (value === undefined) return undefined;
+  if (!Array.isArray(value)) {
+    throw new CatalogApiError('invalid_response', `Invalid public API collection: ${prefix}`);
+  }
+  return value.map((item, index) => parseTaxonomy(item, `${prefix}[${index}]`));
+}
+
 function parseProgram(value: unknown, prefix: string): ProgramListItemDto {
   if (!isRecord(value)) {
     throw new CatalogApiError('invalid_response', `Invalid public API object: ${prefix}`);
@@ -344,7 +357,9 @@ function parseProgram(value: unknown, prefix: string): ProgramListItemDto {
       : enumValue(value.source_status, sourceStatuses, `${prefix}.source_status`),
     deadline_on: nullableString(value.deadline_on, `${prefix}.deadline_on`),
     funding: parseFunding(value.funding),
-    primary_source: parseSourceLink(value.primary_source, `${prefix}.primary_source`)
+    primary_source: parseSourceLink(value.primary_source, `${prefix}.primary_source`),
+    geographies: parseTaxonomyList(value.geographies, `${prefix}.geographies`),
+    themes: parseTaxonomyList(value.themes, `${prefix}.themes`)
   };
 }
 
@@ -438,6 +453,7 @@ function buildProgramParams(query: ProgramQuery): URLSearchParams {
   queryValue(params, 'order', query.order);
   queryValue(params, 'q', query.query?.trim());
   queryValue(params, 'source_id', query.sourceId);
+  queryValue(params, 'source_status', query.sourceStatus);
   queryValue(params, 'theme', query.theme);
   queryValue(params, 'geography', query.geography);
   queryValue(params, 'funding_kind', query.fundingKind);

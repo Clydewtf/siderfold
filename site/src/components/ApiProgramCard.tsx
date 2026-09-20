@@ -13,12 +13,14 @@ export type ApiProgramCardProps = {
 };
 
 export function ApiProgramCard({ program, isFavorite, onToggleFavorite, onOpen }: ApiProgramCardProps) {
+  const taxonomyFallback = program.taxonomyAvailable === false ? 'Откройте карточку' : 'Не указаны';
+
   return (
     <article
       aria-label={program.title}
       data-motion-card
       data-density-card
-      className="group min-w-0 overflow-hidden rounded-lg border border-ink/10 bg-white/80 p-5 shadow-sm transition hover:-translate-y-1"
+      className="group flex h-full min-w-0 flex-col overflow-hidden rounded-lg border border-ink/10 bg-white/80 p-5 shadow-sm transition hover:-translate-y-1"
     >
       <div className="flex flex-wrap items-center gap-2">
         <ApplicationStatusTag program={program} />
@@ -27,33 +29,33 @@ export function ApiProgramCard({ program, isFavorite, onToggleFavorite, onOpen }
       </div>
       <div className="mt-5 flex items-start justify-between gap-3">
         <div className="min-w-0">
-          <h2 className="break-words text-xl font-semibold">{program.title}</h2>
-          <p className="mt-1 text-sm font-medium text-cobalt">{program.primarySource.source.name}</p>
+          <h2 className="line-clamp-2 break-words text-xl font-semibold leading-tight">{program.title}</h2>
+          <p className="mt-1 line-clamp-1 text-sm font-medium text-cobalt">{program.primarySource.source.name}</p>
         </div>
         <FavoriteToggle itemName={program.title} isFavorite={isFavorite} onToggle={onToggleFavorite} />
       </div>
-      <p className="mt-3 text-sm leading-6 text-graphite">
+      <p title={program.summary ?? undefined} className="mt-3 min-h-[6rem] line-clamp-4 whitespace-pre-line text-sm leading-6 text-graphite">
         {program.summary ?? 'Краткое описание не извлечено; подробные условия доступны на первоисточнике.'}
       </p>
       <dl className="mt-5 grid gap-3 text-sm text-graphite sm:grid-cols-2">
-        <div className="sm:col-span-2">
-          <dt className="text-xs font-medium uppercase tracking-[0.08em] text-graphite/65">Параметры</dt>
-          <dd className="mt-1 font-semibold text-ink">
-            {program.regions.length > 0 || program.themes.length > 0
-              ? [...program.regions, ...program.themes].join(', ')
-              : 'Подробные условия — в карточке и на первоисточнике'}
-          </dd>
+        <div className="min-w-0">
+          <dt className="text-xs font-medium uppercase tracking-[0.08em] text-graphite/65">Регионы</dt>
+          <dd className="mt-1 min-h-[3rem] line-clamp-2 font-semibold text-ink">{program.regions.length > 0 ? program.regions.join(', ') : taxonomyFallback}</dd>
         </div>
-        <div>
+        <div className="min-w-0">
+          <dt className="text-xs font-medium uppercase tracking-[0.08em] text-graphite/65">Тематики</dt>
+          <dd className="mt-1 min-h-[3rem] line-clamp-2 font-semibold text-ink">{program.themes.length > 0 ? program.themes.join(', ') : taxonomyFallback}</dd>
+        </div>
+        <div className="min-w-0">
           <dt className="text-xs font-medium uppercase tracking-[0.08em] text-graphite/65">Дата на источнике</dt>
           <dd className="mt-1 font-semibold text-ink">{formatOptionalDate(program.sourcePublishedOn)}</dd>
         </div>
-        <div>
+        <div className="min-w-0">
           <dt className="text-xs font-medium uppercase tracking-[0.08em] text-graphite/65">Добавлено в Siderfold</dt>
           <dd className="mt-1 font-semibold text-ink">{formatOptionalDate(program.publishedAt.slice(0, 10))}</dd>
         </div>
       </dl>
-      <div className="mt-5 flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-center">
+      <div className="mt-auto flex flex-col gap-3 pt-5 sm:flex-row sm:flex-wrap sm:items-center">
         <button
           type="button"
           onClick={onOpen}

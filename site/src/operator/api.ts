@@ -120,6 +120,19 @@ export type ReviewCaseDetail = ReviewQueueItem & {
   public_preview: ReviewPublicPreview;
 };
 
+export type DeduplicationMatchTarget = {
+  kind: 'staged_record' | 'program';
+  id: string;
+  title: string;
+  source_name: string;
+  source_url: string | null;
+  deadline_on: string | null;
+  staged_state: string | null;
+  review_case_id: string | null;
+  review_case_status: ReviewCaseStatus | null;
+  publication_status: 'draft' | 'published' | 'archived' | null;
+};
+
 export type CanonicalReviewResult = {
   operation_id: string;
   replayed: boolean;
@@ -218,6 +231,7 @@ export type PublicationResult = {
 export type OperatorApiClient = {
   listReviewCases: () => Promise<ReviewQueueItem[]>;
   getReviewCase: (reviewCaseId: string) => Promise<ReviewCaseDetail>;
+  getDeduplicationMatchTarget: (deduplicationMatchId: string) => Promise<DeduplicationMatchTarget>;
   listQualityIssues: () => Promise<QualityIssue[]>;
   listDiscoveryCases: () => Promise<DiscoveryReviewItem[]>;
   listSourceDefinitions: () => Promise<SourceDefinition[]>;
@@ -369,6 +383,9 @@ export function createOperatorApiClient({
   return {
     listReviewCases: () => getList<ReviewQueueItem>('/review/cases?limit=1000'),
     getReviewCase: (reviewCaseId) => getRecord<ReviewCaseDetail>(`/review/cases/${encodeURIComponent(reviewCaseId)}`),
+    getDeduplicationMatchTarget: (deduplicationMatchId) => getRecord<DeduplicationMatchTarget>(
+      `/review/matches/${encodeURIComponent(deduplicationMatchId)}/target`
+    ),
     listQualityIssues: () => getList<QualityIssue>('/quality/issues?limit=1000'),
     listDiscoveryCases: () => getList<DiscoveryReviewItem>('/discovery-review/cases?limit=1000'),
     listSourceDefinitions: () => getList<SourceDefinition>('/source-definitions'),

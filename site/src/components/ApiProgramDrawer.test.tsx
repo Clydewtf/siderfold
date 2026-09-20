@@ -76,6 +76,42 @@ const program: PublicProgram = {
 };
 
 describe('API program drawer', () => {
+  it('keeps paragraph breaks and displays the publisher date label for a milestone', () => {
+    const detailedProgram: PublicProgram = {
+      ...program,
+      summary: 'Первый абзац описания.\n\nВторой абзац описания.',
+      timeline: [
+        {
+          kind: 'other',
+          label: 'Вебинары для заявителей',
+          start: null,
+          end: null,
+          dateLabel: 'Сентябрь 2026'
+        }
+      ]
+    };
+
+    render(
+      <ApiProgramDrawer
+        program={detailedProgram}
+        loading={false}
+        error={null}
+        isFavorite={false}
+        onToggleFavorite={() => undefined}
+        onRetry={() => undefined}
+        onClose={() => undefined}
+        embedded
+      />
+    );
+
+    const summary = screen.getByText(
+      (_content, element) => element?.textContent === 'Первый абзац описания.\n\nВторой абзац описания.'
+    );
+    expect(summary).toHaveClass('whitespace-pre-line');
+    expect(screen.getByText('Вебинары для заявителей')).toBeInTheDocument();
+    expect(screen.getByText('Сентябрь 2026')).toBeInTheDocument();
+  });
+
   it('shows winner materials once with links and keeps them out of general documents', () => {
     render(
       <ApiProgramDrawer
