@@ -26,7 +26,7 @@ siderfold-analytics = "app.analytics.cli:main"
 
 [project.optional-dependencies]
 test = [
-  "httpx>=0.27,<1",
+  "httpx2>=2.1,<3",
   "pytest>=8.3,<9"
 ]
 

@@ -1,0 +1,194 @@
+{
+  "data_class": "synthetic",
+  "source_scope": {
+    "program_sources": [
+      {"source_key": "potanin-competitions"},
+      {"source_key": "timchenko-competitions"}
+    ]
+  },
+  "snapshots": [
+    {
+      "id": "10000000-0000-5000-8000-000000000001",
+      "as_of": "2026-09-01T12:00:00+00:00",
+      "programs": [
+        {
+          "program_id": "p1",
+          "source_key": "potanin-competitions",
+          "published_at": "2026-08-20T10:00:00+00:00",
+          "updated_at": "2026-08-29T10:00:00+00:00",
+          "observed_at": "2026-08-31T10:00:00+00:00",
+          "deadline_on": "2026-09-05",
+          "funding_present": true,
+          "funding_value_kind": "maximum",
+          "funding_currency_code": "RUB",
+          "funding_exact_amount": null,
+          "funding_min_amount": null,
+          "funding_max_amount": "500000.00"
+        },
+        {
+          "program_id": "p2",
+          "source_key": "timchenko-competitions",
+          "published_at": "2026-08-25T10:00:00+00:00",
+          "updated_at": "2026-08-30T10:00:00+00:00",
+          "observed_at": "2026-08-31T10:00:00+00:00",
+          "deadline_on": null,
+          "funding_present": true,
+          "funding_value_kind": "unknown",
+          "funding_currency_code": null,
+          "funding_exact_amount": null,
+          "funding_min_amount": null,
+          "funding_max_amount": null
+        }
+      ],
+      "taxonomy": {
+        "themes": [
+          {"program_id": "p1", "taxonomy_id": "t1", "slug": "climate", "name": "Климат"},
+          {"program_id": "p2", "taxonomy_id": "t2", "slug": "ai", "name": "Искусственный интеллект"}
+        ],
+        "geographies": [
+          {"program_id": "p1", "taxonomy_id": "g1", "slug": "north", "name": "Север"}
+        ]
+      }
+    },
+    {
+      "id": "10000000-0000-5000-8000-000000000002",
+      "as_of": "2026-09-08T12:00:00+00:00",
+      "programs": [
+        {
+          "program_id": "p1",
+          "source_key": "potanin-competitions",
+          "published_at": "2026-08-20T10:00:00+00:00",
+          "updated_at": "2026-09-05T10:00:00+00:00",
+          "observed_at": "2026-09-07T10:00:00+00:00",
+          "deadline_on": "2026-09-10",
+          "funding_present": true,
+          "funding_value_kind": "maximum",
+          "funding_currency_code": "RUB",
+          "funding_exact_amount": null,
+          "funding_min_amount": null,
+          "funding_max_amount": "500000.00"
+        },
+        {
+          "program_id": "p2",
+          "source_key": "timchenko-competitions",
+          "published_at": "2026-08-25T10:00:00+00:00",
+          "updated_at": "2026-08-30T10:00:00+00:00",
+          "observed_at": "2026-09-07T10:00:00+00:00",
+          "deadline_on": null,
+          "funding_present": true,
+          "funding_value_kind": "unknown",
+          "funding_currency_code": null,
+          "funding_exact_amount": null,
+          "funding_min_amount": null,
+          "funding_max_amount": null
+        },
+        {
+          "program_id": "p3",
+          "source_key": "timchenko-competitions",
+          "published_at": "2026-09-06T10:00:00+00:00",
+          "updated_at": "2026-09-07T10:00:00+00:00",
+          "observed_at": "2026-09-07T10:00:00+00:00",
+          "deadline_on": "2026-09-20",
+          "funding_present": true,
+          "funding_value_kind": "range",
+          "funding_currency_code": "RUB",
+          "funding_exact_amount": null,
+          "funding_min_amount": "100000.00",
+          "funding_max_amount": "200000.00"
+        }
+      ],
+      "taxonomy": {
+        "themes": [
+          {"program_id": "p1", "taxonomy_id": "t1", "slug": "climate", "name": "Климат"},
+          {"program_id": "p2", "taxonomy_id": "t2", "slug": "ai", "name": "Искусственный интеллект"},
+          {"program_id": "p3", "taxonomy_id": "t1", "slug": "climate", "name": "Климат"}
+        ],
+        "geographies": [
+          {"program_id": "p1", "taxonomy_id": "g1", "slug": "north", "name": "Север"},
+          {"program_id": "p3", "taxonomy_id": "g2", "slug": "south", "name": "Юг"}
+        ]
+      }
+    },
+    {
+      "id": "10000000-0000-5000-8000-000000000003",
+      "as_of": "2026-09-29T12:00:00+00:00",
+      "programs": [
+        {
+          "program_id": "p1",
+          "source_key": "potanin-competitions",
+          "published_at": "2026-08-20T10:00:00+00:00",
+          "updated_at": "2026-09-05T10:00:00+00:00",
+          "observed_at": "2026-09-28T10:00:00+00:00",
+          "deadline_on": "2026-09-10",
+          "funding_present": true,
+          "funding_value_kind": "maximum",
+          "funding_currency_code": "RUB",
+          "funding_exact_amount": null,
+          "funding_min_amount": null,
+          "funding_max_amount": "500000.00"
+        },
+        {
+          "program_id": "p3",
+          "source_key": "timchenko-competitions",
+          "published_at": "2026-09-06T10:00:00+00:00",
+          "updated_at": "2026-09-23T10:00:00+00:00",
+          "observed_at": "2026-09-28T10:00:00+00:00",
+          "deadline_on": "2026-10-12",
+          "funding_present": true,
+          "funding_value_kind": "exact",
+          "funding_currency_code": "RUB",
+          "funding_exact_amount": "150000.00",
+          "funding_min_amount": null,
+          "funding_max_amount": null
+        },
+        {
+          "program_id": "p4",
+          "source_key": "timchenko-competitions",
+          "published_at": "2026-09-22T10:00:00+00:00",
+          "updated_at": "2026-09-24T10:00:00+00:00",
+          "observed_at": "2026-09-28T10:00:00+00:00",
+          "deadline_on": null,
+          "funding_present": false,
+          "funding_value_kind": null,
+          "funding_currency_code": null,
+          "funding_exact_amount": null,
+          "funding_min_amount": null,
+          "funding_max_amount": null
+        }
+      ],
+      "taxonomy": {
+        "themes": [
+          {"program_id": "p1", "taxonomy_id": "t1", "slug": "climate", "name": "Климат"},
+          {"program_id": "p3", "taxonomy_id": "t2", "slug": "ai", "name": "Искусственный интеллект"},
+          {"program_id": "p4", "taxonomy_id": "t2", "slug": "ai", "name": "Искусственный интеллект"}
+        ],
+        "geographies": [
+          {"program_id": "p1", "taxonomy_id": "g1", "slug": "north", "name": "Север"},
+          {"program_id": "p3", "taxonomy_id": "g2", "slug": "south", "name": "Юг"},
+          {"program_id": "p4", "taxonomy_id": "g2", "slug": "south", "name": "Юг"}
+        ]
+      }
+    }
+  ],
+  "expected": {
+    "week_starts": ["2026-08-31", "2026-09-07", "2026-09-14", "2026-09-21", "2026-09-28"],
+    "point_statuses": ["computed", "computed", "no_snapshot", "no_snapshot", "computed"],
+    "program_stock": [2, 3, null, null, 3],
+    "newly_observed": [null, 1, null, null, 1],
+    "removed_from_scope": [null, 0, null, null, 1],
+    "published_since_previous": [null, 1, null, null, 1],
+    "week_2_deadline_upcoming": 2,
+    "week_4_deadline_overdue": 1,
+    "week_4_deadline_upcoming": 1,
+    "week_4_deadline_changed_values": 1,
+    "week_4_deadline_status_transitions": 1,
+    "week_4_funding_changed_programs": 1,
+    "week_4_theme_membership_changed_programs": 1,
+    "week_4_any_tracked_updates": 1,
+    "week_4_interval_gap_weeks": 2,
+    "week_2_theme_graph": {"edge_count": 3, "density": 0.75, "connected_components": 1},
+    "week_4_program_graph": {"edge_count": 3, "density": 0.5, "connected_components": 2},
+    "week_4_theme_graph": {"edge_count": 2, "density": 0.5, "connected_components": 2},
+    "week_4_geography_graph": {"edge_count": 2, "density": 0.5, "connected_components": 2}
+  }
+}

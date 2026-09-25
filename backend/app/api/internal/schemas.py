@@ -62,6 +62,28 @@ class InternalRegionalIndicatorsResponse(InternalSchema):
     regional_indicators: dict[str, Any]
 
 
+class InternalTemporalSeriesResponse(InternalSchema):
+    version: str
+    frequency: str
+    data_class: str
+    window: dict[str, Any]
+    selection: str
+    cohorts: list[dict[str, Any]]
+    excluded_snapshots: dict[str, int]
+    status: str
+    limitations: list[str]
+
+
+class InternalNetworkMetricsResponse(InternalSchema):
+    snapshot_id: UUID
+    scope: str
+    calculation_version: str
+    as_of: datetime
+    input_fingerprint: str
+    data_class: str
+    network: dict[str, Any]
+
+
 class InternalSource(InternalSchema):
     id: UUID
     name: str

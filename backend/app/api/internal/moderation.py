@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Iterator, Mapping
-from datetime import date
+from datetime import date, datetime, timedelta, timezone
 from typing import Any
 from uuid import UUID
 
@@ -11,19 +11,24 @@ from sqlalchemy import asc, desc, func, select
 from sqlalchemy.engine import Connection
 
 from app.analytics.baseline import BASELINE_METRICS_VERSION, compare_snapshot_counts
+from app.analytics.network import NetworkAnalyticsError, calculate_network_metrics
 from app.analytics.regional import REGIONAL_INDICATORS_VERSION
 from app.analytics.snapshots import (
     INPUT_MANIFEST_VERSION,
     SUPPORTED_INPUT_MANIFEST_VERSIONS,
     AnalyticsSnapshotError,
     get_analytics_snapshot,
+    list_analytics_snapshots,
 )
+from app.analytics.temporal import TemporalAnalyticsError, calculate_temporal_series
 from app.api.internal.auth import InternalAccess, require_internal_access
 from app.api.internal.schemas import (
     CanonicalReviewActionRequest,
     CanonicalReviewActionResponse,
     InternalAnalyticsBaselineResponse,
+    InternalNetworkMetricsResponse,
     InternalRegionalIndicatorsResponse,
+    InternalTemporalSeriesResponse,
     DiscoveryReviewActionRequest,
     DiscoveryReviewActionResponse,
     InternalDiscoveryReviewQueueItem,
@@ -281,6 +286,90 @@ def get_internal_regional_indicators(
         input_fingerprint=snapshot.input_fingerprint,
         data_class=str(snapshot.input_manifest.get("data_class", "unknown")),
         regional_indicators=dict(indicators),
+    )
+
+
+@router.get(
+    "/analytics/time-series",
+    response_model=InternalTemporalSeriesResponse,
+)
+def get_internal_analytics_time_series(
+    from_date: date = Query(alias="from"),
+    to_date: date = Query(alias="to"),
+    frequency: str = Query(default="weekly", pattern="^weekly$"),
+    data_class: str = Query(default="real", pattern="^(real|test|synthetic|unknown)$"),
+    connection: Connection = Depends(get_internal_database_connection),
+) -> InternalTemporalSeriesResponse:
+    if from_date > to_date:
+        raise InternalApiError(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            code="invalid_analytics_window",
+            message="The from date must not be after the to date.",
+        )
+    as_of_before = datetime(
+        to_date.year,
+        to_date.month,
+        to_date.day,
+        tzinfo=timezone.utc,
+    ) + timedelta(days=1)
+    snapshots = list_analytics_snapshots(connection, as_of_before=as_of_before)
+    try:
+        series = calculate_temporal_series(
+            snapshots,
+            from_date=from_date,
+            to_date=to_date,
+            data_class=data_class,
+            frequency=frequency,
+        )
+    except TemporalAnalyticsError as error:
+        raise InternalApiError(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            code="invalid_analytics_window",
+            message=str(error),
+        ) from error
+    return InternalTemporalSeriesResponse(**series)
+
+
+@router.get(
+    "/analytics/snapshots/{snapshot_id}/network",
+    response_model=InternalNetworkMetricsResponse,
+)
+def get_internal_analytics_network(
+    snapshot_id: UUID,
+    dimension: str | None = Query(
+        default=None,
+        pattern="^(program|theme|region|geography)$",
+    ),
+    connection: Connection = Depends(get_internal_database_connection),
+) -> InternalNetworkMetricsResponse:
+    snapshot = get_analytics_snapshot(connection, snapshot_id)
+    if snapshot is None:
+        raise InternalApiError(
+            status_code=status.HTTP_404_NOT_FOUND,
+            code="analytics_snapshot_not_found",
+            message="The requested analytics snapshot does not exist.",
+        )
+    try:
+        network = calculate_network_metrics(snapshot)
+    except NetworkAnalyticsError as error:
+        raise InternalApiError(
+            status_code=status.HTTP_409_CONFLICT,
+            code="network_metrics_unavailable",
+            message=str(error),
+        ) from error
+    if dimension is not None:
+        selected_dimension = "geography" if dimension == "region" else dimension
+        network["dimensions"] = {
+            selected_dimension: network["dimensions"][selected_dimension]
+        }
+    return InternalNetworkMetricsResponse(
+        snapshot_id=snapshot.id,
+        scope=snapshot.scope,
+        calculation_version=snapshot.calculation_version,
+        as_of=snapshot.as_of,
+        input_fingerprint=snapshot.input_fingerprint,
+        data_class=str(snapshot.input_manifest.get("data_class", "unknown")),
+        network=network,
     )
 
 

@@ -1114,6 +1114,36 @@ def get_analytics_snapshot(
     return _record_from_row(row) if row is not None else None
 
 
+def list_analytics_snapshots(
+    connection: Connection,
+    *,
+    scope: str = SNAPSHOT_SCOPE,
+    as_of_before: datetime | None = None,
+) -> tuple[AnalyticsSnapshotRecord, ...]:
+    """Return immutable snapshots in chronological order for reproducible analysis."""
+
+    statement = select(
+        AnalyticsSnapshot.id,
+        AnalyticsSnapshot.scope,
+        AnalyticsSnapshot.calculation_version,
+        AnalyticsSnapshot.as_of,
+        AnalyticsSnapshot.freshness_window_days,
+        AnalyticsSnapshot.registry_fingerprint,
+        AnalyticsSnapshot.input_fingerprint,
+        AnalyticsSnapshot.source_scope,
+        AnalyticsSnapshot.input_manifest,
+        AnalyticsSnapshot.metrics,
+        AnalyticsSnapshot.limitations,
+        AnalyticsSnapshot.created_at,
+    ).where(AnalyticsSnapshot.scope == scope)
+    if as_of_before is not None:
+        statement = statement.where(AnalyticsSnapshot.as_of < as_of_before)
+    rows = connection.execute(
+        statement.order_by(AnalyticsSnapshot.as_of, AnalyticsSnapshot.id)
+    ).mappings()
+    return tuple(_record_from_row(row) for row in rows)
+
+
 def create_analytics_snapshot(
     connection: Connection,
     *,
