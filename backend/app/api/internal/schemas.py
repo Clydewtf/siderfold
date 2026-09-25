@@ -52,6 +52,36 @@ class InternalAnalyticsBaselineResponse(InternalSchema):
     comparison: dict[str, Any] | None = None
 
 
+class InternalAnalyticsSnapshotCapabilities(InternalSchema):
+    baseline: bool
+    regional_indicators: bool
+    network: bool
+    temporal_series: bool
+
+
+class InternalAnalyticsSnapshotSummary(InternalSchema):
+    snapshot_id: UUID
+    scope: str
+    calculation_version: str
+    as_of: datetime
+    created_at: datetime
+    freshness_window_days: int
+    registry_fingerprint: str
+    input_fingerprint: str
+    data_class: str
+    program_source_keys: list[str]
+    program_count: int | None = None
+    capabilities: InternalAnalyticsSnapshotCapabilities
+    compatible: bool
+    exclusion_reasons: list[str]
+    limitations: list[str]
+
+
+class InternalAnalyticsSnapshotListResponse(InternalSchema):
+    items: list[InternalAnalyticsSnapshotSummary]
+    class_counts: dict[str, int]
+
+
 class InternalRegionalIndicatorsResponse(InternalSchema):
     snapshot_id: UUID
     scope: str

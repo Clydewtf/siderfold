@@ -15,6 +15,8 @@ from app.analytics.network import NetworkAnalyticsError, calculate_network_metri
 from app.analytics.regional import REGIONAL_INDICATORS_VERSION
 from app.analytics.snapshots import (
     INPUT_MANIFEST_VERSION,
+    PROGRAM_SOURCE_KEYS,
+    SNAPSHOT_SCOPE,
     SUPPORTED_INPUT_MANIFEST_VERSIONS,
     AnalyticsSnapshotError,
     get_analytics_snapshot,
@@ -26,6 +28,9 @@ from app.api.internal.schemas import (
     CanonicalReviewActionRequest,
     CanonicalReviewActionResponse,
     InternalAnalyticsBaselineResponse,
+    InternalAnalyticsSnapshotCapabilities,
+    InternalAnalyticsSnapshotListResponse,
+    InternalAnalyticsSnapshotSummary,
     InternalNetworkMetricsResponse,
     InternalRegionalIndicatorsResponse,
     InternalTemporalSeriesResponse,
@@ -191,6 +196,123 @@ def require_idempotency_key(
             message="Idempotency-Key must be at most 255 characters.",
         )
     return value.strip()
+
+
+@router.get(
+    "/analytics/snapshots",
+    response_model=InternalAnalyticsSnapshotListResponse,
+)
+def list_internal_analytics_snapshots(
+    connection: Connection = Depends(get_internal_database_connection),
+    _access: InternalAccess = Depends(require_internal_access),
+) -> InternalAnalyticsSnapshotListResponse:
+    snapshots = list_analytics_snapshots(connection)
+    items = [_research_snapshot_summary(snapshot) for snapshot in reversed(snapshots)]
+    class_counts = {name: 0 for name in ("real", "test", "synthetic", "unknown")}
+    for item in items:
+        class_name = item.data_class if item.data_class in class_counts else "unknown"
+        class_counts[class_name] += 1
+    return InternalAnalyticsSnapshotListResponse(items=items, class_counts=class_counts)
+
+
+def _research_snapshot_summary(snapshot: Any) -> InternalAnalyticsSnapshotSummary:
+    snapshot_id = str(snapshot.id)
+    manifest = snapshot.input_manifest if isinstance(snapshot.input_manifest, Mapping) else {}
+    source_scope = snapshot.source_scope if isinstance(snapshot.source_scope, Mapping) else {}
+    metrics = snapshot.metrics if isinstance(snapshot.metrics, Mapping) else {}
+    manifest_version = manifest.get("version")
+    raw_data_class = manifest.get("data_class")
+    data_class = raw_data_class if isinstance(raw_data_class, str) else "unknown"
+
+    source_entries = source_scope.get("program_sources")
+    raw_source_keys = {
+        str(row["source_key"])
+        for row in source_entries or []
+        if isinstance(row, Mapping) and isinstance(row.get("source_key"), str)
+    }
+    source_keys = sorted(raw_source_keys.intersection(PROGRAM_SOURCE_KEYS))
+    manifest_programs = manifest.get("programs")
+    manifest_source_keys = {
+        str(row["source_key"])
+        for row in manifest_programs or []
+        if isinstance(row, Mapping) and isinstance(row.get("source_key"), str)
+    }
+    source_scope_valid = (
+        isinstance(source_entries, list)
+        and bool(source_keys)
+        and raw_source_keys.issubset(PROGRAM_SOURCE_KEYS)
+        and manifest_source_keys.issubset(PROGRAM_SOURCE_KEYS)
+    )
+
+    baseline = metrics.get("baseline")
+    baseline_available = (
+        manifest_version in SUPPORTED_INPUT_MANIFEST_VERSIONS
+        and isinstance(baseline, Mapping)
+        and baseline.get("version") == BASELINE_METRICS_VERSION
+        and baseline.get("snapshot_id") == snapshot_id
+    )
+    regional = metrics.get("regional_indicators")
+    regional_available = (
+        manifest_version == INPUT_MANIFEST_VERSION
+        and isinstance(regional, Mapping)
+        and regional.get("version") == REGIONAL_INDICATORS_VERSION
+        and regional.get("snapshot_id") == snapshot_id
+    )
+    network_available = (
+        manifest_version == INPUT_MANIFEST_VERSION
+        and source_scope_valid
+        and regional_available
+    )
+    temporal_available = (
+        manifest_version == INPUT_MANIFEST_VERSION
+        and source_scope_valid
+        and baseline_available
+        and regional_available
+        and data_class in {"real", "test", "synthetic"}
+    )
+
+    exclusion_reasons: list[str] = []
+    if snapshot.scope != SNAPSHOT_SCOPE:
+        exclusion_reasons.append("unsupported_scope")
+    if manifest_version not in SUPPORTED_INPUT_MANIFEST_VERSIONS:
+        exclusion_reasons.append("unsupported_manifest")
+    if not source_scope_valid:
+        exclusion_reasons.append("source_scope_missing_or_unapproved")
+    if data_class not in {"real", "test", "synthetic"}:
+        exclusion_reasons.append("unknown_data_class")
+    if not any((baseline_available, regional_available, network_available)):
+        exclusion_reasons.append("no_documented_metrics")
+
+    program_count: int | None = None
+    if baseline_available:
+        baseline_metrics = baseline.get("metrics")
+        count_metric = baseline_metrics.get("opportunities.count") if isinstance(baseline_metrics, Mapping) else None
+        count_value = count_metric.get("value") if isinstance(count_metric, Mapping) else None
+        if isinstance(count_value, int) and not isinstance(count_value, bool) and count_value >= 0:
+            program_count = count_value
+
+    return InternalAnalyticsSnapshotSummary(
+        snapshot_id=snapshot.id,
+        scope=str(snapshot.scope),
+        calculation_version=str(snapshot.calculation_version),
+        as_of=snapshot.as_of,
+        created_at=snapshot.created_at,
+        freshness_window_days=int(snapshot.freshness_window_days),
+        registry_fingerprint=str(snapshot.registry_fingerprint),
+        input_fingerprint=str(snapshot.input_fingerprint),
+        data_class=data_class,
+        program_source_keys=source_keys,
+        program_count=program_count,
+        capabilities=InternalAnalyticsSnapshotCapabilities(
+            baseline=baseline_available,
+            regional_indicators=regional_available,
+            network=network_available,
+            temporal_series=temporal_available,
+        ),
+        compatible=not exclusion_reasons,
+        exclusion_reasons=exclusion_reasons,
+        limitations=[str(value) for value in snapshot.limitations],
+    )
 
 
 @router.get(

@@ -18,7 +18,8 @@ export default defineConfig(({ mode }) => {
       rollupOptions: {
         input: {
           catalog: fileURLToPath(new URL('./index.html', import.meta.url)),
-          operator: fileURLToPath(new URL('./operator.html', import.meta.url))
+          operator: fileURLToPath(new URL('./operator.html', import.meta.url)),
+          research: fileURLToPath(new URL('./research.html', import.meta.url))
         }
       }
     },
