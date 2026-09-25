@@ -13,7 +13,7 @@ from app.db.session import create_db_engine
 
 def create_app(settings: Settings | None = None, engine: Engine | None = None) -> FastAPI:
     resolved_settings = settings or get_settings()
-    application = FastAPI(title=resolved_settings.app_name, version="0.8.1")
+    application = FastAPI(title=resolved_settings.app_name, version="0.8.2")
     application.state.settings = resolved_settings
     application.state.db_engine = engine or create_db_engine(resolved_settings)
     register_read_api_exception_handlers(application)

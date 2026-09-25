@@ -2,6 +2,22 @@
 
 All notable project milestones are documented in this file.
 
+## v0.8.2 - 2026-09-25
+
+Expanded Sources And Catalog Refinements.
+
+### Added
+
+- Competition ingestion for Fond Timchenko's programs, current contests and archive, with source statuses retained in the shared review queue.
+- FASIE collection across its public competition inventory, programme pages, press lifecycle feed and bounded results archive.
+- Geography filters normalized across Russian federal districts and constituent regions, plus clearer catalog sorting and consistent card layouts.
+
+### Changed
+
+- FASIE collection now uses paced requests, bounded artifact downloads and explicit deferrals; result records are grouped from related announcements and status evidence.
+- Operator runbook and backend source documentation now describe source commands, dry-run behavior, review flow and artifact limits.
+- Catalog descriptions and filters present long, uneven source records more consistently.
+
 ## v0.8.1 - 2026-09-16
 
 Operator Workflow And Catalog Data Improvements.

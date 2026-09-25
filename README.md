@@ -7,13 +7,14 @@ pipeline for controlled source ingestion and review.
 
 ## Current Version
 
-`v0.8.1` combines an allowlisted source-ingestion contour with a public catalog
+`v0.8.2` combines an allowlisted source-ingestion contour with a public catalog
 that can use the backend API:
 
 - Python/FastAPI/PostgreSQL backend with canonical, provenance, staging, review,
   and read-API layers;
-- allowlisted adapters for the Potanin source and Telegram discovery, with
-  fixtures, data-quality checks, idempotency, and no automatic publication;
+- allowlisted adapters for the Potanin, Timchenko and FASIE sources, plus
+  Telegram discovery, with data-quality checks, idempotency and no automatic
+  publication;
 - deterministic deduplication and separate canonical/discovery review queues;
 - a local one-shot scheduler command with locking, bounded retries, rate limits,
   execution metrics, and a recovery runbook.
@@ -94,7 +95,7 @@ are intentionally not used yet; important states are fixed with Git tags.
 
 ## Status
 
-This repository represents `v0.8.1` and is prepared for a controlled local
+This repository represents `v0.8.2` and is prepared for a controlled local
 catalog workflow: ingest a source, inspect and correct candidates in the
 protected operator workspace, publish verified programs and inspect the result
 in API mode. A public internet deployment, account management, automated host
