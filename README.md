@@ -7,7 +7,7 @@ pipeline for controlled source ingestion and review.
 
 ## Current Version
 
-`v0.8.2` combines an allowlisted source-ingestion contour with a public catalog
+`v0.9.0` combines an allowlisted source-ingestion contour with a public catalog
 that can use the backend API:
 
 - Python/FastAPI/PostgreSQL backend with canonical, provenance, staging, review,
@@ -23,6 +23,9 @@ that can use the backend API:
 - an explicit frontend API mode with loading, empty and safe error states;
 - reproducible quality snapshots and protected operator actions for review,
   archival and republishing.
+- a separate token-protected research lab for documented baseline, quality,
+  regional, temporal and network metrics, with JSON/CSV/SVG exports that record
+  the source commit, build state, snapshot fingerprints and data hash.
 
 The frontend uses the public API by default. Seed data remains available only
 through an explicit development/demo mode. It keeps local preferences and
@@ -95,8 +98,13 @@ are intentionally not used yet; important states are fixed with Git tags.
 
 ## Status
 
-This repository represents `v0.8.2` and is prepared for a controlled local
+This repository represents `v0.9.0` and supports a controlled local
 catalog workflow: ingest a source, inspect and correct candidates in the
 protected operator workspace, publish verified programs and inspect the result
-in API mode. A public internet deployment, account management, automated host
-scheduling and notification delivery remain explicit future decisions.
+in API mode. The research snapshot currently documents the coverage of the
+connected local sources only; one compatible real snapshot is not enough to
+interpret a time trend. FASIE is excluded from the research scope. On this
+workstation, a user LaunchAgent is installed but currently disabled; catalog
+snapshots are run manually until the service is deployed. Source runs and
+review/publication remain manual. Public internet deployment, account
+management and notification delivery remain explicit future decisions.

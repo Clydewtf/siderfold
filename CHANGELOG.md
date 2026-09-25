@@ -2,6 +2,26 @@
 
 All notable project milestones are documented in this file.
 
+## v0.9.0 - 2026-09-26
+
+Evidence-Based Analytics And Research Lab.
+
+### Added
+
+- A documented research protocol, data dictionary, source registry, data changelog and datasheet for the local analytical snapshots.
+- Reproducible baseline indicators with explicit funding bounds, deadlines, coverage, missing-value rules and deterministic bootstrap intervals where applicable.
+- Snapshot-bound regional and thematic indicators with small-sample warnings, plus compatible temporal series and source-centred bipartite network metrics.
+- A separate internal-token research lab with snapshot selection, methodology and limitations, and JSON/CSV/SVG exports.
+- Snapshot quality metrics for freshness, completeness, explicit conflicts, source execution coverage and review queue status in the protected analytics API, lab and export.
+- Export metadata with application/method versions, Git commit, dirty-tree flag, parameters, export time, input fingerprints and a SHA-256 data hash.
+
+### Notes
+
+- Research indicators cover only the eligible connected sources in the selected snapshot. They do not estimate the whole grant or competition ecosystem.
+- The known local `real` v3 snapshot contains 47 published programs from Potanin and Timchenko. It is not a production-verified copy; one compatible real snapshot does not support a time-trend interpretation.
+- FASIE is excluded from the research scope and was not run or used for this release work.
+- `docs/` and the personal `todo.md` remain local ignored files by project decision.
+
 ## v0.8.2 - 2026-09-25
 
 Expanded Sources And Catalog Refinements.

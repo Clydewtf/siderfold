@@ -52,7 +52,18 @@ class InternalAnalyticsBaselineResponse(InternalSchema):
     comparison: dict[str, Any] | None = None
 
 
+class InternalAnalyticsQualityResponse(InternalSchema):
+    snapshot_id: UUID
+    scope: str
+    calculation_version: str
+    as_of: datetime
+    input_fingerprint: str
+    data_class: str
+    quality: dict[str, Any]
+
+
 class InternalAnalyticsSnapshotCapabilities(InternalSchema):
+    quality: bool
     baseline: bool
     regional_indicators: bool
     network: bool

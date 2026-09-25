@@ -11,6 +11,7 @@ export type ResearchSnapshot = {
   program_source_keys: string[];
   program_count: number | null;
   capabilities: {
+    quality: boolean;
     baseline: boolean;
     regional_indicators: boolean;
     network: boolean;
@@ -33,6 +34,7 @@ export type SnapshotMetricResponse = {
   as_of: string;
   input_fingerprint: string;
   data_class: string;
+  quality?: Record<string, unknown>;
   baseline?: Record<string, unknown>;
   regional_indicators?: Record<string, unknown>;
   network?: Record<string, unknown>;
@@ -122,6 +124,8 @@ export function createResearchApiClient({
       }
       return result as SnapshotList;
     },
+    getQualityMetrics: (snapshotId: string): Promise<SnapshotMetricResponse> =>
+      get(`/analytics/snapshots/${encodeURIComponent(snapshotId)}/quality`),
     getBaseline: (snapshotId: string): Promise<SnapshotMetricResponse> =>
       get(`/analytics/snapshots/${encodeURIComponent(snapshotId)}/baseline`),
     getRegionalIndicators: (snapshotId: string): Promise<SnapshotMetricResponse> =>

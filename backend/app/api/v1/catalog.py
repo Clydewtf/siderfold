@@ -940,6 +940,11 @@ def get_program(
 
     program_values = _program_list_item(row).model_dump()
     program_values.update(detail_values)
+    # The list projection already contains taxonomy fields. The detail response
+    # replaces them with the full relations loaded above (including derived
+    # country scope), so remove those keys before passing explicit values.
+    program_values.pop("geographies", None)
+    program_values.pop("themes", None)
     return ProgramDetail(
         **program_values,
         sources=sources,

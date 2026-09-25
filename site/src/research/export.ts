@@ -19,6 +19,7 @@ export type MetricRow = {
 
 export type ResearchData = {
   snapshot: Record<string, unknown>;
+  quality_metrics?: Record<string, unknown>;
   baseline?: Record<string, unknown>;
   regional_indicators?: Record<string, unknown>;
   network?: Record<string, unknown>;
@@ -28,9 +29,11 @@ export type ResearchData = {
 export type ExportMetadata = {
   snapshot_ids: string[];
   calculation_code_version: {
+    application_version: string;
     snapshot_calculation_versions: Record<string, string>;
     metric_versions: Record<string, string>;
-    source_revision: null;
+    source_revision: string;
+    source_tree_dirty: boolean;
   };
   parameters: Record<string, unknown>;
   exported_at: string;
@@ -45,6 +48,14 @@ export type ResearchExport = {
 
 const BASELINE_KEY = /^(opportunities\.count|opportunities\.source\.[^.]+\.(count|share)|funding\.(record_share|numeric_share|quantiles_status|quantile\..+)|deadlines\.(presence_share|upcoming_share|overdue_count|days\.(Q25|median|Q75))|source\.execution_coverage\.[^.]+)$/;
 const NETWORK_METRICS = new Set(['node_count', 'edge_count', 'density', 'connected_components']);
+const QUALITY_METRICS_VERSION = 'catalog-quality-metrics/v1';
+const QUALITY_METRIC_KEYS = new Set(['freshness', 'completeness', 'conflicts', 'source_coverage', 'review_status']);
+
+export const RESEARCH_BUILD_INFO = {
+  applicationVersion: import.meta.env.VITE_APP_VERSION || 'unknown',
+  sourceRevision: import.meta.env.VITE_SOURCE_REVISION || 'unknown',
+  sourceTreeDirty: import.meta.env.VITE_SOURCE_TREE_DIRTY === 'true'
+} as const;
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
@@ -146,6 +157,14 @@ function collectBaseline(data: ResearchData, rows: MetricRow[]): void {
   });
 }
 
+function collectQuality(data: ResearchData, rows: MetricRow[]): void {
+  const quality = data.quality_metrics;
+  if (!isRecord(quality) || quality.version !== QUALITY_METRICS_VERSION || !isRecord(quality.metrics)) return;
+  for (const key of QUALITY_METRIC_KEYS) {
+    visitMetricTree(quality.metrics[key], `quality_metrics.metrics.${key}`, rows);
+  }
+}
+
 function collectRegional(data: ResearchData, rows: MetricRow[]): void {
   const dimensions = data.regional_indicators?.dimensions;
   if (!isRecord(dimensions)) return;
@@ -194,6 +213,7 @@ function collectTemporal(data: ResearchData, rows: MetricRow[]): void {
 
 export function collectMetricRows(data: ResearchData): MetricRow[] {
   const rows: MetricRow[] = [];
+  collectQuality(data, rows);
   collectBaseline(data, rows);
   collectRegional(data, rows);
   collectNetwork(data, rows);
@@ -391,6 +411,29 @@ export function documentedResearchData(data: ResearchData): ResearchData {
       }
     : undefined;
 
+  const quality = data.quality_metrics;
+  const qualityMatchesSnapshot = isRecord(quality)
+    && quality.version === QUALITY_METRICS_VERSION
+    && quality.snapshot_id === snapshotId
+    && quality.data_class === data.snapshot.data_class
+    && isRecord(quality.metrics);
+  const qualityMetrics = qualityMatchesSnapshot
+    ? documentedMetrics(
+        quality.metrics,
+        (key) => QUALITY_METRIC_KEYS.has(key),
+        snapshotId ?? undefined
+      )
+    : {};
+  const cleanQuality = qualityMatchesSnapshot && Object.keys(qualityMetrics).length
+    ? {
+        version: QUALITY_METRICS_VERSION,
+        snapshot_id: quality.snapshot_id,
+        data_class: quality.data_class,
+        metrics: qualityMetrics,
+        limitations: quality.limitations
+      }
+    : undefined;
+
   const regional = data.regional_indicators;
   let cleanRegional: Record<string, unknown> | undefined;
   if (isRecord(regional)
@@ -473,6 +516,7 @@ export function documentedResearchData(data: ResearchData): ResearchData {
   const temporal = sanitizeTemporal(data.temporal_series);
   return {
     snapshot,
+    ...(cleanQuality ? { quality_metrics: cleanQuality } : {}),
     ...(cleanBaseline ? { baseline: cleanBaseline } : {}),
     ...(cleanRegional ? { regional_indicators: cleanRegional } : {}),
     ...(cleanNetwork ? { network: cleanNetwork } : {}),
@@ -503,6 +547,7 @@ function snapshotIdsInTemporal(data: ResearchData): string[] {
 function metricVersions(data: ResearchData): Record<string, string> {
   const versions: Record<string, string> = {};
   for (const [key, section] of [
+    ['quality_metrics', data.quality_metrics],
     ['baseline', data.baseline],
     ['regional_indicators', data.regional_indicators],
     ['network', data.network],
@@ -554,9 +599,11 @@ export async function createResearchExport(
     metadata: {
       snapshot_ids: snapshotIds,
       calculation_code_version: {
+        application_version: RESEARCH_BUILD_INFO.applicationVersion,
         snapshot_calculation_versions: versions,
         metric_versions: metricVersions(cleanData),
-        source_revision: null
+        source_revision: RESEARCH_BUILD_INFO.sourceRevision,
+        source_tree_dirty: RESEARCH_BUILD_INFO.sourceTreeDirty
       },
       parameters,
       exported_at: exportedAt.toISOString(),

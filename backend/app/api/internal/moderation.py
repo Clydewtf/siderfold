@@ -28,6 +28,7 @@ from app.api.internal.schemas import (
     CanonicalReviewActionRequest,
     CanonicalReviewActionResponse,
     InternalAnalyticsBaselineResponse,
+    InternalAnalyticsQualityResponse,
     InternalAnalyticsSnapshotCapabilities,
     InternalAnalyticsSnapshotListResponse,
     InternalAnalyticsSnapshotSummary,
@@ -114,6 +115,83 @@ class InternalApiError(Exception):
 
 
 router = APIRouter(prefix="/api/internal/v1", tags=["internal"], include_in_schema=False)
+
+QUALITY_METRICS_VERSION = "catalog-quality-metrics/v1"
+QUALITY_METRIC_KEYS = (
+    "freshness",
+    "completeness",
+    "conflicts",
+    "source_coverage",
+    "review_status",
+)
+
+
+def _documented_quality_metrics(
+    metrics: Mapping[str, Any],
+    *,
+    snapshot_id: str,
+    data_class: str,
+) -> dict[str, Mapping[str, Any]] | None:
+    documented: dict[str, Mapping[str, Any]] = {}
+    required_fields = {
+        "value",
+        "formula",
+        "unit",
+        "period",
+        "filter",
+        "missing",
+        "sample_size",
+        "snapshot_id",
+        "data_class",
+        "limitation",
+    }
+    for key in QUALITY_METRIC_KEYS:
+        metric = metrics.get(key)
+        if (
+            not isinstance(metric, Mapping)
+            or not required_fields.issubset(metric)
+            or metric.get("snapshot_id") != snapshot_id
+            or metric.get("data_class") != data_class
+            or not isinstance(metric.get("formula"), str)
+            or not isinstance(metric.get("unit"), str)
+            or not isinstance(metric.get("period"), Mapping)
+            or not isinstance(metric.get("filter"), str)
+            or not isinstance(metric.get("sample_size"), int)
+            or isinstance(metric.get("sample_size"), bool)
+            or metric.get("sample_size", -1) < 0
+            or not isinstance(metric.get("limitation"), str)
+        ):
+            return None
+        documented[key] = metric
+    return documented
+
+
+def _quality_metrics_for_snapshot(snapshot: Any) -> dict[str, Any] | None:
+    snapshot_id = str(snapshot.id)
+    manifest = snapshot.input_manifest if isinstance(snapshot.input_manifest, Mapping) else {}
+    metrics = snapshot.metrics if isinstance(snapshot.metrics, Mapping) else {}
+    data_class = manifest.get("data_class")
+    if (
+        snapshot.scope != SNAPSHOT_SCOPE
+        or manifest.get("version") not in SUPPORTED_INPUT_MANIFEST_VERSIONS
+        or not isinstance(data_class, str)
+        or data_class not in {"real", "test", "synthetic"}
+    ):
+        return None
+    documented = _documented_quality_metrics(
+        metrics,
+        snapshot_id=snapshot_id,
+        data_class=str(data_class),
+    )
+    if documented is None:
+        return None
+    return {
+        "version": QUALITY_METRICS_VERSION,
+        "snapshot_id": snapshot_id,
+        "data_class": data_class,
+        "metrics": {key: dict(documented[key]) for key in QUALITY_METRIC_KEYS},
+        "limitations": [str(value) for value in snapshot.limitations],
+    }
 
 
 def register_internal_api_exception_handlers(application: FastAPI) -> None:
@@ -223,6 +301,7 @@ def _research_snapshot_summary(snapshot: Any) -> InternalAnalyticsSnapshotSummar
     manifest_version = manifest.get("version")
     raw_data_class = manifest.get("data_class")
     data_class = raw_data_class if isinstance(raw_data_class, str) else "unknown"
+    quality_available = _quality_metrics_for_snapshot(snapshot) is not None
 
     source_entries = source_scope.get("program_sources")
     raw_source_keys = {
@@ -280,7 +359,7 @@ def _research_snapshot_summary(snapshot: Any) -> InternalAnalyticsSnapshotSummar
         exclusion_reasons.append("source_scope_missing_or_unapproved")
     if data_class not in {"real", "test", "synthetic"}:
         exclusion_reasons.append("unknown_data_class")
-    if not any((baseline_available, regional_available, network_available)):
+    if not any((quality_available, baseline_available, regional_available, network_available)):
         exclusion_reasons.append("no_documented_metrics")
 
     program_count: int | None = None
@@ -304,6 +383,7 @@ def _research_snapshot_summary(snapshot: Any) -> InternalAnalyticsSnapshotSummar
         program_source_keys=source_keys,
         program_count=program_count,
         capabilities=InternalAnalyticsSnapshotCapabilities(
+            quality=quality_available,
             baseline=baseline_available,
             regional_indicators=regional_available,
             network=network_available,
@@ -370,6 +450,39 @@ def get_internal_analytics_baseline(
         data_class=str(snapshot.input_manifest.get("data_class", "unknown")),
         baseline=dict(baseline),
         comparison=comparison,
+    )
+
+
+@router.get(
+    "/analytics/snapshots/{snapshot_id}/quality",
+    response_model=InternalAnalyticsQualityResponse,
+)
+def get_internal_analytics_quality(
+    snapshot_id: UUID,
+    connection: Connection = Depends(get_internal_database_connection),
+) -> InternalAnalyticsQualityResponse:
+    snapshot = get_analytics_snapshot(connection, snapshot_id)
+    if snapshot is None:
+        raise InternalApiError(
+            status_code=status.HTTP_404_NOT_FOUND,
+            code="analytics_snapshot_not_found",
+            message="The requested analytics snapshot does not exist.",
+        )
+    quality = _quality_metrics_for_snapshot(snapshot)
+    if quality is None:
+        raise InternalApiError(
+            status_code=status.HTTP_409_CONFLICT,
+            code="quality_metrics_unavailable",
+            message="This snapshot does not contain a complete documented quality metric set.",
+        )
+    return InternalAnalyticsQualityResponse(
+        snapshot_id=snapshot.id,
+        scope=snapshot.scope,
+        calculation_version=snapshot.calculation_version,
+        as_of=snapshot.as_of,
+        input_fingerprint=snapshot.input_fingerprint,
+        data_class=str(snapshot.input_manifest.get("data_class", "unknown")),
+        quality=quality,
     )
 
 

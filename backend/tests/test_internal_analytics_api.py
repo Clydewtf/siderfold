@@ -19,6 +19,26 @@ from app.main import create_app
 AUTHORIZATION = {"Authorization": "Bearer internal-test-token"}
 
 
+def quality_metrics(snapshot_id: str, data_class: str) -> dict[str, dict[str, object]]:
+    return {
+        name: {
+            "value": 0.5,
+            "formula": "numerator / denominator; null when denominator = 0",
+            "unit": "share",
+            "period": {"kind": "point_in_time", "as_of": "2026-09-25T12:00:00Z"},
+            "filter": "eligible records in the frozen snapshot",
+            "missing": "null when the denominator is zero",
+            "numerator": 1,
+            "denominator": 2,
+            "sample_size": 2,
+            "snapshot_id": snapshot_id,
+            "data_class": data_class,
+            "limitation": "Connected sources only.",
+        }
+        for name in ("freshness", "completeness", "conflicts", "source_coverage", "review_status")
+    }
+
+
 def test_internal_baseline_endpoint_reads_snapshot_and_requires_auth(monkeypatch) -> None:
     snapshot_id = uuid4()
     snapshot = SimpleNamespace(
@@ -27,11 +47,17 @@ def test_internal_baseline_endpoint_reads_snapshot_and_requires_auth(monkeypatch
         calculation_version="catalog-quality/v2",
         as_of=datetime(2026, 9, 25, 12, 0, tzinfo=timezone.utc),
         input_fingerprint="a" * 64,
+        source_scope={"program_sources": []},
+        created_at=datetime(2026, 9, 25, 12, 1, tzinfo=timezone.utc),
+        freshness_window_days=30,
+        registry_fingerprint="d" * 64,
+        limitations=["Connected sources only."],
         input_manifest={
             "version": INPUT_MANIFEST_VERSION,
             "data_class": "test",
         },
         metrics={
+            **quality_metrics(str(snapshot_id), "test"),
             "baseline": {
                 "version": BASELINE_METRICS_VERSION,
                 "snapshot_id": str(snapshot_id),
@@ -76,6 +102,7 @@ def test_internal_baseline_endpoint_reads_snapshot_and_requires_auth(monkeypatch
         "get_analytics_snapshot",
         lambda _connection, requested_id: snapshots.get(requested_id),
     )
+    monkeypatch.setattr(moderation, "list_analytics_snapshots", lambda _connection: [snapshot])
     engine = create_engine("sqlite://")
     settings = Settings(
         app_env="test",
@@ -97,8 +124,22 @@ def test_internal_baseline_endpoint_reads_snapshot_and_requires_auth(monkeypatch
     assert regional_response.status_code == 200
     assert regional_response.json()["regional_indicators"]["version"] == REGIONAL_INDICATORS_VERSION
     assert regional_response.json()["data_class"] == "test"
+    quality_path = f"/api/internal/v1/analytics/snapshots/{snapshot_id}/quality"
+    quality_response = client.get(quality_path, headers=AUTHORIZATION)
+    assert quality_response.status_code == 200
+    quality_body = quality_response.json()
+    assert quality_body["data_class"] == "test"
+    assert quality_body["quality"]["version"] == "catalog-quality-metrics/v1"
+    assert set(quality_body["quality"]["metrics"]) == {
+        "freshness", "completeness", "conflicts", "source_coverage", "review_status"
+    }
+    assert quality_body["quality"]["metrics"]["completeness"]["snapshot_id"] == str(snapshot_id)
+    listed = client.get("/api/internal/v1/analytics/snapshots", headers=AUTHORIZATION)
+    assert listed.status_code == 200
+    assert listed.json()["items"][0]["capabilities"]["quality"] is True
     assert client.get(path).status_code == 401
     assert client.get(regional_path).status_code == 401
+    assert client.get(quality_path).status_code == 401
     assert client.get(
         f"{path}?compare_to={uuid4()}",
         headers=AUTHORIZATION,
@@ -112,11 +153,19 @@ def test_internal_baseline_endpoint_reads_snapshot_and_requires_auth(monkeypatch
         headers=AUTHORIZATION,
     ).status_code == 409
     assert client.get(
+        f"/api/internal/v1/analytics/snapshots/{legacy_id}/quality",
+        headers=AUTHORIZATION,
+    ).status_code == 409
+    assert client.get(
         f"/api/internal/v1/analytics/snapshots/{v2_id}/baseline",
         headers=AUTHORIZATION,
     ).status_code == 200
     assert client.get(
         f"/api/internal/v1/analytics/snapshots/{v2_id}/regional-indicators",
+        headers=AUTHORIZATION,
+    ).status_code == 409
+    assert client.get(
+        f"/api/internal/v1/analytics/snapshots/{v2_id}/quality",
         headers=AUTHORIZATION,
     ).status_code == 409
     engine.dispose()

@@ -14,11 +14,13 @@ import {
   collectMetricRows,
   createResearchExport,
   documentedResearchData,
+  RESEARCH_BUILD_INFO,
   type ChartValue,
   type ResearchData
 } from './export';
 
 type SnapshotResponses = {
+  quality: SnapshotMetricResponse | null;
   baseline: SnapshotMetricResponse | null;
   regional: SnapshotMetricResponse | null;
   network: SnapshotMetricResponse | null;
@@ -41,6 +43,24 @@ function displayValue(value: unknown): string {
   if (typeof value === 'string') return value;
   if (typeof value === 'boolean') return value ? 'Да' : 'Нет';
   return JSON.stringify(value);
+}
+
+function qualityLabel(metricKey: string): string {
+  const key = metricKey.replace('quality_metrics.metrics.', '');
+  const labels: Record<string, string> = {
+    freshness: 'Свежесть наблюдений',
+    completeness: 'Полнота обязательных полей',
+    conflicts: 'Явные конфликты в очереди review',
+    source_coverage: 'Покрытие запусков реестра',
+    review_status: 'Открытые review-кейсы'
+  };
+  return labels[key] ?? key;
+}
+
+function qualityValue(row: ReturnType<typeof collectMetricRows>[number]): string {
+  return typeof row.value === 'number' && row.unit === 'share'
+    ? new Intl.NumberFormat('ru-RU', { style: 'percent', maximumFractionDigits: 1 }).format(row.value)
+    : displayValue(row.value);
 }
 
 function dateLabel(value: string): string {
@@ -170,6 +190,7 @@ function createLabData(
       program_count: snapshot.program_count,
       limitations: snapshot.limitations
     },
+    ...(responses.quality?.quality ? { quality_metrics: responses.quality.quality } : {}),
     ...(responses.baseline?.baseline ? { baseline: responses.baseline.baseline } : {}),
     ...(responses.regional?.regional_indicators ? { regional_indicators: responses.regional.regional_indicators } : {}),
     ...(cleanNetworkResponse(responses.network) ? { network: cleanNetworkResponse(responses.network) } : {}),
@@ -340,14 +361,15 @@ function ResearchWorkspace({
           return null;
         }
       };
-      const [baseline, regional, network] = await Promise.all([
+      const [quality, baseline, regional, network] = await Promise.all([
+        safeRequest(selectedSnapshot.capabilities.quality, 'Качество данных', () => client.getQualityMetrics(selectedSnapshot.snapshot_id)),
         safeRequest(selectedSnapshot.capabilities.baseline, 'Baseline', () => client.getBaseline(selectedSnapshot.snapshot_id)),
         safeRequest(selectedSnapshot.capabilities.regional_indicators, 'Региональные показатели', () => client.getRegionalIndicators(selectedSnapshot.snapshot_id)),
         safeRequest(selectedSnapshot.capabilities.network, 'Сетевые метрики', () => client.getNetwork(selectedSnapshot.snapshot_id))
       ]);
       if (cancelled) return;
-      setSnapshotResponses({ baseline, regional, network, errors });
-      if (!baseline && !regional && !network) setSnapshotError('Для snapshot не удалось загрузить документированные показатели.');
+      setSnapshotResponses({ quality, baseline, regional, network, errors });
+      if (!quality && !baseline && !regional && !network) setSnapshotError('Для snapshot не удалось загрузить документированные показатели.');
       setLoadingSnapshot(false);
     };
     void request();
@@ -358,6 +380,10 @@ function ResearchWorkspace({
     ? createLabData(selectedSnapshot, snapshotResponses, series)
     : null, [selectedSnapshot, snapshotResponses, series]);
   const metricRows = useMemo(() => data ? collectMetricRows(data) : [], [data]);
+  const qualityRows = useMemo(
+    () => metricRows.filter((row) => row.metric_key.startsWith('quality_metrics.metrics.')),
+    [metricRows]
+  );
   const sourceBars = useMemo(() => sourceChartValues(data), [data]);
   const coverageBars = useMemo(() => taxonomyCoverageValues(data), [data]);
   const temporalBars = useMemo(() => timeSeriesValues(series), [series]);
@@ -387,7 +413,7 @@ function ResearchWorkspace({
   function exportParameters(format: string, figure?: string): Record<string, unknown> {
     return {
       selected_snapshot_id: selectedSnapshot?.snapshot_id ?? null,
-      metric_groups: ['baseline', 'regional_indicators', 'network', ...(series ? ['temporal_series'] : [])],
+      metric_groups: ['quality_metrics', 'baseline', 'regional_indicators', 'network', ...(series ? ['temporal_series'] : [])],
       temporal_window: series ? { from: seriesFrom, to: seriesTo, frequency: 'weekly', data_class: 'real' } : null,
       network_dimensions: ['program', 'theme', 'geography'],
       format,
@@ -438,7 +464,9 @@ function ResearchWorkspace({
     }
   }
 
-  const sourceRevisionNote = data ? 'Git-ревизия расчётного кода не записывается в AnalyticsSnapshot; экспорт содержит сохранённые calculation_version и версии каждого метода.' : null;
+  const sourceRevisionNote = data
+    ? `Версия приложения ${RESEARCH_BUILD_INFO.applicationVersion}; Git ${RESEARCH_BUILD_INFO.sourceRevision}${RESEARCH_BUILD_INFO.sourceTreeDirty ? ' (рабочее дерево изменено на момент сборки)' : ' (чистое дерево на момент сборки)'}.`
+    : null;
   const excludedClasses = ['test', 'synthetic', 'unknown'].map((name) => `${name}: ${classCounts[name] ?? 0}`).join(' · ');
   const computedSeriesPoints = temporalBars.length;
 
@@ -496,6 +524,23 @@ function ResearchWorkspace({
 
           {data ? (
             <>
+              <section className="mt-8 rounded-xl border border-ink/10 bg-white/75 p-5" aria-labelledby="quality-metrics-title">
+                <h2 id="quality-metrics-title" className="text-xl font-semibold">Качество данных выбранного среза</h2>
+                <p className="mt-2 text-sm leading-6 text-graphite">Метрики качества рассчитываются отдельно от baseline. Они описывают сохранённый roster и очереди review, а не полноту всего рынка или истинность внешних страниц.</p>
+                {qualityRows.length ? (
+                  <div className="mt-4 grid gap-3 md:grid-cols-2 xl:grid-cols-3">
+                    {qualityRows.map((row) => (
+                      <article key={row.metric_key} className="rounded-lg border border-ink/10 bg-white p-4">
+                        <h3 className="font-semibold">{qualityLabel(row.metric_key)}</h3>
+                        <p className="mt-2 text-2xl font-semibold tabular-nums text-ink">{qualityValue(row)}</p>
+                        <p className="mt-1 text-xs text-graphite">n = {displayValue(row.sample_size)} · {row.status}</p>
+                        <div className="mt-2"><MetricDetails row={row} /></div>
+                      </article>
+                    ))}
+                  </div>
+                ) : <p className="mt-4 text-sm text-graphite">Для этого snapshot нет полного набора документированных quality metrics.</p>}
+              </section>
+
               <section className="mt-8 grid gap-5 lg:grid-cols-2" aria-label="Графики документированных показателей">
                 <article className="rounded-xl border border-ink/10 bg-white/75 p-5">
                   <h2 className="text-lg font-semibold">Карточки по primary source</h2>

@@ -19,6 +19,26 @@ from app.main import create_app
 AUTHORIZATION = {"Authorization": "Bearer internal-test-token"}
 
 
+def _quality_metrics(snapshot_id: str, data_class: str) -> dict[str, dict[str, object]]:
+    return {
+        name: {
+            "value": 0.5,
+            "formula": "numerator / denominator; null when denominator = 0",
+            "unit": "share",
+            "period": {"kind": "point_in_time", "as_of": "2026-09-25T12:00:00Z"},
+            "filter": "eligible records in the frozen snapshot",
+            "missing": "null when the denominator is zero",
+            "numerator": 1,
+            "denominator": 2,
+            "sample_size": 2,
+            "snapshot_id": snapshot_id,
+            "data_class": data_class,
+            "limitation": "Connected sources only.",
+        }
+        for name in ("freshness", "completeness", "conflicts", "source_coverage", "review_status")
+    }
+
+
 def _snapshot(
     *,
     data_class: str = "real",
@@ -31,7 +51,7 @@ def _snapshot(
         "snapshot_id": str(snapshot_id),
         "metrics": {"opportunities.count": {"value": 4}},
     }
-    metrics = {"baseline": baseline}
+    metrics = {**_quality_metrics(str(snapshot_id), data_class), "baseline": baseline}
     if manifest_version == INPUT_MANIFEST_VERSION:
         metrics["regional_indicators"] = {
             "version": REGIONAL_INDICATORS_VERSION,
@@ -85,6 +105,7 @@ def test_snapshot_list_requires_auth_and_returns_safe_capability_metadata(monkey
     assert current["data_class"] == "real"
     assert current["program_count"] == 4
     assert current["capabilities"] == {
+        "quality": True,
         "baseline": True,
         "regional_indicators": True,
         "network": True,
@@ -112,6 +133,7 @@ def test_snapshot_list_marks_unsupported_source_scope_and_legacy_capabilities(mo
     old = items[str(legacy.id)]
     assert old["compatible"] is True
     assert old["capabilities"] == {
+        "quality": True,
         "baseline": True,
         "regional_indicators": False,
         "network": False,

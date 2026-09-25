@@ -43,7 +43,7 @@ function snapshot(snapshotId: string, inputFingerprint: string): ResearchSnapsho
     data_class: 'real',
     program_source_keys: ['potanin-competitions', 'timchenko-competitions'],
     program_count: 4,
-    capabilities: { baseline: true, regional_indicators: true, network: true, temporal_series: true },
+    capabilities: { quality: true, baseline: true, regional_indicators: true, network: true, temporal_series: true },
     compatible: true,
     exclusion_reasons: [],
     limitations: ['Only connected sources.']
@@ -65,6 +65,20 @@ function researchData(): ResearchData {
       program_source_keys: ['potanin-competitions'],
       program_count: 4,
       limitations: ['Only connected sources.']
+    },
+    quality_metrics: {
+      version: 'catalog-quality-metrics/v1',
+      snapshot_id: firstId,
+      data_class: 'real',
+      metrics: {
+        freshness: metric(firstId, 0.75, { unit: 'share' }),
+        completeness: metric(firstId, 0.5, { unit: 'share' }),
+        conflicts: metric(firstId, 0, { unit: 'share' }),
+        source_coverage: metric(firstId, 0.5, { unit: 'share' }),
+        review_status: metric(firstId, 0.25, { unit: 'share' }),
+        undocumented_quality: metric(firstId, 1)
+      },
+      limitations: ['Snapshot-level quality only.']
     },
     baseline: {
       version: 'catalog-baseline/v1',
@@ -162,6 +176,8 @@ describe('documented research exports', () => {
 
   it('sanitizes undocumented metrics and network detail before export', () => {
     const clean = documentedResearchData(researchData());
+    expect(clean.quality_metrics?.metrics).toHaveProperty('freshness');
+    expect(clean.quality_metrics?.metrics).not.toHaveProperty('undocumented_quality');
     expect(clean.baseline?.metrics).toHaveProperty('opportunities.count');
     expect(clean.baseline?.metrics).not.toHaveProperty('unregistered.metric');
     const network = clean.network?.dimensions as Record<string, Record<string, unknown>>;
@@ -200,15 +216,18 @@ describe('documented research exports', () => {
       [secondId]: 'catalog-quality/v3'
     });
     expect(first.metadata.calculation_code_version.metric_versions).toMatchObject({
+      quality_metrics: 'catalog-quality-metrics/v1',
       baseline: 'catalog-baseline/v1',
       regional_indicators: 'catalog-regional-indicators/v1',
       network: 'catalog-network/v1',
       temporal_series: 'catalog-temporal/v1'
     });
+    expect(first.metadata.calculation_code_version.application_version).toBe('0.9.0');
+    expect(first.metadata.calculation_code_version.source_revision).toMatch(/^[a-f0-9]{40}$/i);
+    expect(typeof first.metadata.calculation_code_version.source_tree_dirty).toBe('boolean');
     expect(first.metadata.parameters).toEqual(parameters);
     expect(first.metadata.exported_at).toBe('2026-09-26T09:30:00.000Z');
     expect(first.metadata.data_sha256).toMatch(/^[a-f0-9]{64}$/);
-    expect(first.metadata.calculation_code_version.source_revision).toBeNull();
   });
 
   it('refuses non-real data and temporal references without an eligible fingerprint', async () => {
