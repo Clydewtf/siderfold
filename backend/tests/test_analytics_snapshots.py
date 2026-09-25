@@ -79,9 +79,9 @@ def _registry() -> SourceRegistry:
         )
 
     definitions = (
-        definition("official-alpha", "https://alpha.example.test/catalog"),
-        definition("official-beta", "https://beta.example.test/catalog"),
-        definition("telegram-discovery", "https://t.me/cptgrantov"),
+        definition("potanin-competitions", "https://alpha.example.test/catalog"),
+        definition("timchenko-competitions", "https://beta.example.test/catalog"),
+        definition("telegram-cptgrantov-discovery", "https://t.me/cptgrantov"),
         definition(
             "fixture-catalog",
             "https://fixture.example.test/catalog",
@@ -431,13 +431,13 @@ def test_snapshot_freezes_real_catalog_inputs_and_excludes_fixture_data(
         _insert_execution(
             connection,
             source_id=alpha_source_id,
-            source_key="official-alpha",
+            source_key="potanin-competitions",
             status=SourceExecutionStatus.SUCCEEDED,
         )
         _insert_execution(
             connection,
             source_id=beta_source_id,
-            source_key="official-beta",
+            source_key="timchenko-competitions",
             status=SourceExecutionStatus.FAILED,
         )
 

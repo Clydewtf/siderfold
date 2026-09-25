@@ -41,6 +41,17 @@ class InternalErrorResponse(InternalSchema):
     error: InternalError
 
 
+class InternalAnalyticsBaselineResponse(InternalSchema):
+    snapshot_id: UUID
+    scope: str
+    calculation_version: str
+    as_of: datetime
+    input_fingerprint: str
+    data_class: str
+    baseline: dict[str, Any]
+    comparison: dict[str, Any] | None = None
+
+
 class InternalSource(InternalSchema):
     id: UUID
     name: str

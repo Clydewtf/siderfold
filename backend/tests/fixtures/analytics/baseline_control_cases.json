@@ -1,0 +1,138 @@
+{
+  "as_of": "2026-09-01T12:00:00+00:00",
+  "freshness_window_days": 30,
+  "data_class": "synthetic",
+  "programs": [
+    {
+      "program_id": "synthetic-exact",
+      "source_key": "potanin-competitions",
+      "observed_at": "2026-08-31T12:00:00+00:00",
+      "title_present": true,
+      "source_url_present": true,
+      "deadline_on": "2026-09-11",
+      "deadline_present": true,
+      "funding_present": true,
+      "funding_value_kind": "exact",
+      "funding_currency_code": "RUB",
+      "funding_exact_amount": "100.00",
+      "funding_min_amount": null,
+      "funding_max_amount": null
+    },
+    {
+      "program_id": "synthetic-minimum",
+      "source_key": "potanin-competitions",
+      "observed_at": "2026-08-30T12:00:00+00:00",
+      "title_present": true,
+      "source_url_present": true,
+      "deadline_on": "2026-09-21",
+      "deadline_present": true,
+      "funding_present": true,
+      "funding_value_kind": "minimum",
+      "funding_currency_code": "RUB",
+      "funding_exact_amount": null,
+      "funding_min_amount": "200.00",
+      "funding_max_amount": null
+    },
+    {
+      "program_id": "synthetic-maximum",
+      "source_key": "timchenko-competitions",
+      "observed_at": "2026-08-29T12:00:00+00:00",
+      "title_present": true,
+      "source_url_present": true,
+      "deadline_on": "2026-10-01",
+      "deadline_present": true,
+      "funding_present": true,
+      "funding_value_kind": "maximum",
+      "funding_currency_code": "RUB",
+      "funding_exact_amount": null,
+      "funding_min_amount": null,
+      "funding_max_amount": "500.00"
+    },
+    {
+      "program_id": "synthetic-range",
+      "source_key": "timchenko-competitions",
+      "observed_at": "2026-08-28T12:00:00+00:00",
+      "title_present": true,
+      "source_url_present": true,
+      "deadline_on": "2026-08-27",
+      "deadline_present": true,
+      "funding_present": true,
+      "funding_value_kind": "range",
+      "funding_currency_code": "RUB",
+      "funding_exact_amount": null,
+      "funding_min_amount": "100.00",
+      "funding_max_amount": "300.00"
+    },
+    {
+      "program_id": "synthetic-unknown",
+      "source_key": "potanin-competitions",
+      "observed_at": "2026-07-20T12:00:00+00:00",
+      "title_present": true,
+      "source_url_present": true,
+      "deadline_on": null,
+      "deadline_present": false,
+      "funding_present": true,
+      "funding_value_kind": "unknown",
+      "funding_currency_code": null,
+      "funding_exact_amount": null,
+      "funding_min_amount": null,
+      "funding_max_amount": null
+    },
+    {
+      "program_id": "synthetic-not-stated",
+      "source_key": "timchenko-competitions",
+      "observed_at": "2026-07-19T12:00:00+00:00",
+      "title_present": true,
+      "source_url_present": true,
+      "deadline_on": null,
+      "deadline_present": false,
+      "funding_present": true,
+      "funding_value_kind": "not_stated",
+      "funding_currency_code": null,
+      "funding_exact_amount": null,
+      "funding_min_amount": null,
+      "funding_max_amount": null
+    },
+    {
+      "program_id": "synthetic-no-funding",
+      "source_key": "potanin-competitions",
+      "observed_at": "2026-07-18T12:00:00+00:00",
+      "title_present": true,
+      "source_url_present": true,
+      "deadline_on": "2026-09-01",
+      "deadline_present": true,
+      "funding_present": false,
+      "funding_value_kind": null,
+      "funding_currency_code": null,
+      "funding_exact_amount": null,
+      "funding_min_amount": null,
+      "funding_max_amount": null
+    }
+  ],
+  "review_cases": [
+    {"case_type": "canonical", "status": "open", "has_explicit_conflict": true},
+    {"case_type": "canonical", "status": "needs_clarification", "has_explicit_conflict": false}
+  ],
+  "source_executions": [
+    {"source_key": "potanin-competitions", "status": "succeeded", "dry_run": false},
+    {"source_key": "timchenko-competitions", "status": "failed", "dry_run": false},
+    {"source_key": "telegram-cptgrantov-discovery", "status": "succeeded", "dry_run": false}
+  ],
+  "expected": {
+    "opportunities_count": 7,
+    "source_counts": {"potanin-competitions": 4, "timchenko-competitions": 3},
+    "funding_record_share": {"numerator": 6, "denominator": 7},
+    "numeric_funding_share": {"numerator": 4, "denominator": 7},
+    "funding_missingness": {"unknown": 1, "not_stated": 1, "missing_record": 1},
+    "deadline_presence_share": {"numerator": 5, "denominator": 7},
+    "upcoming_deadline_share": {"numerator": 4, "denominator": 7},
+    "overdue_deadline_count": 1,
+    "upcoming_deadline_days": {"Q25": 7.5, "median": 15, "Q75": 22.5},
+    "quality": {
+      "completeness": {"numerator": 4, "denominator": 7},
+      "freshness": {"numerator": 4, "denominator": 7},
+      "conflicts": {"numerator": 1, "denominator": 2},
+      "source_coverage": {"numerator": 2, "denominator": 3}
+    }
+  }
+}

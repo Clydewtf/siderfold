@@ -10,10 +10,17 @@ from fastapi.responses import JSONResponse
 from sqlalchemy import asc, desc, func, select
 from sqlalchemy.engine import Connection
 
+from app.analytics.baseline import BASELINE_METRICS_VERSION, compare_snapshot_counts
+from app.analytics.snapshots import (
+    INPUT_MANIFEST_VERSION,
+    AnalyticsSnapshotError,
+    get_analytics_snapshot,
+)
 from app.api.internal.auth import InternalAccess, require_internal_access
 from app.api.internal.schemas import (
     CanonicalReviewActionRequest,
     CanonicalReviewActionResponse,
+    InternalAnalyticsBaselineResponse,
     DiscoveryReviewActionRequest,
     DiscoveryReviewActionResponse,
     InternalDiscoveryReviewQueueItem,
@@ -176,6 +183,64 @@ def require_idempotency_key(
             message="Idempotency-Key must be at most 255 characters.",
         )
     return value.strip()
+
+
+@router.get(
+    "/analytics/snapshots/{snapshot_id}/baseline",
+    response_model=InternalAnalyticsBaselineResponse,
+)
+def get_internal_analytics_baseline(
+    snapshot_id: UUID,
+    compare_to: UUID | None = Query(default=None),
+    connection: Connection = Depends(get_internal_database_connection),
+) -> InternalAnalyticsBaselineResponse:
+    snapshot = get_analytics_snapshot(connection, snapshot_id)
+    if snapshot is None:
+        raise InternalApiError(
+            status_code=status.HTTP_404_NOT_FOUND,
+            code="analytics_snapshot_not_found",
+            message="The requested analytics snapshot does not exist.",
+        )
+    baseline = snapshot.metrics.get("baseline")
+    if (
+        snapshot.input_manifest.get("version") != INPUT_MANIFEST_VERSION
+        or not isinstance(baseline, Mapping)
+        or baseline.get("version") != BASELINE_METRICS_VERSION
+    ):
+        raise InternalApiError(
+            status_code=status.HTTP_409_CONFLICT,
+            code="baseline_metrics_unavailable",
+            message="This snapshot predates the baseline metrics calculation.",
+        )
+
+    comparison: dict[str, Any] | None = None
+    if compare_to is not None:
+        previous = get_analytics_snapshot(connection, compare_to)
+        if previous is None:
+            raise InternalApiError(
+                status_code=status.HTTP_404_NOT_FOUND,
+                code="comparison_snapshot_not_found",
+                message="The requested comparison snapshot does not exist.",
+            )
+        try:
+            comparison = compare_snapshot_counts(snapshot, previous)
+        except (KeyError, TypeError, AnalyticsSnapshotError) as error:
+            raise InternalApiError(
+                status_code=status.HTTP_409_CONFLICT,
+                code="snapshot_comparison_invalid",
+                message="The snapshots do not contain comparable baseline metrics.",
+            ) from error
+
+    return InternalAnalyticsBaselineResponse(
+        snapshot_id=snapshot.id,
+        scope=snapshot.scope,
+        calculation_version=snapshot.calculation_version,
+        as_of=snapshot.as_of,
+        input_fingerprint=snapshot.input_fingerprint,
+        data_class=str(snapshot.input_manifest.get("data_class", "unknown")),
+        baseline=dict(baseline),
+        comparison=comparison,
+    )
 
 
 def _reason_codes(opened_snapshot: object) -> list[str]:

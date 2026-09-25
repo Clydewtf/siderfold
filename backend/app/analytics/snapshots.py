@@ -7,12 +7,13 @@ from datetime import datetime, timedelta, timezone
 from hashlib import sha256
 import json
 from typing import Any
-from uuid import UUID, uuid4
+from uuid import NAMESPACE_URL, UUID, uuid5
 
-from sqlalchemy import select
+from sqlalchemy import select, text
 from sqlalchemy.dialects.postgresql import insert as postgresql_insert
 from sqlalchemy.engine import Connection
 
+from app.analytics.baseline import BaselineMetricsError, calculate_baseline_metrics
 from app.domain.models import (
     AnalyticsSnapshot,
     DataQualityIssue,
@@ -43,14 +44,19 @@ from app.sources.registry import (
 
 
 SNAPSHOT_SCOPE = "published_catalog_quality"
-CALCULATION_VERSION = "catalog-quality/v1"
-INPUT_MANIFEST_VERSION = "catalog-quality-input/v1"
+CALCULATION_VERSION = "catalog-quality/v2"
+INPUT_MANIFEST_VERSION = "catalog-quality-input/v2"
 FRESHNESS_WINDOW_DAYS = 30
+FASIE_SOURCE_KEY = "fasie-competitions"
+TELEGRAM_SOURCE_KEY = "telegram-cptgrantov-discovery"
+PROGRAM_SOURCE_KEYS = frozenset({"potanin-competitions", "timchenko-competitions"})
+RESEARCH_SOURCE_KEYS = PROGRAM_SOURCE_KEYS | {TELEGRAM_SOURCE_KEY}
 
 SNAPSHOT_LIMITATIONS = (
     "Метрики отражают только зафиксированный набор подключённых источников и не описывают весь рынок возможностей.",
     "Полнота показывает наличие минимальных полей в опубликованной карточке, а не достоверность каждого внешнего факта.",
     "Давность измеряет возраст наблюдения первоисточника, а не гарантирует отсутствие изменений на его стороне.",
+    "Финансовые квантили описывают только числовые записи отдельно по валюте и виду значения; они не корректируют scope выплат или смещение пропусков.",
 )
 
 
@@ -155,12 +161,23 @@ def _registry_scope(
             "adapter_name": definition.adapter_name,
             "adapter_version": definition.adapter_version,
         }
+        if source_key == FASIE_SOURCE_KEY or definition.adapter_name == FASIE_SOURCE_KEY:
+            excluded_entries.append({**entry, "reason": "research_protocol_exclusion"})
+            continue
+        if (
+            definition.status is SourceRegistryStatus.ACTIVE
+            and definition.access_method is not SourceAccessMethod.FIXTURE
+            and source_key in RESEARCH_SOURCE_KEYS
+        ):
+            active_real_sources[canonical_url] = definition
+            active_entries.append(entry)
+            continue
+
         if (
             definition.status is SourceRegistryStatus.ACTIVE
             and definition.access_method is not SourceAccessMethod.FIXTURE
         ):
-            active_real_sources[canonical_url] = definition
-            active_entries.append(entry)
+            excluded_entries.append({**entry, "reason": "research_protocol_exclusion"})
             continue
 
         reason = (
@@ -174,6 +191,11 @@ def _registry_scope(
         {
             "registry_version": registry.version,
             "active_real_sources": active_entries,
+            "program_sources": [
+                entry
+                for entry in active_entries
+                if entry["source_key"] in PROGRAM_SOURCE_KEYS
+            ],
             "excluded_sources": excluded_entries,
         },
         all_sources,
@@ -197,7 +219,51 @@ def _source_exclusion_reason(
         return "unregistered_source"
     if definition.access_method is SourceAccessMethod.FIXTURE:
         return "fixture_source"
+    if (
+        definition.source_key == FASIE_SOURCE_KEY
+        or definition.adapter_name == FASIE_SOURCE_KEY
+    ):
+        return "research_protocol_exclusion"
+    if definition.status is not SourceRegistryStatus.ACTIVE:
+        return "inactive_source"
+    if definition.source_key not in RESEARCH_SOURCE_KEYS:
+        return "research_protocol_exclusion"
     return "inactive_source"
+
+
+def _excluded_canonical_urls(
+    all_sources: Mapping[str, SourceDefinition],
+    *,
+    include_telegram_operational: bool = False,
+) -> tuple[str, ...]:
+    return tuple(
+        sorted(
+            canonical_url
+            for canonical_url, definition in all_sources.items()
+            if definition.source_key == FASIE_SOURCE_KEY
+            or definition.adapter_name == FASIE_SOURCE_KEY
+            or (
+                definition.status is SourceRegistryStatus.ACTIVE
+                and definition.access_method is not SourceAccessMethod.FIXTURE
+                and definition.source_key not in (
+                    RESEARCH_SOURCE_KEYS
+                    if include_telegram_operational
+                    else PROGRAM_SOURCE_KEYS
+                )
+            )
+        )
+    )
+
+
+def _database_data_class(connection: Connection) -> str:
+    """Distinguish isolated test databases from operational snapshots."""
+
+    database_name = connection.execute(text("select current_database()")).scalar_one_or_none()
+    if not isinstance(database_name, str) or not database_name:
+        return "unknown"
+    if database_name.endswith("_test"):
+        return "test"
+    return "real"
 
 
 def _source_key(canonical_url: str, active_real_sources: Mapping[str, SourceDefinition]) -> str:
@@ -218,7 +284,8 @@ def _collect_programs(
     all_sources: Mapping[str, SourceDefinition],
     active_real_sources: Mapping[str, SourceDefinition],
 ) -> tuple[list[dict[str, Any]], dict[str, int]]:
-    rows = connection.execute(
+    excluded_urls = _excluded_canonical_urls(all_sources)
+    statement = (
         select(
             Program.id,
             Program.title,
@@ -231,6 +298,10 @@ def _collect_programs(
             ProgramSource.observed_at,
             ProgramDeadline.deadline_on,
             ProgramFunding.value_kind.label("funding_value_kind"),
+            ProgramFunding.currency_code.label("funding_currency_code"),
+            ProgramFunding.exact_amount.label("funding_exact_amount"),
+            ProgramFunding.min_amount.label("funding_min_amount"),
+            ProgramFunding.max_amount.label("funding_max_amount"),
         )
         .select_from(Program)
         .join(
@@ -242,7 +313,10 @@ def _collect_programs(
         .outerjoin(ProgramDeadline, ProgramDeadline.program_id == Program.id)
         .outerjoin(ProgramFunding, ProgramFunding.program_id == Program.id)
         .order_by(Program.id)
-    ).mappings()
+    )
+    if excluded_urls:
+        statement = statement.where(Source.canonical_url.not_in(excluded_urls))
+    rows = connection.execute(statement).mappings()
     exclusions: Counter[str] = Counter()
     programs: list[dict[str, Any]] = []
     for row in rows:
@@ -279,11 +353,28 @@ def _collect_programs(
                 "title_present": bool(row["title"].strip()),
                 "source_url_present": bool(row["source_url"].strip()),
                 "observed_at": _timestamp(observed_at),
+                "deadline_on": row["deadline_on"].isoformat() if row["deadline_on"] else None,
                 "deadline_present": row["deadline_on"] is not None,
                 "funding_present": row["funding_value_kind"] is not None,
                 "funding_value_kind": (
                     _enum_value(row["funding_value_kind"])
                     if row["funding_value_kind"] is not None
+                    else None
+                ),
+                "funding_currency_code": row["funding_currency_code"],
+                "funding_exact_amount": (
+                    format(row["funding_exact_amount"], "f")
+                    if row["funding_exact_amount"] is not None
+                    else None
+                ),
+                "funding_min_amount": (
+                    format(row["funding_min_amount"], "f")
+                    if row["funding_min_amount"] is not None
+                    else None
+                ),
+                "funding_max_amount": (
+                    format(row["funding_max_amount"], "f")
+                    if row["funding_max_amount"] is not None
                     else None
                 ),
             }
@@ -323,27 +414,31 @@ def _collect_canonical_review_cases(
     all_sources: Mapping[str, SourceDefinition],
     active_real_sources: Mapping[str, SourceDefinition],
 ) -> tuple[list[dict[str, Any]], dict[str, int]]:
+    excluded_urls = _excluded_canonical_urls(all_sources)
+    statement = (
+        select(
+            ReviewCase.id,
+            ReviewCase.staged_record_id,
+            ReviewCase.status,
+            ReviewCase.opened_at,
+            ReviewCase.resolved_at,
+            ReviewCase.updated_at,
+            ReviewCase.opened_snapshot,
+            IngestionRun.source_id,
+            Source.canonical_url.label("source_canonical_url"),
+        )
+        .select_from(ReviewCase)
+        .join(StagedRecord, StagedRecord.id == ReviewCase.staged_record_id)
+        .join(RawCapture, RawCapture.id == StagedRecord.raw_capture_id)
+        .join(IngestionRun, IngestionRun.id == RawCapture.ingestion_run_id)
+        .join(Source, Source.id == IngestionRun.source_id)
+        .where(ReviewCase.opened_at <= as_of)
+        .order_by(ReviewCase.id)
+    )
+    if excluded_urls:
+        statement = statement.where(Source.canonical_url.not_in(excluded_urls))
     rows = list(
-        connection.execute(
-            select(
-                ReviewCase.id,
-                ReviewCase.staged_record_id,
-                ReviewCase.status,
-                ReviewCase.opened_at,
-                ReviewCase.resolved_at,
-                ReviewCase.updated_at,
-                ReviewCase.opened_snapshot,
-                IngestionRun.source_id,
-                Source.canonical_url.label("source_canonical_url"),
-            )
-            .select_from(ReviewCase)
-            .join(StagedRecord, StagedRecord.id == ReviewCase.staged_record_id)
-            .join(RawCapture, RawCapture.id == StagedRecord.raw_capture_id)
-            .join(IngestionRun, IngestionRun.id == RawCapture.ingestion_run_id)
-            .join(Source, Source.id == IngestionRun.source_id)
-            .where(ReviewCase.opened_at <= as_of)
-            .order_by(ReviewCase.id)
-        ).mappings()
+        connection.execute(statement).mappings()
     )
     quality_codes = _quality_codes_by_staged_record(
         connection,
@@ -527,7 +622,11 @@ def _collect_source_executions(
     all_sources: Mapping[str, SourceDefinition],
     active_real_sources: Mapping[str, SourceDefinition],
 ) -> tuple[list[dict[str, Any]], dict[str, int]]:
-    rows = connection.execute(
+    excluded_urls = _excluded_canonical_urls(
+        all_sources,
+        include_telegram_operational=True,
+    )
+    statement = (
         select(
             SourceExecutionRun.id,
             SourceExecutionRun.source_id,
@@ -545,7 +644,10 @@ def _collect_source_executions(
             SourceExecutionRun.finished_at <= as_of,
         )
         .order_by(SourceExecutionRun.finished_at, SourceExecutionRun.id)
-    ).mappings()
+    )
+    if excluded_urls:
+        statement = statement.where(Source.canonical_url.not_in(excluded_urls))
+    rows = connection.execute(statement).mappings()
     exclusions: Counter[str] = Counter()
     executions: list[dict[str, Any]] = []
     for row in rows:
@@ -582,11 +684,11 @@ def build_input_manifest(
     as_of: datetime,
     freshness_window_days: int = FRESHNESS_WINDOW_DAYS,
 ) -> tuple[dict[str, Any], dict[str, Any]]:
-    """Freeze the facts used by the catalog quality formulas.
+    """Freeze the facts used by the catalog quality and baseline formulas.
 
-    The caller owns a repeatable-read transaction. The returned manifest contains
-    identifiers and field-presence facts only; raw captures and review payloads
-    are deliberately not copied into the analytics layer.
+    The caller owns a repeatable-read transaction. The manifest contains
+    identifiers, field-presence facts, normalized deadline dates, and decimal
+    amount values; raw captures and review payloads are not copied.
     """
 
     if freshness_window_days < 1:
@@ -620,6 +722,7 @@ def build_input_manifest(
     )
     input_manifest = {
         "version": INPUT_MANIFEST_VERSION,
+        "data_class": _database_data_class(connection),
         "as_of": _timestamp(as_of),
         "freshness_window_days": freshness_window_days,
         "programs": programs,
@@ -689,6 +792,7 @@ def calculate_quality_metrics(
     *,
     source_scope: Mapping[str, Any],
     input_manifest: Mapping[str, Any],
+    snapshot_id: str | None = None,
 ) -> dict[str, Any]:
     """Calculate catalog quality metrics from a frozen manifest, never live rows."""
 
@@ -779,7 +883,7 @@ def calculate_quality_metrics(
     }
     point_in_time = {"kind": "point_in_time", "as_of": _timestamp(as_of)}
 
-    return {
+    metrics = {
         "freshness": _metric(
             definition=(
                 "Доля опубликованных программ из активных реальных источников, "
@@ -855,6 +959,39 @@ def calculate_quality_metrics(
             extra={"status_counts": status_counts},
         ),
     }
+    metric_missing = "no implicit zero; null value when the denominator is zero"
+    metric_contexts = {
+        "freshness": {
+            "filter": "published programs from active eligible non-fixture sources; observed_at compared with rolling window",
+            "sample_unit": "program",
+        },
+        "completeness": {
+            "filter": "published programs from active eligible non-fixture sources at as_of",
+            "sample_unit": "program",
+        },
+        "conflicts": {
+            "filter": "canonical ReviewCase with open/needs_clarification status at as_of",
+            "sample_unit": "canonical review case",
+        },
+        "source_coverage": {
+            "filter": "active non-fixture/non-FASIE registry keys and non-dry-run execution in rolling window",
+            "sample_unit": "source",
+        },
+        "review_status": {
+            "filter": "attributed canonical/discovery ReviewCase not updated after as_of",
+            "sample_unit": "review case",
+        },
+    }
+    for name, metric in metrics.items():
+        metric["snapshot_id"] = snapshot_id
+        metric["data_class"] = input_manifest.get("data_class", "unknown")
+        metric["sample_size"] = metric["denominator"]
+        metric["unit"] = "share"
+        metric["sample_unit"] = metric_contexts[name]["sample_unit"]
+        metric["filter"] = metric_contexts[name]["filter"]
+        metric["missing"] = metric_missing
+        metric["formula"] = "numerator / denominator; null when denominator = 0"
+    return metrics
 
 
 def _record_from_row(row: Mapping[str, Any]) -> AnalyticsSnapshotRecord:
@@ -912,7 +1049,7 @@ def create_analytics_snapshot(
     as_of: datetime | None = None,
     freshness_window_days: int = FRESHNESS_WINDOW_DAYS,
 ) -> AnalyticsSnapshotResult:
-    """Persist one idempotent quality snapshot inside the caller's transaction."""
+    """Persist one idempotent quality and baseline snapshot in the caller's transaction."""
 
     resolved_as_of = _as_utc(as_of)
     source_scope, input_manifest = build_input_manifest(
@@ -920,10 +1057,6 @@ def create_analytics_snapshot(
         registry=registry,
         as_of=resolved_as_of,
         freshness_window_days=freshness_window_days,
-    )
-    metrics = calculate_quality_metrics(
-        source_scope=source_scope,
-        input_manifest=input_manifest,
     )
     registry_fingerprint = _fingerprint(source_scope)
     input_fingerprint = _fingerprint(
@@ -936,10 +1069,17 @@ def create_analytics_snapshot(
             "input_manifest": input_manifest,
         }
     )
+    snapshot_id = uuid5(NAMESPACE_URL, f"siderfold:analytics:{input_fingerprint}")
+    metrics = calculate_snapshot_metrics(
+        snapshot_id=snapshot_id,
+        source_scope=source_scope,
+        input_manifest=input_manifest,
+        input_fingerprint=input_fingerprint,
+    )
     snapshot_id = connection.scalar(
         postgresql_insert(AnalyticsSnapshot)
         .values(
-            id=uuid4(),
+            id=snapshot_id,
             scope=SNAPSHOT_SCOPE,
             calculation_version=CALCULATION_VERSION,
             as_of=resolved_as_of,
@@ -972,7 +1112,38 @@ def create_analytics_snapshot(
 def recalculate_snapshot_metrics(snapshot: AnalyticsSnapshotRecord) -> dict[str, Any]:
     """Recalculate a persisted snapshot without reading mutable catalog rows."""
 
-    return calculate_quality_metrics(
+    if snapshot.input_manifest.get("version") != INPUT_MANIFEST_VERSION:
+        raise AnalyticsSnapshotError(
+            "baseline recalculation requires a catalog-quality-input/v2 snapshot"
+        )
+    return calculate_snapshot_metrics(
+        snapshot_id=snapshot.id,
         source_scope=snapshot.source_scope,
         input_manifest=snapshot.input_manifest,
+        input_fingerprint=snapshot.input_fingerprint,
     )
+
+
+def calculate_snapshot_metrics(
+    *,
+    snapshot_id: UUID | str,
+    source_scope: Mapping[str, Any],
+    input_manifest: Mapping[str, Any],
+    input_fingerprint: str,
+) -> dict[str, Any]:
+    snapshot_key = str(snapshot_id)
+    metrics = calculate_quality_metrics(
+        source_scope=source_scope,
+        input_manifest=input_manifest,
+        snapshot_id=snapshot_key,
+    )
+    try:
+        metrics["baseline"] = calculate_baseline_metrics(
+            source_scope=source_scope,
+            input_manifest=input_manifest,
+            input_fingerprint=input_fingerprint,
+            snapshot_id=snapshot_key,
+        )
+    except BaselineMetricsError as error:
+        raise AnalyticsSnapshotError(str(error)) from error
+    return metrics
