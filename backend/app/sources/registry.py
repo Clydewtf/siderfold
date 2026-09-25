@@ -184,16 +184,31 @@ class TelegramChannelConfig(BaseModel):
 
 
 class FasieSourceConfig(BaseModel):
-    """Typed discovery bounds for the public FASIE press source."""
+    """Typed, read-only discovery bounds for public FASIE inventories."""
 
     model_config = ConfigDict(extra="forbid")
 
     home_url: str = Field(min_length=1, max_length=2_048)
     press_feed_url: str = Field(min_length=1, max_length=2_048)
+    online_competitions_url: str = Field(min_length=1, max_length=2_048)
+    online_competitions_api_url: str = Field(min_length=1, max_length=2_048)
+    programs_url: str = Field(min_length=1, max_length=2_048)
+    competitions_archive_url: str = Field(min_length=1, max_length=2_048)
     lookback_days: int = Field(default=365, ge=1, le=3650)
     max_feed_pages: int = Field(default=90, ge=1, le=90)
+    max_program_pages: int = Field(default=24, ge=1, le=50)
+    max_archive_entries: int = Field(default=120, ge=1, le=300)
+    max_artifact_requests: int = Field(default=48, ge=0, le=300)
+    min_request_interval_seconds: int = Field(default=2, ge=0, le=60)
 
-    @field_validator("home_url", "press_feed_url")
+    @field_validator(
+        "home_url",
+        "press_feed_url",
+        "online_competitions_url",
+        "online_competitions_api_url",
+        "programs_url",
+        "competitions_archive_url",
+    )
     @classmethod
     def normalize_urls(cls, value: str) -> str:
         normalized = normalize_url(value)
@@ -206,6 +221,10 @@ class FasieSourceConfig(BaseModel):
     def validate_public_paths(self) -> FasieSourceConfig:
         home = _parsed_http_url(self.home_url)
         feed = _parsed_http_url(self.press_feed_url)
+        online = _parsed_http_url(self.online_competitions_url)
+        online_api = _parsed_http_url(self.online_competitions_api_url)
+        programs = _parsed_http_url(self.programs_url)
+        archive = _parsed_http_url(self.competitions_archive_url)
         if (
             home.scheme.lower() != "https"
             or home.hostname.lower() not in {"fasie.ru", "www.fasie.ru"}
@@ -220,6 +239,36 @@ class FasieSourceConfig(BaseModel):
             or feed.query
         ):
             raise ValueError("press_feed_url must be the HTTPS FASIE fund press feed")
+        if (
+            online.scheme.lower() != "https"
+            or online.hostname.lower() != "online.fasie.ru"
+            or online.path.rstrip("/") != "/m"
+            or online.query
+        ):
+            raise ValueError("online_competitions_url must be the public HTTPS FASIE /m/ inventory")
+        if (
+            online_api.scheme.lower() != "https"
+            or online_api.hostname.lower() != "online.fasie.ru"
+            or online_api.path.rstrip("/") != "/api/v2/get-public-common-info"
+            or online_api.query
+        ):
+            raise ValueError(
+                "online_competitions_api_url must be the public HTTPS FASIE inventory API"
+            )
+        if (
+            programs.scheme.lower() != "https"
+            or programs.hostname.lower() not in {"fasie.ru", "www.fasie.ru"}
+            or programs.path.rstrip("/") != "/programs"
+            or programs.query
+        ):
+            raise ValueError("programs_url must be the HTTPS FASIE programs index")
+        if (
+            archive.scheme.lower() != "https"
+            or archive.hostname.lower() not in {"fasie.ru", "www.fasie.ru"}
+            or archive.path.rstrip("/") != "/competitions"
+            or archive.query
+        ):
+            raise ValueError("competitions_archive_url must be the HTTPS FASIE competitions archive")
         return self
 
 
@@ -336,6 +385,14 @@ class SourceDefinition(BaseModel):
                 raise ValueError("fasie home_url must be covered by the source allowlist")
             if not is_url_allowed(self.fasie.press_feed_url, self):
                 raise ValueError("fasie press_feed_url must be covered by the source allowlist")
+            if not is_url_allowed(self.fasie.online_competitions_url, self):
+                raise ValueError("fasie online_competitions_url must be covered by the source allowlist")
+            if not is_url_allowed(self.fasie.online_competitions_api_url, self):
+                raise ValueError("fasie online_competitions_api_url must be covered by the source allowlist")
+            if not is_url_allowed(self.fasie.programs_url, self):
+                raise ValueError("fasie programs_url must be covered by the source allowlist")
+            if not is_url_allowed(self.fasie.competitions_archive_url, self):
+                raise ValueError("fasie competitions_archive_url must be covered by the source allowlist")
         return self
 
     def resolve_fixture_path(self, project_root: Path) -> Path:

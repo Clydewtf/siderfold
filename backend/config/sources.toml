@@ -82,13 +82,15 @@ canonical_url = "https://fasie.ru/"
 allowed_url_prefixes = [
   "https://fasie.ru",
   "https://www.fasie.ru",
+  "https://online.fasie.ru/m",
 ]
+allowed_exact_urls = ["https://online.fasie.ru/api/v2/get-public-common-info"]
 access_method = "http"
 schedule = "manual"
 status = "active"
 responsible = "siderfold-data"
 adapter_name = "fasie-competitions"
-adapter_version = "1.1.0"
+adapter_version = "1.4.0"
 secret_env_vars = []
 
 [sources.fasie-competitions.limits]
@@ -103,8 +105,16 @@ min_run_interval_seconds = 300
 [sources.fasie-competitions.fasie]
 home_url = "https://fasie.ru/"
 press_feed_url = "https://fasie.ru/press/fund/"
+online_competitions_url = "https://online.fasie.ru/m/"
+online_competitions_api_url = "https://online.fasie.ru/api/v2/get-public-common-info"
+programs_url = "https://fasie.ru/programs/"
+competitions_archive_url = "https://fasie.ru/competitions/"
 lookback_days = 365
 max_feed_pages = 90
+max_program_pages = 24
+max_archive_entries = 120
+max_artifact_requests = 48
+min_request_interval_seconds = 2
 
 [sources.telegram-cptgrantov-discovery]
 source_key = "telegram-cptgrantov-discovery"

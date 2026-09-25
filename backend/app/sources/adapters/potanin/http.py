@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable
+import json
 import os
 import tempfile
 from dataclasses import dataclass
@@ -86,6 +87,16 @@ class ResponseFetcher(Protocol):
     ) -> HttpResponse:
         ...
 
+    def post_json(
+        self,
+        url: str,
+        *,
+        payload: Mapping[str, object],
+        timeout_seconds: int,
+        max_response_bytes: int,
+    ) -> HttpResponse:
+        ...
+
 
 class UrllibResponseFetcher:
     """Small standard-library transport with a strict response-size cap."""
@@ -114,6 +125,48 @@ class UrllibResponseFetcher:
                 "User-Agent": self._user_agent,
             },
         )
+        return self._execute(
+            url,
+            request,
+            timeout_seconds=timeout_seconds,
+            max_response_bytes=max_response_bytes,
+        )
+
+    def post_json(
+        self,
+        url: str,
+        *,
+        payload: Mapping[str, object],
+        timeout_seconds: int,
+        max_response_bytes: int,
+    ) -> HttpResponse:
+        body = json.dumps(payload, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
+        request = Request(
+            encode_request_url(url),
+            data=body,
+            method="POST",
+            headers={
+                "Accept": "application/json,text/plain;q=0.9,*/*;q=0.1",
+                "Accept-Language": "ru",
+                "Content-Type": "application/json; charset=utf-8",
+                "User-Agent": self._user_agent,
+            },
+        )
+        return self._execute(
+            url,
+            request,
+            timeout_seconds=timeout_seconds,
+            max_response_bytes=max_response_bytes,
+        )
+
+    def _execute(
+        self,
+        url: str,
+        request: Request,
+        *,
+        timeout_seconds: int,
+        max_response_bytes: int,
+    ) -> HttpResponse:
         try:
             with build_opener(_ValidatedRedirects(self._redirect_validator)).open(
                 request, timeout=timeout_seconds

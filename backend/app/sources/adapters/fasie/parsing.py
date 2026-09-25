@@ -2,9 +2,10 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import date, datetime
+import json
 import re
 from typing import Any, Literal
-from urllib.parse import urljoin, urlsplit
+from urllib.parse import parse_qsl, urljoin, urlsplit
 
 from lxml import etree, html as lxml_html
 
@@ -17,16 +18,26 @@ from .normalization import (
     feed_page_url,
     identity_key,
     normalize_reference_url,
+    normalize_identity_name,
     normalize_title,
     normalize_upload_url,
     normalize_whitespace,
     parse_publication_datetime,
+    program_page_url,
     press_detail_url,
     stable_hash,
 )
 
 
-PublicationKind = Literal["launch", "extension", "amendment", "result", "opportunity", "ignore"]
+PublicationKind = Literal[
+    "launch",
+    "extension",
+    "amendment",
+    "milestone",
+    "result",
+    "opportunity",
+    "ignore",
+]
 OriginKind = Literal["first_party", "third_party"]
 
 
@@ -43,6 +54,11 @@ class FeedPublication:
     url: str
     title: str
     published_at: datetime | None
+    # The Fund's press feed mixes formal competition notices with ordinary
+    # success stories and partner news.  This is intentionally only a
+    # conservative *fetch* hint: final classification still happens from the
+    # individual publication body.
+    is_likely_lifecycle_event: bool
 
 
 @dataclass(frozen=True)
@@ -55,6 +71,60 @@ class ParsedFeedPage:
 @dataclass(frozen=True)
 class ParsedHomePage:
     competition_urls: tuple[str, ...]
+    issues: tuple[ParserIssue, ...] = ()
+
+
+@dataclass(frozen=True)
+class ParsedProgramsIndex:
+    program_urls: tuple[str, ...]
+    issues: tuple[ParserIssue, ...] = ()
+
+
+@dataclass(frozen=True)
+class ProgramCatalogEntry:
+    name: str
+    program_name: str | None
+    source_url: str
+    detail_url: str | None
+    source_status: str
+    deadline_on: date | None
+    status_evidence: str
+    conditions: str | None
+    funding: Any | None
+    funding_evidence: str | None
+    document_urls: tuple[dict[str, str], ...]
+
+
+@dataclass(frozen=True)
+class ParsedProgramPage:
+    entries: tuple[ProgramCatalogEntry, ...]
+    issues: tuple[ParserIssue, ...] = ()
+
+
+@dataclass(frozen=True)
+class ArchivePublication:
+    url: str
+    title: str
+    published_at: datetime | None
+
+
+@dataclass(frozen=True)
+class ParsedCompetitionsArchive:
+    entries: tuple[ArchivePublication, ...]
+    issues: tuple[ParserIssue, ...] = ()
+
+
+@dataclass(frozen=True)
+class OnlineCompetition:
+    name: str
+    deadline_on: date | None
+    source_url: str
+    evidence: str
+
+
+@dataclass(frozen=True)
+class ParsedOnlineCompetitions:
+    entries: tuple[OnlineCompetition, ...]
     issues: tuple[ParserIssue, ...] = ()
 
 
@@ -89,9 +159,11 @@ class ParsedPublication:
     application_urls: tuple[str, ...]
     origin_urls: tuple[str, ...]
     reference_urls: tuple[str, ...]
+    related_publication_urls: tuple[str, ...]
     document_urls: tuple[dict[str, str], ...]
     evidence: tuple[str, ...]
     issues: tuple[ParserIssue, ...] = ()
+    full_page_content: bool = True
 
 
 def _node_text(node: Any) -> str:
@@ -121,6 +193,59 @@ def _first_date_text(node: Any) -> str | None:
         text,
     )
     return match.group(0) if match else None
+
+
+_FEED_APPLICATION_PATTERN = re.compile(
+    r"\b(?:при[её]м\w*\s+заявок|подат\w*\s+заявк\w*)\b",
+    re.IGNORECASE,
+)
+_FEED_LIFECYCLE_ACTION_PATTERN = re.compile(
+    r"\b(?:"
+    r"запуск\w*|"
+    r"продлен\w*|"
+    r"продолжен\w*|"
+    r"изменен\w*|"
+    r"подведен\w*|"
+    r"итог\w*|"
+    r"результат\w*|"
+    r"объявлен\w*|"
+    r"определен\w*|"
+    r"открыт\w*|"
+    r"начал\w*"
+    r")\b",
+    re.IGNORECASE,
+)
+_FEED_LIFECYCLE_SUBJECT_PATTERN = re.compile(
+    r"\b(?:конкурс\w*|конкурсн\w*|отбор\w*|заявк\w*|победител\w*)\b",
+    re.IGNORECASE,
+)
+_FEED_SUCCESS_STORY_PATTERN = re.compile(
+    r"^\s*(?:победител\w*|грантополучател\w*|при\s+поддержке\s+фонда)\b",
+    re.IGNORECASE,
+)
+
+
+def _is_likely_feed_lifecycle_event(anchor: Any, title: str) -> bool:
+    """Screen a mixed press feed before fetching expensive detail pages.
+
+    Formal FASIE notices are visually marked with the ``notice`` class.  For
+    regular news cards we retain broad lifecycle language, but exclude a
+    common class of retrospective winner/grantee success stories.  The hint
+    must stay permissive: a retained card is still validated from its body and
+    non-FASIE partner opportunities are discarded by the adapter policy.
+    """
+
+    classes = " ".join(str(value) for value in anchor.xpath(".//@class | @class"))
+    if "notice" in classes.split():
+        return True
+    if _FEED_SUCCESS_STORY_PATTERN.search(title):
+        return False
+    if _FEED_APPLICATION_PATTERN.search(title):
+        return True
+    return bool(
+        _FEED_LIFECYCLE_ACTION_PATTERN.search(title)
+        and _FEED_LIFECYCLE_SUBJECT_PATTERN.search(title)
+    )
 
 
 def _card_title(anchor: Any) -> str:
@@ -167,37 +292,422 @@ def parse_home_page(content: bytes, *, source_url: str) -> ParsedHomePage:
     return ParsedHomePage(tuple(candidates), tuple(issues))
 
 
-def _next_pager(root: Any, *, source_url: str, issues: list[ParserIssue]) -> str | None:
-    next_urls: list[str] = []
+def parse_programs_index_page(content: bytes, *, source_url: str) -> ParsedProgramsIndex:
+    """Return the bounded list of public programme detail pages.
+
+    The FASIE index repeats those links in the header and in the page body, so
+    URL de-duplication is intentional.  Only direct children of ``/programs/``
+    are accepted; document and unrelated navigation links never enlarge the
+    crawl scope.
+    """
+
+    try:
+        root = _parse_root(content)
+    except (etree.ParserError, ValueError, TypeError) as error:
+        return ParsedProgramsIndex(
+            (),
+            (ParserIssue("error", "invalid_programs_html", "programs", str(error)),),
+        )
+    urls: list[str] = []
     for anchor in root.xpath(".//a[@href]"):
         href = anchor.get("href")
-        if not isinstance(href, str) or "/press/news/" not in href:
+        if not isinstance(href, str):
+            continue
+        try:
+            url = program_page_url(href, base_url=source_url)
+        except ValueError:
+            continue
+        if url not in urls:
+            urls.append(url)
+    if not urls:
+        return ParsedProgramsIndex(
+            (),
+            (
+                ParserIssue(
+                    "warning",
+                    "program_pages_missing",
+                    "programs",
+                    "The FASIE programs index did not expose any direct program pages.",
+                ),
+            ),
+        )
+    return ParsedProgramsIndex(tuple(urls), ())
+
+
+def _catalog_status(value: str) -> str:
+    lower = value.casefold()
+    if re.search(r"подведен\w*\s+итог|результат\w*\s+конкурс", lower):
+        return "completed"
+    if re.search(r"заверш[её]н\w*|закрыт\w*|при[её]м\s+заявок?\s+не\s+вед", lower):
+        return "closed"
+    if re.search(r"планир\w*|скоро|ожида\w*\s+открыт", lower):
+        return "upcoming"
+    if re.search(r"при[её]м\s+заяв|подать\s+заяв", lower):
+        return "open"
+    return "unknown"
+
+
+def _entry_documents(root: Any, *, entry_name: str, source_url: str) -> tuple[dict[str, str], ...]:
+    """Keep only programme documents that name the concrete competition.
+
+    A programme page can expose dozens of historic instructions.  Attaching all
+    of them to every card both wastes the artifact budget and creates misleading
+    documentation, therefore an entry needs a meaningful name match.
+    """
+
+    normalized_name = normalize_identity_name(entry_name)
+    name_tokens = {
+        token
+        for token in normalized_name.split()
+        if len(token) >= 3 and token not in {"конкурс", "программа"}
+    }
+    if not name_tokens:
+        return ()
+    documents: list[dict[str, str]] = []
+    for anchor in root.xpath(".//a[@href]"):
+        href = anchor.get("href")
+        if not isinstance(href, str):
+            continue
+        try:
+            url = normalize_upload_url(href, base_url=source_url)
+        except ValueError:
+            continue
+        label = _node_text(anchor)
+        label_tokens = set(normalize_identity_name(label).split())
+        if len(name_tokens.intersection(label_tokens)) < min(2, len(name_tokens)):
+            continue
+        item = {"url": url, "label": label[:500], "kind": "document"}
+        if item not in documents:
+            documents.append(item)
+    return tuple(documents[:12])
+
+
+def parse_program_page(content: bytes, *, source_url: str) -> ParsedProgramPage:
+    """Parse status-table entries as enrichment, not as duplicate programmes."""
+
+    try:
+        root = _parse_root(content)
+    except (etree.ParserError, ValueError, TypeError) as error:
+        return ParsedProgramPage(
+            (),
+            (ParserIssue("error", "invalid_program_html", "program", str(error)),),
+        )
+    heading = root.xpath("//h1")
+    program_name = _node_text(heading[0]) if heading else None
+    entries: list[ProgramCatalogEntry] = []
+    seen: set[tuple[str, str | None, str]] = set()
+    rows = root.xpath("//section[@id='content-tab3']//tr[td] | //table[contains(@class, 'table-konkurs')]//tr[td]")
+    for row in rows:
+        cells = [_node_text(cell) for cell in row.xpath("./td")]
+        cells = [cell for cell in cells if cell]
+        if len(cells) < 2:
+            continue
+        name = normalize_title(cells[0])
+        if not name or name.casefold() in {"конкурс", "название"}:
+            continue
+        status_evidence = cells[-1]
+        detail_url: str | None = None
+        for anchor in row.xpath(".//a[@href]"):
+            href = anchor.get("href")
+            if not isinstance(href, str):
+                continue
+            try:
+                detail_url = press_detail_url(href, base_url=source_url)
+            except ValueError:
+                continue
+            break
+        source_status = _catalog_status(status_evidence)
+        if detail_url is None and source_status == "unknown":
+            continue
+        conditions = " ".join(cells[1:-1]).strip() or None
+        funding_result = extract_grant_funding(conditions or "")
+        windows = extract_application_windows(status_evidence)
+        deadline_on = next((window.end_on for window in windows if window.end_on is not None), None)
+        key = (normalize_identity_name(name), detail_url, source_status)
+        if key in seen:
+            continue
+        seen.add(key)
+        entries.append(
+            ProgramCatalogEntry(
+                name=name,
+                program_name=program_name,
+                source_url=source_url,
+                detail_url=detail_url,
+                source_status=source_status,
+                deadline_on=deadline_on,
+                status_evidence=status_evidence,
+                conditions=conditions,
+                funding=funding_result.funding,
+                funding_evidence=funding_result.evidence,
+                document_urls=_entry_documents(root, entry_name=name, source_url=source_url),
+            )
+        )
+    if not entries:
+        return ParsedProgramPage(
+            (),
+            (
+                ParserIssue(
+                    "warning",
+                    "program_status_table_missing",
+                    "program",
+                    "The FASIE program page did not expose a usable competition status table.",
+                ),
+            ),
+        )
+    return ParsedProgramPage(tuple(entries), ())
+
+
+def parse_competitions_archive_page(content: bytes, *, source_url: str) -> ParsedCompetitionsArchive:
+    """Read the bounded FASIE result/stage archive index."""
+
+    try:
+        root = _parse_root(content)
+    except (etree.ParserError, ValueError, TypeError) as error:
+        return ParsedCompetitionsArchive(
+            (),
+            (ParserIssue("error", "invalid_competitions_archive_html", "archive", str(error)),),
+        )
+    entries: list[ArchivePublication] = []
+    for anchor in root.xpath(".//a[@href]"):
+        href = anchor.get("href")
+        if not isinstance(href, str):
+            continue
+        try:
+            url = press_detail_url(href, base_url=source_url)
+        except ValueError:
+            continue
+        title = _card_title(anchor)
+        parent = anchor.getparent()
+        ancestor = parent.getparent() if parent is not None else None
+        date_text = _first_date_text(ancestor if ancestor is not None else anchor)
+        entry = ArchivePublication(
+            url=url,
+            title=title,
+            published_at=parse_publication_datetime(date_text or ""),
+        )
+        if entry not in entries:
+            entries.append(entry)
+    if not entries:
+        return ParsedCompetitionsArchive(
+            (),
+            (
+                ParserIssue(
+                    "warning",
+                    "competitions_archive_entries_missing",
+                    "archive",
+                    "The FASIE competitions archive did not expose press publication links.",
+                ),
+            ),
+        )
+    return ParsedCompetitionsArchive(tuple(entries), ())
+
+
+_ONLINE_DEADLINE_RE = re.compile(
+    r"\b(?:до\s+)?(?P<date>\d{1,2}[./]\d{1,2}[./]\d{4})\b",
+    re.IGNORECASE,
+)
+
+
+def _online_name(value: str, date_match: re.Match[str]) -> str | None:
+    prefix = normalize_whitespace(value[: date_match.start()])
+    prefix = re.sub(r"^.*?(?:открытые\s+конкурсы|конкурсы)\s*", "", prefix, flags=re.IGNORECASE)
+    prefix = re.sub(r"\b(?:при[её]м\s+заявок?|до)\s*$", "", prefix, flags=re.IGNORECASE)
+    prefix = prefix.strip(" -–—:;,. ")
+    if not prefix or len(prefix) > 180:
+        return None
+    return normalize_title(prefix)
+
+
+def parse_online_competitions_page(content: bytes, *, source_url: str) -> ParsedOnlineCompetitions:
+    """Extract anonymous public ``online.fasie.ru/m/`` open-competition rows.
+
+    The portal has no stable individual detail URLs, so rows are intentionally
+    read only as status evidence.  The structural pass over small leaf nodes
+    prevents a parent container holding all cards from becoming a fake contest.
+    """
+
+    try:
+        root = _parse_root(content)
+    except (etree.ParserError, ValueError, TypeError) as error:
+        return ParsedOnlineCompetitions(
+            (),
+            (ParserIssue("error", "invalid_online_competitions_html", "online", str(error)),),
+        )
+    entries: list[OnlineCompetition] = []
+    seen: set[tuple[str, date | None]] = set()
+    for node in root.xpath("//a | //li | //article | //div"):
+        text = _node_text(node)
+        if not text or len(text) > 300:
+            continue
+        deadline_match = _ONLINE_DEADLINE_RE.search(text)
+        if deadline_match is None:
+            continue
+        name = _online_name(text, deadline_match)
+        if name is None:
+            continue
+        if not re.search(r"(?:старт|развитие|умник|бизнес|студенческ|инношколь|код|коммерциал)", name, re.IGNORECASE):
+            continue
+        deadline = parse_publication_datetime(deadline_match.group("date"))
+        key = (normalize_identity_name(name), deadline.date() if deadline else None)
+        if key in seen:
+            continue
+        seen.add(key)
+        entries.append(
+            OnlineCompetition(
+                name=name,
+                deadline_on=deadline.date() if deadline else None,
+                source_url=source_url,
+                evidence=text[:1_000],
+            )
+        )
+    if not entries:
+        return ParsedOnlineCompetitions(
+            (),
+            (
+                ParserIssue(
+                    "warning",
+                    "online_competitions_missing",
+                    "online",
+                    "The public FASIE portal did not expose recognizable open competition rows.",
+                ),
+            ),
+        )
+    return ParsedOnlineCompetitions(tuple(entries), ())
+
+
+def parse_online_competitions_api(content: bytes, *, source_url: str) -> ParsedOnlineCompetitions:
+    """Parse the anonymous ``get-public-common-info`` inventory response.
+
+    ``online.fasie.ru/m/`` is an Angular shell, not server-rendered content.
+    The page itself calls this public, unauthenticated endpoint to render the
+    open-contest rows.  Interest-gathering rows are intentionally excluded:
+    they are not application competitions and do not represent a grant call.
+    """
+
+    try:
+        decoded = json.loads(_decode_html(content))
+    except (json.JSONDecodeError, TypeError, ValueError) as error:
+        return ParsedOnlineCompetitions(
+            (),
+            (ParserIssue("error", "invalid_online_competitions_json", "online", str(error)),),
+        )
+    if not isinstance(decoded, dict):
+        return ParsedOnlineCompetitions(
+            (),
+            (
+                ParserIssue(
+                    "error",
+                    "invalid_online_competitions_json",
+                    "online",
+                    "The public FASIE inventory must be a JSON object.",
+                ),
+            ),
+        )
+    raw_entries = decoded.get("activeContests")
+    if not isinstance(raw_entries, list):
+        raw_entries = []
+    entries: list[OnlineCompetition] = []
+    seen: set[tuple[str, date | None]] = set()
+    for raw_entry in raw_entries:
+        if not isinstance(raw_entry, dict):
+            continue
+        raw_name = raw_entry.get("name")
+        if not isinstance(raw_name, str) or not raw_name.strip():
+            continue
+        name = normalize_title(raw_name)
+        raw_deadline = raw_entry.get("queriesOpeningDate")
+        deadline: date | None = None
+        if isinstance(raw_deadline, str):
+            try:
+                deadline = datetime.fromisoformat(raw_deadline.replace("Z", "+00:00")).date()
+            except ValueError:
+                pass
+        key = (normalize_identity_name(name), deadline)
+        if key in seen:
+            continue
+        seen.add(key)
+        evidence = f"Публичная витрина Фонд-М: {name}"
+        if deadline is not None:
+            evidence += f"; до {deadline.isoformat()}"
+        entries.append(
+            OnlineCompetition(
+                name=name,
+                deadline_on=deadline,
+                source_url=source_url,
+                evidence=evidence,
+            )
+        )
+    if not entries:
+        return ParsedOnlineCompetitions(
+            (),
+            (
+                ParserIssue(
+                    "warning",
+                    "online_competitions_missing",
+                    "online",
+                    "The public FASIE API did not expose active competition rows.",
+                ),
+            ),
+        )
+    return ParsedOnlineCompetitions(tuple(entries), ())
+
+
+def _feed_page_number(value: str) -> int:
+    parsed = urlsplit(value)
+    for key, item in parse_qsl(parsed.query, keep_blank_values=True):
+        if key.casefold() == "pagen_1" and item.isdigit():
+            return int(item)
+    return 1
+
+
+def _next_pager(root: Any, *, source_url: str, issues: list[ParserIssue]) -> str | None:
+    """Select the next numeric page across FASIE's route-changing pager.
+
+    The site emits ``/press/news/`` on page one, ``/press/`` later, and the
+    date-filtered Fund list uses ``list.php``.  Choosing the smallest page
+    greater than the current one handles a pager that also renders a previous
+    link without trusting presentation classes.
+    """
+
+    current_page = _feed_page_number(source_url)
+    next_pages: dict[int, str] = {}
+    malformed: list[str] = []
+    for anchor in root.xpath(".//a[@href]"):
+        href = anchor.get("href")
+        if not isinstance(href, str) or "PAGEN_1" not in href.upper():
             continue
         try:
             candidate = feed_page_url(urljoin(source_url, href))
         except ValueError as error:
-            issues.append(
-                ParserIssue(
-                    "error",
-                    "malformed_feed_pager",
-                    "pagination",
-                    str(error),
-                )
-            )
+            malformed.append(str(error))
             continue
-        if candidate not in next_urls:
-            next_urls.append(candidate)
-    if len(next_urls) > 1:
+        page = _feed_page_number(candidate)
+        if page > current_page:
+            next_pages.setdefault(page, candidate)
+    if malformed:
+        issues.append(
+            ParserIssue(
+                "error",
+                "malformed_feed_pager",
+                "pagination",
+                malformed[0],
+            )
+        )
+    if not next_pages:
+        return None
+    page = min(next_pages)
+    duplicate_urls = {url for candidate_page, url in next_pages.items() if candidate_page == page}
+    if len(duplicate_urls) > 1:
         issues.append(
             ParserIssue(
                 "error",
                 "ambiguous_feed_pager",
                 "pagination",
-                "The FASIE feed exposed more than one valid next page.",
+                "The FASIE feed exposed conflicting next-page URLs.",
             )
         )
         return None
-    return next_urls[0] if next_urls else None
+    return next_pages[page]
 
 
 def parse_feed_page(content: bytes, *, source_url: str) -> ParsedFeedPage:
@@ -244,7 +754,12 @@ def parse_feed_page(content: bytes, *, source_url: str) -> ParsedFeedPage:
                     f"Could not parse a publication date for {url}.",
                 )
             )
-        entry = FeedPublication(url=url, title=title, published_at=published_at)
+        entry = FeedPublication(
+            url=url,
+            title=title,
+            published_at=published_at,
+            is_likely_lifecycle_event=_is_likely_feed_lifecycle_event(anchor, title),
+        )
         if entry not in entries:
             entries.append(entry)
     next_url = _next_pager(root, source_url=source_url, issues=issues)
@@ -285,9 +800,15 @@ def _fallback_name(text: str) -> str | None:
 
 def _identity_parts(title: str, text: str, published_at: datetime | None) -> tuple[str | None, str | None, str | None, int | None, str | None]:
     context = f"{title} {text[:4_000]}"
-    name = _quoted_name(title) or _fallback_name(title)
-    if name is None:
-        name = _quoted_name(text[:4_000]) or _fallback_name(text[:4_000])
+    # A generic headline may say only "новый конкурс для МТК" while the body
+    # contains the authoritative quoted competition name and a direct FASIE
+    # link.  Prefer either quoted form before a loose headline fallback.
+    name = (
+        _quoted_name(title)
+        or _quoted_name(text[:4_000])
+        or _fallback_name(title)
+        or _fallback_name(text[:4_000])
+    )
     queue_match = re.search(r"\bочеред(?:ь|и)\s*(?:№\s*)?(\d+)\b", context, re.IGNORECASE)
     stage_match = re.search(r"\b(?:этап|стадия)\s*(?:№\s*)?(\d+)\b", context, re.IGNORECASE)
     years = [int(value) for value in re.findall(r"\b(20\d{2})\b", f"{title} {text[:4_000]}")]
@@ -303,13 +824,19 @@ def _classify_publication(title: str, text: str) -> PublicationKind:
     lower = f"{lower_title} {text}".casefold()
     if re.search(r"подведен\w*\s+итог|итог\w*\s+по\s+конкурс|результат\w*\s+конкурс|список\s+победител\w*\s+конкурс", lower_title):
         return "result"
+    if re.search(r"завершил\w*\s+формальн\w*\s+этап|этап\s+экспертиз|рассмотрени\w*\s+заяв", lower_title) and re.search(r"конкурс|заяв", lower):
+        return "milestone"
     if re.search(r"продлен\w*|продлени\w*\s+при[её]м|продолжен\w*\s+при[её]м", lower_title):
         return "extension"
     if re.search(r"изменен\w*|изменени\w*|дополнен\w*|уточнен\w*", lower_title) and re.search(r"конкурс|положен|услов|лот", lower):
         return "amendment"
-    if re.search(r"запуск\s+конкурс|начал\w*\s+отбор|открыт\w*\s+при[её]м|объявля\w*\s+о\s+начал", lower_title):
+    if re.search(r"запуск\w*[^.!?]{0,80}конкурс|начал\w*\s+отбор|открыт\w*\s+при[её]м|объявля\w*\s+о\s+начал", lower_title):
         return "launch"
-    if re.search(r"вебинар|конференц|форум|грантополучател\w*\s+фонда|создан\w*\s+при\s+поддержк", lower_title):
+    if re.search(
+        r"вебинар|конференц|форум|грантополучател\w*\s+фонда|создан\w*\s+при\s+поддержк|"
+        r"бесплатн\w*\s+оформ\w*\s+патент|льгот\w*\s+для\s+победител",
+        lower,
+    ):
         return "ignore"
     has_application = bool(
         re.search(r"при[её]м\s+заяв|подать\s+заяв|заявк\w*\s+можно|открыт\w*\s+при[её]м|набор\w*\s+в\s+акселератор", lower)
@@ -419,10 +946,21 @@ def _origin_link(label: str, context: str, url: str, source_url: str) -> bool:
     return bool(re.search(r"официальн\w*\s+сайт|сайт\s+(?:конкурс|преми|программ)|организатор|первичн", lower))
 
 
-def _extract_links(body: Any, *, source_url: str) -> tuple[tuple[str, ...], tuple[str, ...], tuple[str, ...], tuple[dict[str, str], ...]]:
+def _extract_links(
+    body: Any,
+    *,
+    source_url: str,
+) -> tuple[
+    tuple[str, ...],
+    tuple[str, ...],
+    tuple[str, ...],
+    tuple[str, ...],
+    tuple[dict[str, str], ...],
+]:
     application_urls: list[str] = []
     origin_urls: list[str] = []
     reference_urls: list[str] = []
+    related_publication_urls: list[str] = []
     documents: list[dict[str, str]] = []
     for anchor in body.xpath(".//a[@href]"):
         href = anchor.get("href")
@@ -443,6 +981,16 @@ def _extract_links(body: Any, *, source_url: str) -> tuple[tuple[str, ...], tupl
             if item not in documents:
                 documents.append(item)
             continue
+        try:
+            related_url = press_detail_url(url)
+        except ValueError:
+            related_url = None
+        if related_url is not None and related_url != source_url:
+            if related_url not in related_publication_urls:
+                related_publication_urls.append(related_url)
+            if related_url not in reference_urls:
+                reference_urls.append(related_url)
+            continue
         if _application_link(label, context, url):
             if url not in application_urls:
                 application_urls.append(url)
@@ -453,12 +1001,18 @@ def _extract_links(body: Any, *, source_url: str) -> tuple[tuple[str, ...], tupl
                 origin_urls.append(url)
         elif url not in reference_urls:
             reference_urls.append(url)
-    return tuple(application_urls), tuple(origin_urls), tuple(reference_urls), tuple(documents)
+    return (
+        tuple(application_urls),
+        tuple(origin_urls),
+        tuple(reference_urls),
+        tuple(related_publication_urls),
+        tuple(documents),
+    )
 
 
 def _organizer_and_origin(text: str, title: str) -> tuple[str | None, OriginKind]:
     lower = text.casefold()
-    if re.search(r"фонд\s+содействия\s+инновациям\s+(?:объявля\w*|провод\w*|открыва\w*)", lower):
+    if re.search(r"фонд\s+содействия\s+инновациям\s+(?:объявля\w*|провод\w*|открыва\w*|запуска\w*)", lower):
         return FASIE_SOURCE_PUBLISHER, "first_party"
     explicit = re.search(r"организатор(?:ом)?\s*(?:является|выступает|:)?\s*([^.;]{3,160})", text, re.IGNORECASE)
     if explicit:
@@ -522,6 +1076,7 @@ def parse_publication_page(
             application_urls=(),
             origin_urls=(),
             reference_urls=(),
+            related_publication_urls=(),
             document_urls=(),
             evidence=(),
             issues=(ParserIssue("error", "invalid_publication_html", "page", str(error)),),
@@ -557,6 +1112,7 @@ def parse_publication_page(
             application_urls=(),
             origin_urls=(),
             reference_urls=(),
+            related_publication_urls=(),
             document_urls=(),
             evidence=(),
             issues=(
@@ -583,10 +1139,6 @@ def parse_publication_page(
     title = normalize_title(source_title)
     classification = _classify_publication(source_title, text)
     identity_name, queue, stage, year, identity = _identity_parts(source_title, text, published_at)
-    if classification == "opportunity":
-        # A generic opportunity page is intentionally standalone unless it is
-        # later promoted to a typed launch/extension/amendment publication.
-        identity = None
     application_windows = extract_application_windows(text, fallback_year=year)
     funding_result = extract_grant_funding(text)
     if funding_result.warning:
@@ -600,7 +1152,13 @@ def parse_publication_page(
     eligibility = next((value for heading, value in sections.items() if _section_category(heading) == "eligibility"), None)
     contacts = _contact_entries(text)
     themes, geographies = _taxonomy(text)
-    application_urls, origin_urls, reference_urls, documents = _extract_links(body, source_url=source_url)
+    (
+        application_urls,
+        origin_urls,
+        reference_urls,
+        related_publication_urls,
+        documents,
+    ) = _extract_links(body, source_url=source_url)
     organizer, origin_kind = _organizer_and_origin(text, source_title)
     external_application = any(
         (urlsplit(url).hostname or "") not in {FASIE_HOST, "online.fasie.ru"}
@@ -608,10 +1166,16 @@ def parse_publication_page(
     )
     if external_application and organizer is None:
         origin_kind = "third_party"
-    if classification == "launch" and (origin_kind == "third_party" or external_application):
+    if classification == "launch" and origin_kind == "third_party" and not related_publication_urls:
         classification = "opportunity"
         identity = None
-    if classification in {"launch", "extension", "amendment", "result"} and identity is None:
+    if classification == "opportunity" and not related_publication_urls:
+        # A generic non-FASIE opportunity remains intentionally standalone only
+        # until source-level policy excludes it.  An explicit link to a FASIE
+        # press card is lifecycle evidence and must retain its identity so it
+        # can merge into the canonical competition.
+        identity = None
+    if classification in {"launch", "extension", "amendment", "milestone", "result"} and identity is None:
         issues.append(
             ParserIssue(
                 "warning",
@@ -649,6 +1213,7 @@ def parse_publication_page(
         application_urls=application_urls,
         origin_urls=origin_urls,
         reference_urls=reference_urls,
+        related_publication_urls=related_publication_urls,
         document_urls=documents,
         evidence=evidence,
         issues=tuple(issues),

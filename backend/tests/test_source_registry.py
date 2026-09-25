@@ -68,6 +68,10 @@ def test_potanin_registry_entry_bounds_discovery_and_card_requests() -> None:
 def test_fasie_registry_requires_http_and_allowlisted_home_and_feed_urls() -> None:
     definition = load_registry(DEFAULT_REGISTRY_PATH).get("fasie-competitions")
     values = definition.model_dump(mode="python")
+    assert definition.allowed_exact_urls == (
+        "https://online.fasie.ru/api/v2/get-public-common-info",
+    )
+    assert is_url_allowed(definition.fasie.online_competitions_api_url, definition)
 
     with pytest.raises(ValidationError, match="requires http access"):
         SourceDefinition.model_validate(
@@ -86,6 +90,18 @@ def test_fasie_registry_requires_http_and_allowlisted_home_and_feed_urls() -> No
             }
         )
 
+    assert definition.fasie is not None
+    with pytest.raises(ValidationError, match="online_competitions_api_url"):
+        SourceDefinition.model_validate(
+            {
+                **values,
+                "fasie": {
+                    **definition.fasie.model_dump(mode="python"),
+                    "online_competitions_api_url": "https://online.fasie.ru/api/v2/login",
+                },
+            }
+        )
+
     listed = {
         item["source_key"]: item
         for item in list_registered_sources(load_registry(DEFAULT_REGISTRY_PATH))
@@ -93,8 +109,16 @@ def test_fasie_registry_requires_http_and_allowlisted_home_and_feed_urls() -> No
     assert listed["fasie-competitions"]["fasie"] == {
         "home_url": "https://fasie.ru/",
         "press_feed_url": "https://fasie.ru/press/fund/",
+        "online_competitions_url": "https://online.fasie.ru/m/",
+        "online_competitions_api_url": "https://online.fasie.ru/api/v2/get-public-common-info",
+        "programs_url": "https://fasie.ru/programs/",
+        "competitions_archive_url": "https://fasie.ru/competitions/",
         "lookback_days": 365,
         "max_feed_pages": 90,
+        "max_program_pages": 24,
+        "max_archive_entries": 120,
+        "max_artifact_requests": 48,
+        "min_request_interval_seconds": 2,
     }
     assert all(
         listed[key]["schedule"] == "manual"

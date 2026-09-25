@@ -20,6 +20,7 @@ from app.sources.registry import normalize_url
 
 FASIE_HOST = "fasie.ru"
 FASIE_HOST_ALIASES = frozenset({"fasie.ru", "www.fasie.ru"})
+FASIE_ONLINE_HOST = "online.fasie.ru"
 FASIE_TZ = ZoneInfo("Europe/Moscow")
 FASIE_SOURCE_PUBLISHER = "Фонд содействия инновациям"
 
@@ -91,6 +92,50 @@ def normalize_fasie_url(value: str, *, allow_query: bool = True) -> str:
     )
 
 
+def normalize_online_fasie_url(value: str, *, allow_query: bool = False) -> str:
+    """Canonicalize the anonymous public FASIE application portal.
+
+    The portal is deliberately kept separate from ``normalize_fasie_url``:
+    it is a different host and is used only as a read-only status inventory.
+    This makes it impossible for a future parser change to follow login or
+    application URLs just because they share the same host.
+    """
+
+    normalized = normalize_url(value)
+    parsed = urlsplit(normalized)
+    if parsed.scheme != "https" or parsed.hostname != FASIE_ONLINE_HOST:
+        raise ValueError("FASIE online URLs must use HTTPS on online.fasie.ru")
+    path = re.sub(r"/{2,}", "/", parsed.path or "/")
+    if path.rstrip("/") != "/m":
+        raise ValueError("FASIE online inventory URL must be /m/")
+    query_items = [
+        (key, item)
+        for key, item in parse_qsl(parsed.query, keep_blank_values=True)
+        if key.casefold() not in _TRACKING_QUERY_KEYS
+        and not key.casefold().startswith("utm_")
+    ]
+    if not allow_query and query_items:
+        raise ValueError("FASIE online inventory URL must not contain a query")
+    return urlunsplit(("https", FASIE_ONLINE_HOST, "/m/", urlencode(query_items, doseq=True), ""))
+
+
+def normalize_online_fasie_api_url(value: str) -> str:
+    """Allow exactly the anonymous read-only public competition inventory API."""
+
+    normalized = normalize_url(value)
+    parsed = urlsplit(normalized)
+    if (
+        parsed.scheme != "https"
+        or parsed.hostname != FASIE_ONLINE_HOST
+        or parsed.path.rstrip("/") != "/api/v2/get-public-common-info"
+        or parsed.query
+    ):
+        raise ValueError(
+            "FASIE online API URL must be the public /api/v2/get-public-common-info endpoint"
+        )
+    return "https://online.fasie.ru/api/v2/get-public-common-info"
+
+
 def normalize_reference_url(value: str, *, base_url: str | None = None) -> str | None:
     """Normalize a non-fetched reference URL without expanding its scope."""
 
@@ -120,25 +165,74 @@ def press_detail_url(value: str, *, base_url: str | None = None) -> str:
     return candidate
 
 
+def _pager_page_number(pairs: list[tuple[str, str]]) -> int | None:
+    allowed = {"ajax", "pagen_1"}
+    if any(key.casefold() not in allowed for key, _value in pairs):
+        raise ValueError("FASIE feed pager contains unsupported query parameters")
+    by_key: dict[str, list[str]] = {}
+    for key, value in pairs:
+        by_key.setdefault(key.casefold(), []).append(value)
+    ajax_values = by_key.get("ajax", [])
+    page_values = by_key.get("pagen_1", [])
+    if not page_values:
+        if ajax_values:
+            raise ValueError("FASIE AJAX pager requires PAGEN_1")
+        return None
+    if len(page_values) != 1 or not page_values[0].isdigit() or int(page_values[0]) < 2:
+        raise ValueError("FASIE AJAX page number must be an integer >= 2")
+    if not ajax_values or any(value.upper() != "Y" for value in ajax_values):
+        raise ValueError("FASIE AJAX pager must contain ajax=Y")
+    return int(page_values[0])
+
+
 def feed_page_url(value: str) -> str:
+    """Normalize the public, newest-first FASIE Fund feed pager shapes.
+
+    The date fields on FASIE's ``list.php`` are currently cosmetic: the site
+    returns its full history even when they are present.  Deliberately reject
+    that endpoint so a caller cannot mistake it for a bounded server-side
+    query.  The adapter applies its retention cutoff from the dates in the
+    chronological cards instead.
+    """
+
     candidate = normalize_fasie_url(value)
     parsed = urlsplit(candidate)
-    if parsed.path.rstrip("/") == "/press/fund" and not parsed.query:
-        return urlunsplit(("https", FASIE_HOST, "/press/fund/", "", ""))
-    if parsed.path.rstrip("/") != "/press/news":
-        raise ValueError("FASIE feed page must be /press/fund/ or /press/news/")
+    path = parsed.path.rstrip("/") or "/"
     pairs = parse_qsl(parsed.query, keep_blank_values=True)
-    if any(key.casefold() not in {"ajax", "pagen_1"} for key, _value in pairs):
-        raise ValueError("FASIE AJAX pager contains unsupported query parameters")
-    ajax_values = [value for key, value in pairs if key.casefold() == "ajax"]
-    page_values = [value for key, value in pairs if key.casefold() == "pagen_1"]
-    if not ajax_values or any(value.upper() != "Y" for value in ajax_values) or len(page_values) != 1:
-        raise ValueError("FASIE AJAX pager must contain ajax=Y and one PAGEN_1 value")
-    if not page_values[0].isdigit() or int(page_values[0]) < 2:
-        raise ValueError("FASIE AJAX page number must be an integer >= 2")
-    return urlunsplit(
-        ("https", FASIE_HOST, "/press/news/", "ajax=Y&PAGEN_1=" + str(int(page_values[0])), "")
+    if path == "/press/fund" and not pairs:
+        return urlunsplit(("https", FASIE_HOST, "/press/fund/", "", ""))
+    if path not in {"/press/news", "/press"}:
+        raise ValueError("FASIE feed page must be a known Fund press feed route")
+    page = _pager_page_number(pairs)
+    if page is None:
+        raise ValueError("FASIE AJAX pager requires PAGEN_1")
+    canonical_path = "/press/news/" if path == "/press/news" else "/press/"
+    return urlunsplit(("https", FASIE_HOST, canonical_path, f"ajax=Y&PAGEN_1={page}", ""))
+
+
+def programs_index_url(value: str) -> str:
+    candidate = normalize_fasie_url(value, allow_query=False)
+    if urlsplit(candidate).path.rstrip("/") != "/programs":
+        raise ValueError("FASIE programs index must be /programs/")
+    return "https://fasie.ru/programs/"
+
+
+def program_page_url(value: str, *, base_url: str | None = None) -> str:
+    candidate = normalize_fasie_url(
+        urljoin(base_url or f"https://{FASIE_HOST}/", value),
+        allow_query=False,
     )
+    path = urlsplit(candidate).path
+    if not re.fullmatch(r"/programs/[A-Za-z0-9_-]+/", path):
+        raise ValueError("FASIE program page must be one direct child of /programs/")
+    return candidate
+
+
+def competitions_archive_url(value: str) -> str:
+    candidate = normalize_fasie_url(value, allow_query=False)
+    if urlsplit(candidate).path.rstrip("/") != "/competitions":
+        raise ValueError("FASIE competitions archive must be /competitions/")
+    return "https://fasie.ru/competitions/"
 
 
 def is_upload_url(value: str) -> bool:
