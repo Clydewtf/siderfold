@@ -52,6 +52,16 @@ class InternalAnalyticsBaselineResponse(InternalSchema):
     comparison: dict[str, Any] | None = None
 
 
+class InternalRegionalIndicatorsResponse(InternalSchema):
+    snapshot_id: UUID
+    scope: str
+    calculation_version: str
+    as_of: datetime
+    input_fingerprint: str
+    data_class: str
+    regional_indicators: dict[str, Any]
+
+
 class InternalSource(InternalSchema):
     id: UUID
     name: str

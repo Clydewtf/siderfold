@@ -51,6 +51,7 @@ def _manifest(fixture: dict[str, object]) -> dict[str, object]:
         "as_of": fixture["as_of"],
         "freshness_window_days": fixture["freshness_window_days"],
         "programs": fixture["programs"],
+        "taxonomy": {"geographies": [], "themes": []},
         "review_cases": fixture["review_cases"],
         "source_executions": fixture["source_executions"],
         "exclusions": {

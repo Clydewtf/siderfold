@@ -11,8 +11,10 @@ from sqlalchemy import asc, desc, func, select
 from sqlalchemy.engine import Connection
 
 from app.analytics.baseline import BASELINE_METRICS_VERSION, compare_snapshot_counts
+from app.analytics.regional import REGIONAL_INDICATORS_VERSION
 from app.analytics.snapshots import (
     INPUT_MANIFEST_VERSION,
+    SUPPORTED_INPUT_MANIFEST_VERSIONS,
     AnalyticsSnapshotError,
     get_analytics_snapshot,
 )
@@ -21,6 +23,7 @@ from app.api.internal.schemas import (
     CanonicalReviewActionRequest,
     CanonicalReviewActionResponse,
     InternalAnalyticsBaselineResponse,
+    InternalRegionalIndicatorsResponse,
     DiscoveryReviewActionRequest,
     DiscoveryReviewActionResponse,
     InternalDiscoveryReviewQueueItem,
@@ -203,7 +206,7 @@ def get_internal_analytics_baseline(
         )
     baseline = snapshot.metrics.get("baseline")
     if (
-        snapshot.input_manifest.get("version") != INPUT_MANIFEST_VERSION
+        snapshot.input_manifest.get("version") not in SUPPORTED_INPUT_MANIFEST_VERSIONS
         or not isinstance(baseline, Mapping)
         or baseline.get("version") != BASELINE_METRICS_VERSION
     ):
@@ -240,6 +243,44 @@ def get_internal_analytics_baseline(
         data_class=str(snapshot.input_manifest.get("data_class", "unknown")),
         baseline=dict(baseline),
         comparison=comparison,
+    )
+
+
+@router.get(
+    "/analytics/snapshots/{snapshot_id}/regional-indicators",
+    response_model=InternalRegionalIndicatorsResponse,
+)
+def get_internal_regional_indicators(
+    snapshot_id: UUID,
+    connection: Connection = Depends(get_internal_database_connection),
+) -> InternalRegionalIndicatorsResponse:
+    snapshot = get_analytics_snapshot(connection, snapshot_id)
+    if snapshot is None:
+        raise InternalApiError(
+            status_code=status.HTTP_404_NOT_FOUND,
+            code="analytics_snapshot_not_found",
+            message="The requested analytics snapshot does not exist.",
+        )
+    indicators = snapshot.metrics.get("regional_indicators")
+    if (
+        snapshot.input_manifest.get("version") != INPUT_MANIFEST_VERSION
+        or not isinstance(indicators, Mapping)
+        or indicators.get("version") != REGIONAL_INDICATORS_VERSION
+        or indicators.get("snapshot_id") != str(snapshot.id)
+    ):
+        raise InternalApiError(
+            status_code=status.HTTP_409_CONFLICT,
+            code="regional_indicators_unavailable",
+            message="This snapshot does not contain reproducible regional and thematic indicators.",
+        )
+    return InternalRegionalIndicatorsResponse(
+        snapshot_id=snapshot.id,
+        scope=snapshot.scope,
+        calculation_version=snapshot.calculation_version,
+        as_of=snapshot.as_of,
+        input_fingerprint=snapshot.input_fingerprint,
+        data_class=str(snapshot.input_manifest.get("data_class", "unknown")),
+        regional_indicators=dict(indicators),
     )
 
 

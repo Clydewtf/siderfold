@@ -190,10 +190,13 @@ def calculate_baseline_metrics(
     input_fingerprint: str,
     snapshot_id: str,
 ) -> dict[str, Any]:
-    """Calculate descriptive metrics exclusively from the v2 frozen manifest."""
+    """Calculate descriptive metrics from a supported frozen catalog manifest."""
 
-    if input_manifest.get("version") != "catalog-quality-input/v2":
-        raise BaselineMetricsError("baseline metrics require catalog-quality-input/v2")
+    if input_manifest.get("version") not in {
+        "catalog-quality-input/v2",
+        "catalog-quality-input/v3",
+    }:
+        raise BaselineMetricsError("baseline metrics require catalog-quality-input/v2 or v3")
     raw_as_of = input_manifest.get("as_of")
     if not isinstance(raw_as_of, str):
         raise BaselineMetricsError("as_of must be an ISO timestamp")

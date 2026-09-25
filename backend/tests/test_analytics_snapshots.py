@@ -22,10 +22,13 @@ from app.domain.models import (
     DataQualitySeverity,
     DiscoveryReviewCase,
     FundingValueKind,
+    Geography,
     Program,
     ProgramDeadline,
     ProgramFunding,
+    ProgramGeography,
     ProgramSource,
+    ProgramTheme,
     PublicationStatus,
     ReviewCase,
     ReviewCaseStatus,
@@ -34,6 +37,7 @@ from app.domain.models import (
     SourceExecutionStatus,
     SourceExecutionTrigger,
     StagedRecordState,
+    Theme,
     TelegramDiscoveryMessage,
 )
 from app.sources.registry import (
@@ -380,6 +384,23 @@ def test_snapshot_freezes_real_catalog_inputs_and_excludes_fixture_data(
             deadline=True,
             funding_kind=FundingValueKind.EXACT,
         )
+        geography_id = uuid4()
+        theme_id = uuid4()
+        connection.execute(
+            insert(Geography).values(id=geography_id, slug="siberia", name="Сибирь")
+        )
+        connection.execute(
+            insert(ProgramGeography).values(
+                program_id=fresh_complete,
+                geography_id=geography_id,
+            )
+        )
+        connection.execute(
+            insert(Theme).values(id=theme_id, slug="science", name="Наука")
+        )
+        connection.execute(
+            insert(ProgramTheme).values(program_id=fresh_complete, theme_id=theme_id)
+        )
         _publish_program(
             connection,
             source_id=alpha_source_id,
@@ -448,6 +469,29 @@ def test_snapshot_freezes_real_catalog_inputs_and_excludes_fixture_data(
         assert duplicate.created is False
         assert duplicate.snapshot.id == first.snapshot.id
         assert first.snapshot.scope == SNAPSHOT_SCOPE
+        assert first.snapshot.input_manifest["version"] == "catalog-quality-input/v3"
+        assert first.snapshot.input_manifest["taxonomy"] == {
+            "geographies": [
+                {
+                    "program_id": str(fresh_complete),
+                    "taxonomy_id": str(geography_id),
+                    "slug": "siberia",
+                    "name": "Сибирь",
+                }
+            ],
+            "themes": [
+                {
+                    "program_id": str(fresh_complete),
+                    "taxonomy_id": str(theme_id),
+                    "slug": "science",
+                    "name": "Наука",
+                }
+            ],
+        }
+        regional = first.snapshot.metrics["regional_indicators"]
+        assert regional["dimensions"]["geography"]["categories"]["siberia"]["numerator"] == 1
+        assert regional["dimensions"]["geography"]["categories"]["siberia"]["denominator"] == 4
+        assert regional["dimensions"]["theme"]["categories"]["science"]["numerator"] == 1
         assert first.snapshot.metrics["freshness"]["numerator"] == 3
         assert first.snapshot.metrics["freshness"]["denominator"] == 4
         assert first.snapshot.metrics["completeness"]["numerator"] == 2
@@ -473,8 +517,14 @@ def test_snapshot_freezes_real_catalog_inputs_and_excludes_fixture_data(
             .where(Program.id == fresh_complete)
             .values(title="Changed after snapshot")
         )
+        connection.execute(
+            update(Geography)
+            .where(Geography.slug == "siberia")
+            .values(name="Изменённое название")
+        )
         stored = get_analytics_snapshot(connection, first.snapshot.id)
         assert stored is not None
+        assert stored.input_manifest["taxonomy"]["geographies"][0]["name"] == "Сибирь"
         assert recalculate_snapshot_metrics(stored) == first.snapshot.metrics
 
 

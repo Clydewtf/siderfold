@@ -14,15 +14,22 @@ from sqlalchemy.dialects.postgresql import insert as postgresql_insert
 from sqlalchemy.engine import Connection
 
 from app.analytics.baseline import BaselineMetricsError, calculate_baseline_metrics
+from app.analytics.regional import (
+    RegionalIndicatorsError,
+    calculate_regional_indicators,
+)
 from app.domain.models import (
     AnalyticsSnapshot,
     DataQualityIssue,
     DiscoveryReviewCase,
+    Geography,
     IngestionRun,
     Program,
     ProgramDeadline,
     ProgramFunding,
+    ProgramGeography,
     ProgramSource,
+    ProgramTheme,
     PublicationStatus,
     RawCapture,
     ReviewCase,
@@ -33,6 +40,7 @@ from app.domain.models import (
     StagedRecord,
     TelegramDiscoveryMessage,
     TelegramDiscoveryMessageUrl,
+    Theme,
 )
 from app.sources.registry import (
     SourceAccessMethod,
@@ -44,8 +52,12 @@ from app.sources.registry import (
 
 
 SNAPSHOT_SCOPE = "published_catalog_quality"
-CALCULATION_VERSION = "catalog-quality/v2"
-INPUT_MANIFEST_VERSION = "catalog-quality-input/v2"
+CALCULATION_VERSION = "catalog-quality/v3"
+INPUT_MANIFEST_V2_VERSION = "catalog-quality-input/v2"
+INPUT_MANIFEST_VERSION = "catalog-quality-input/v3"
+SUPPORTED_INPUT_MANIFEST_VERSIONS = frozenset(
+    {INPUT_MANIFEST_V2_VERSION, INPUT_MANIFEST_VERSION}
+)
 FRESHNESS_WINDOW_DAYS = 30
 FASIE_SOURCE_KEY = "fasie-competitions"
 TELEGRAM_SOURCE_KEY = "telegram-cptgrantov-discovery"
@@ -57,6 +69,8 @@ SNAPSHOT_LIMITATIONS = (
     "Полнота показывает наличие минимальных полей в опубликованной карточке, а не достоверность каждого внешнего факта.",
     "Давность измеряет возраст наблюдения первоисточника, а не гарантирует отсутствие изменений на его стороне.",
     "Финансовые квантили описывают только числовые записи отдельно по валюте и виду значения; они не корректируют scope выплат или смещение пропусков.",
+    "Региональные и тематические индикаторы используют только явные замороженные связи; схема не хранит их уровень, происхождение или конфликтность.",
+    "Нормированные доли taxonomy показывают представленность в каталоге платформы, а не долю рынка, населения, спроса или доступности.",
 )
 
 
@@ -380,6 +394,59 @@ def _collect_programs(
             }
         )
     return programs, _counter_payload(exclusions)
+
+
+def _collect_taxonomy_associations(
+    connection: Connection,
+    *,
+    program_ids: Sequence[str],
+) -> dict[str, list[dict[str, str]]]:
+    """Freeze explicit taxonomy links for the programs included in this snapshot."""
+
+    if not program_ids:
+        return {"geographies": [], "themes": []}
+    ids = [UUID(program_id) for program_id in program_ids]
+    geographies = [
+        {
+            "program_id": str(row["program_id"]),
+            "taxonomy_id": str(row["geography_id"]),
+            "slug": row["slug"],
+            "name": row["name"],
+        }
+        for row in connection.execute(
+            select(
+                ProgramGeography.program_id,
+                Geography.id.label("geography_id"),
+                Geography.slug,
+                Geography.name,
+            )
+            .select_from(ProgramGeography)
+            .join(Geography, Geography.id == ProgramGeography.geography_id)
+            .where(ProgramGeography.program_id.in_(ids))
+            .order_by(ProgramGeography.program_id, Geography.slug, Geography.id)
+        ).mappings()
+    ]
+    themes = [
+        {
+            "program_id": str(row["program_id"]),
+            "taxonomy_id": str(row["theme_id"]),
+            "slug": row["slug"],
+            "name": row["name"],
+        }
+        for row in connection.execute(
+            select(
+                ProgramTheme.program_id,
+                Theme.id.label("theme_id"),
+                Theme.slug,
+                Theme.name,
+            )
+            .select_from(ProgramTheme)
+            .join(Theme, Theme.id == ProgramTheme.theme_id)
+            .where(ProgramTheme.program_id.in_(ids))
+            .order_by(ProgramTheme.program_id, Theme.slug, Theme.id)
+        ).mappings()
+    ]
+    return {"geographies": geographies, "themes": themes}
 
 
 def _reason_codes(value: object) -> tuple[str, ...]:
@@ -720,12 +787,17 @@ def build_input_manifest(
         all_sources=all_sources,
         active_real_sources=active_real_sources,
     )
+    taxonomy = _collect_taxonomy_associations(
+        connection,
+        program_ids=[str(program["program_id"]) for program in programs],
+    )
     input_manifest = {
         "version": INPUT_MANIFEST_VERSION,
         "data_class": _database_data_class(connection),
         "as_of": _timestamp(as_of),
         "freshness_window_days": freshness_window_days,
         "programs": programs,
+        "taxonomy": taxonomy,
         "review_cases": canonical_cases + discovery_cases,
         "source_executions": executions,
         "exclusions": {
@@ -1112,9 +1184,10 @@ def create_analytics_snapshot(
 def recalculate_snapshot_metrics(snapshot: AnalyticsSnapshotRecord) -> dict[str, Any]:
     """Recalculate a persisted snapshot without reading mutable catalog rows."""
 
-    if snapshot.input_manifest.get("version") != INPUT_MANIFEST_VERSION:
+    manifest_version = snapshot.input_manifest.get("version")
+    if manifest_version not in SUPPORTED_INPUT_MANIFEST_VERSIONS:
         raise AnalyticsSnapshotError(
-            "baseline recalculation requires a catalog-quality-input/v2 snapshot"
+            "recalculation requires a supported catalog-quality input manifest"
         )
     return calculate_snapshot_metrics(
         snapshot_id=snapshot.id,
@@ -1146,4 +1219,15 @@ def calculate_snapshot_metrics(
         )
     except BaselineMetricsError as error:
         raise AnalyticsSnapshotError(str(error)) from error
+    if input_manifest.get("version") == INPUT_MANIFEST_VERSION:
+        if "taxonomy" not in input_manifest:
+            raise AnalyticsSnapshotError("catalog-quality-input/v3 requires frozen taxonomy links")
+        try:
+            metrics["regional_indicators"] = calculate_regional_indicators(
+                source_scope=source_scope,
+                input_manifest=input_manifest,
+                snapshot_id=snapshot_key,
+            )
+        except RegionalIndicatorsError as error:
+            raise AnalyticsSnapshotError(str(error)) from error
     return metrics

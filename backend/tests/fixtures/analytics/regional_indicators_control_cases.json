@@ -1,0 +1,57 @@
+{
+  "data_class": "synthetic",
+  "as_of": "2026-09-01T12:00:00+00:00",
+  "source_scope": {
+    "program_sources": [
+      {"source_key": "potanin-competitions"},
+      {"source_key": "timchenko-competitions"}
+    ]
+  },
+  "programs": [
+    {"program_id": "p1", "source_key": "potanin-competitions"},
+    {"program_id": "p2", "source_key": "potanin-competitions"},
+    {"program_id": "p3", "source_key": "potanin-competitions"},
+    {"program_id": "p4", "source_key": "potanin-competitions"},
+    {"program_id": "p5", "source_key": "timchenko-competitions"},
+    {"program_id": "p6", "source_key": "timchenko-competitions"},
+    {"program_id": "p7", "source_key": "timchenko-competitions"},
+    {"program_id": "p8", "source_key": "timchenko-competitions"}
+  ],
+  "taxonomy": {
+    "geographies": [
+      {"program_id": "p1", "taxonomy_id": "g-siberia", "slug": "siberia", "name": "Сибирь"},
+      {"program_id": "p2", "taxonomy_id": "g-siberia", "slug": "siberia", "name": "Сибирь"},
+      {"program_id": "p2", "taxonomy_id": "g-russia", "slug": "russia", "name": "Россия"},
+      {"program_id": "p3", "taxonomy_id": "g-central", "slug": "central", "name": "Центральный округ"},
+      {"program_id": "p4", "taxonomy_id": "g-central", "slug": "central", "name": "Центральный округ"},
+      {"program_id": "p5", "taxonomy_id": "g-siberia", "slug": "siberia", "name": "Сибирь"},
+      {"program_id": "p6", "taxonomy_id": "g-siberia", "slug": "siberia", "name": "Сибирь"},
+      {"program_id": "p6", "taxonomy_id": "g-russia", "slug": "russia", "name": "Россия"},
+      {"program_id": "p7", "taxonomy_id": "g-russia", "slug": "russia", "name": "Россия"},
+      {"program_id": "p1", "taxonomy_id": "g-wide", "slug": "wide", "name": "Контрольная категория"},
+      {"program_id": "p2", "taxonomy_id": "g-wide", "slug": "wide", "name": "Контрольная категория"},
+      {"program_id": "p3", "taxonomy_id": "g-wide", "slug": "wide", "name": "Контрольная категория"},
+      {"program_id": "p4", "taxonomy_id": "g-wide", "slug": "wide", "name": "Контрольная категория"},
+      {"program_id": "p5", "taxonomy_id": "g-wide", "slug": "wide", "name": "Контрольная категория"}
+    ],
+    "themes": [
+      {"program_id": "p1", "taxonomy_id": "t-climate", "slug": "climate", "name": "Климат"},
+      {"program_id": "p2", "taxonomy_id": "t-climate", "slug": "climate", "name": "Климат"},
+      {"program_id": "p3", "taxonomy_id": "t-ai", "slug": "ai", "name": "Искусственный интеллект"},
+      {"program_id": "p4", "taxonomy_id": "t-ai", "slug": "ai", "name": "Искусственный интеллект"},
+      {"program_id": "p5", "taxonomy_id": "t-climate", "slug": "climate", "name": "Климат"},
+      {"program_id": "p6", "taxonomy_id": "t-ai", "slug": "ai", "name": "Искусственный интеллект"},
+      {"program_id": "p7", "taxonomy_id": "t-ai", "slug": "ai", "name": "Искусственный интеллект"}
+    ]
+  },
+  "expected": {
+    "program_count": 8,
+    "geography_labelled": 7,
+    "theme_labelled": 7,
+    "geography_counts": {"central": 2, "russia": 3, "siberia": 4, "wide": 5},
+    "theme_counts": {"ai": 4, "climate": 3},
+    "siberia_catalog_share": 0.5,
+    "siberia_labelled_share": 0.571428571429,
+    "climate_without_potanin_share": 0.25
+  }
+}
